@@ -1,0 +1,377 @@
+package se.optiqon.voice.ui.home
+
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import android.widget.Toast
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import se.optiqon.voice.data.db.entity.DictationSummary
+import se.optiqon.voice.domain.model.DictationStatus
+import se.optiqon.voice.service.BubbleService
+import se.optiqon.voice.ui.common.EmptyStateCard
+import se.optiqon.voice.ui.common.PermissionCard
+import se.optiqon.voice.ui.common.PermissionStatus
+import se.optiqon.voice.ui.common.SectionCard
+import se.optiqon.voice.ui.common.StatusPill
+import se.optiqon.voice.ui.common.rememberAccessibilityPermissionState
+import se.optiqon.voice.ui.common.rememberMicrophonePermissionState
+import se.optiqon.voice.ui.common.rememberNotificationPermissionState
+import se.optiqon.voice.ui.common.rememberOverlayPermissionState
+import se.optiqon.voice.ui.history.DayGroup
+import se.optiqon.voice.ui.history.HistoryViewModel
+import se.optiqon.voice.ui.theme.AppIcons
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+
+@Composable
+fun HomeScreen(
+    outerPadding: PaddingValues,
+    viewModel: HomeViewModel = hiltViewModel(),
+    historyViewModel: HistoryViewModel = hiltViewModel()
+) {
+    val context = LocalContext.current
+    val todayStats by viewModel.todayStats.collectAsStateWithLifecycle()
+    val totalStats by viewModel.totalStats.collectAsStateWithLifecycle()
+    val dayGroups by historyViewModel.dayGroups.collectAsStateWithLifecycle()
+    val retryingIds by historyViewModel.retryingIds.collectAsStateWithLifecycle()
+    val serviceRunning by BubbleService.runningState.collectAsStateWithLifecycle()
+
+    val overlayPermission = rememberOverlayPermissionState()
+    val accessibilityPermission = rememberAccessibilityPermissionState()
+    val microphonePermission = rememberMicrophonePermissionState()
+    val notificationPermission = rememberNotificationPermissionState()
+    val setupStatuses = listOf(overlayPermission, accessibilityPermission, microphonePermission, notificationPermission)
+    val missingPermissions = setupStatuses.filterNot(PermissionStatus::granted)
+    val serviceReady = overlayPermission.granted && accessibilityPermission.granted && microphonePermission.granted
+
+    LazyColumn(
+        contentPadding = homeContentPadding(outerPadding),
+        verticalArrangement = Arrangement.spacedBy(18.dp)
+    ) {
+        item("summary") {
+            SummaryCard(
+                totalWords = totalStats.wordCount,
+                totalCount = totalStats.count,
+                serviceRunning = serviceRunning,
+                serviceReady = serviceReady,
+                onToggleService = {
+                    when {
+                        serviceRunning -> BubbleService.stop(context)
+                        !microphonePermission.granted -> microphonePermission.onRequest()
+                        !overlayPermission.granted -> overlayPermission.onRequest()
+                        !accessibilityPermission.granted -> accessibilityPermission.onRequest()
+                        else -> BubbleService.start(context)
+                    }
+                }
+            )
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            (!overlayPermission.granted || !accessibilityPermission.granted)
+        ) {
+            item("restricted") {
+                RestrictedSettingsCard(
+                    onOpenAppInfo = {
+                        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                            data = Uri.parse("package:${context.packageName}")
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(intent)
+                    }
+                )
+            }
+        }
+
+        if (missingPermissions.isNotEmpty()) {
+            item("setup_header") { Text("Finish setup", style = MaterialTheme.typography.titleLarge) }
+            items(missingPermissions, key = { it.name }) { status -> PermissionCard(status = status) }
+        }
+
+        item("today_header") {
+            Text(
+                text = "Today",
+                style = MaterialTheme.typography.displaySmall,
+                fontFamily = FontFamily.Serif
+            )
+        }
+
+        if (dayGroups.isEmpty()) {
+            item("empty") {
+                EmptyStateCard(
+                    icon = AppIcons.Description,
+                    title = "No dictations yet",
+                    description = "Recent transcripts and failures will appear here when history is enabled."
+                )
+            }
+        } else {
+            dayGroups.forEach { group ->
+                item("header_${group.key}") {
+                    DayHeader(group)
+                }
+                items(group.dictations, key = { it.id }) { dictation ->
+                    TranscriptCard(
+                        dictation = dictation,
+                        isRetrying = dictation.id in retryingIds,
+                        onCopy = { copyToClipboard(context, dictation.text) },
+                        onRetry = { historyViewModel.retry(dictation.id) },
+                        onDelete = { historyViewModel.removeFromHistory(dictation.id) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SummaryCard(
+    totalWords: Int,
+    totalCount: Int,
+    serviceRunning: Boolean,
+    serviceReady: Boolean,
+    onToggleService: () -> Unit
+) {
+    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 26.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = "${formatCompactNumber(totalWords)} words",
+                style = MaterialTheme.typography.displayMedium,
+                fontFamily = FontFamily.Serif,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Text("spoken so far", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = if (totalCount == 0) "Start a dictation to build your history." else "You've written $totalCount transcriptions.",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                StatusPill(if (serviceRunning) "Bubble active" else "Bubble off")
+                if (!serviceReady && !serviceRunning) StatusPill("Setup needed")
+            }
+            Button(onClick = onToggleService, modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
+                Icon(if (serviceRunning) AppIcons.StopCircle else AppIcons.Mic, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.size(10.dp))
+                Text(if (serviceRunning) "Stop dictation service" else "Start dictation service")
+            }
+        }
+    }
+}
+
+@Composable
+private fun DayHeader(group: DayGroup) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(group.date, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        StatusPill("${group.totalWords} words")
+    }
+}
+
+@Composable
+private fun TranscriptCard(
+    dictation: DictationSummary,
+    isRetrying: Boolean,
+    onCopy: () -> Unit,
+    onRetry: () -> Unit,
+    onDelete: () -> Unit
+) {
+    var confirmDelete by remember { mutableStateOf(false) }
+    val failed = dictation.status == DictationStatus.FAILURE.name
+
+    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Text(
+                text = if (failed) dictation.errorMessage ?: "Transcription failed" else dictation.text,
+                style = MaterialTheme.typography.titleMedium,
+                color = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                maxLines = 8,
+                overflow = TextOverflow.Ellipsis
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(formatTime(dictation.timestamp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                displaySourceApp(dictation.sourceApp, dictation.sourceAppPackage)?.let {
+                    StatusPill(it)
+                }
+                if (isRetrying) {
+                    StatusPill("Retrying")
+                }
+                if (failed) {
+                    StatusPill(
+                        label = "Failed",
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                        contentColor = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = onCopy, enabled = !isRetrying && !failed && dictation.text.isNotBlank()) {
+                    Icon(AppIcons.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.size(8.dp))
+                    Text("Copy")
+                }
+                OutlinedButton(onClick = onRetry, enabled = !isRetrying && !dictation.audioPath.isNullOrBlank()) {
+                    if (isRetrying) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                    }
+                    Spacer(Modifier.size(8.dp))
+                    Text(if (isRetrying) "Retrying" else "Retry")
+                }
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = { confirmDelete = true }) {
+                    Icon(Icons.Default.Delete, contentDescription = "Delete dictation", tint = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
+    }
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete this dictation?") },
+            text = { Text("This removes the transcript and any saved retry audio.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDelete()
+                    confirmDelete = false
+                }) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } }
+        )
+    }
+}
+
+@Composable
+private fun RestrictedSettingsCard(onOpenAppInfo: () -> Unit) {
+    SectionCard(
+        title = "Restricted settings on Android 13+",
+        subtitle = "Sideloaded apps need one extra step before overlay and accessibility permissions can be enabled."
+    ) {
+        OutlinedButton(onClick = onOpenAppInfo, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.size(8.dp))
+            Text("Open App Info")
+        }
+    }
+}
+
+private fun copyToClipboard(context: Context, text: String) {
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    clipboard.setPrimaryClip(ClipData.newPlainText("dictation", text))
+    Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+}
+
+private val timeFormat = DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault())
+private val defaultZoneId = ZoneId.systemDefault()
+
+private fun formatTime(timestamp: Long): String = timeFormat.format(Instant.ofEpochMilli(timestamp).atZone(defaultZoneId))
+
+private fun formatCompactNumber(number: Int): String {
+    return when {
+        number >= 1_000_000 -> "${"%.1f".format(number / 1_000_000.0)}M"
+        number >= 10_000 -> "${"%.1f".format(number / 1_000.0)}K"
+        else -> number.toString()
+    }
+}
+
+private fun displaySourceApp(sourceApp: String?, sourceAppPackage: String?): String? {
+    val label = sourceApp?.trim()
+        ?.takeIf { it.isNotBlank() && !it.equals("App", ignoreCase = true) }
+    if (label != null && !label.contains('.')) return label.take(24)
+
+    val packageName = sourceAppPackage?.trim()?.takeIf { it.isNotBlank() }
+        ?: label?.takeIf { it.contains('.') }
+        ?: return label?.take(24)
+
+    return when {
+        packageName.contains("whatsapp", ignoreCase = true) -> "WhatsApp"
+        packageName.contains("signal", ignoreCase = true) -> "Signal"
+        packageName.contains("molly", ignoreCase = true) -> "Molly"
+        packageName.contains("element", ignoreCase = true) -> "Element"
+        packageName.contains("telegram", ignoreCase = true) -> "Telegram"
+        packageName.contains("gmail", ignoreCase = true) -> "Gmail"
+        packageName.contains("outlook", ignoreCase = true) -> "Outlook"
+        packageName.contains("discord", ignoreCase = true) -> "Discord"
+        packageName.contains("slack", ignoreCase = true) -> "Slack"
+        else -> appLabelFromPackage(packageName).take(24)
+    }
+}
+
+private fun appLabelFromPackage(packageName: String): String {
+    val ignoredSegments = setOf("android", "app", "apps", "client", "com", "debug", "im", "io", "mobile", "net", "org", "release", "x")
+    val segment = packageName.split('.')
+        .firstOrNull { part ->
+            val normalized = part.lowercase()
+            normalized.length > 1 && normalized !in ignoredSegments
+        }
+        ?: packageName.substringAfterLast('.')
+    return segment
+        .replace('_', ' ')
+        .replace('-', ' ')
+        .trim()
+        .replaceFirstChar { it.uppercase() }
+}
+
+private fun homeContentPadding(padding: PaddingValues): PaddingValues {
+    return PaddingValues(
+        start = 20.dp,
+        end = 20.dp,
+        top = padding.calculateTopPadding() + 20.dp,
+        bottom = padding.calculateBottomPadding() + 96.dp
+    )
+}

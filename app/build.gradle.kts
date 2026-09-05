@@ -1,0 +1,188 @@
+import java.util.Calendar
+
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.ksp)
+    alias(libs.plugins.hilt)
+    alias(libs.plugins.room)
+}
+
+android {
+    namespace = "se.optiqon.voice"
+    compileSdk = 35
+    buildToolsVersion = "35.0.0"
+
+    defaultConfig {
+        applicationId = "se.optiqon.voice"
+        minSdk = 26
+        targetSdk = 35
+
+        val tag = findProperty("versionTag")?.toString()?.removePrefix("v") ?: ""
+        val cal = Calendar.getInstance()
+        val dateCode = cal.get(Calendar.YEAR) * 10000 + (cal.get(Calendar.MONTH) + 1) * 100 + cal.get(Calendar.DAY_OF_MONTH)
+
+        // Tags are dated, optionally with a same-day patch: v20260813, v20260813.2.
+        // Parsing the whole tag as an Int returned null for the patch form and fell back
+        // to the date, so v20260813.2 shipped the same versionCode as v20260813.1.
+        // Android decides updates by versionCode, so the patch never reached anyone.
+        // Date and patch are packed separately, leaving codes ordered across days.
+        val tagParts = tag.split(".")
+        val baseCode = tagParts.getOrNull(0)?.toIntOrNull() ?: dateCode
+        val patchCode = tagParts.getOrNull(1)?.toIntOrNull()?.coerceIn(0, 99) ?: 0
+        versionCode = baseCode * 100 + patchCode
+        versionName = if (tag.isNotBlank()) "v$tag" else "v$baseCode"
+    }
+
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("${rootProject.projectDir}/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+
+        // Future release signing key, provided via env vars / Gradle properties (a future
+        // "Gate" mission's GitHub secrets), never committed to the repo. No values are set
+        // here, so this config is only usable once all four are supplied out-of-band; until
+        // then `release.signingConfig` below falls back to the debug key, same as today.
+        create("release") {
+            val storeFilePath = providers.gradleProperty("RELEASE_STORE_FILE")
+                .orElse(providers.environmentVariable("RELEASE_STORE_FILE"))
+            val storePasswordValue = providers.gradleProperty("RELEASE_STORE_PASSWORD")
+                .orElse(providers.environmentVariable("RELEASE_STORE_PASSWORD"))
+            val keyAliasValue = providers.gradleProperty("RELEASE_KEY_ALIAS")
+                .orElse(providers.environmentVariable("RELEASE_KEY_ALIAS"))
+            val keyPasswordValue = providers.gradleProperty("RELEASE_KEY_PASSWORD")
+                .orElse(providers.environmentVariable("RELEASE_KEY_PASSWORD"))
+
+            if (storeFilePath.isPresent && storePasswordValue.isPresent &&
+                keyAliasValue.isPresent && keyPasswordValue.isPresent
+            ) {
+                storeFile = file(storeFilePath.get())
+                storePassword = storePasswordValue.get()
+                keyAlias = keyAliasValue.get()
+                keyPassword = keyPasswordValue.get()
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
+        }
+        release {
+            // Uses the real release key once it is supplied (see signingConfigs above);
+            // otherwise falls back to the debug key, matching today's behavior so local/CI
+            // builds keep working with zero secrets configured.
+            val releaseSigning = signingConfigs.getByName("release")
+            signingConfig = if (releaseSigning.storeFile != null) {
+                releaseSigning
+            } else {
+                signingConfigs.getByName("debug")
+            }
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
+
+    lint {
+        checkReleaseBuilds = false
+    }
+
+    composeCompiler {
+        stabilityConfigurationFiles.add(project.layout.projectDirectory.file("compose-stability.conf"))
+    }
+
+    room {
+        schemaDirectory("$projectDir/schemas")
+    }
+}
+
+/**
+ * The benchmark reads its endpoint, key and model list from the environment and skips
+ * itself when they are absent, so ordinary builds never touch the network. Values are
+ * forwarded through providers so the configuration cache stays valid.
+ */
+tasks.withType<Test>().configureEach {
+    testLogging {
+        showStandardStreams = true
+        events("passed", "skipped", "failed")
+    }
+    listOf("OPENAI_ENDPOINT", "OPENAI_API_KEY", "OPENAI_MODEL", "BENCH_MODELS").forEach { key ->
+        val value = providers.environmentVariable(key)
+        if (value.isPresent) environment(key, value.get())
+    }
+
+    // Environment variables are not task inputs, so a benchmark run with a changed model
+    // list would otherwise be skipped as UP-TO-DATE and silently report the previous
+    // run's numbers. Declaring them as inputs would hash the API key into Gradle's task
+    // history on disk, so force re-execution instead whenever the benchmark is wired up.
+    if (providers.environmentVariable("OPENAI_ENDPOINT").isPresent) {
+        outputs.upToDateWhen { false }
+    }
+}
+
+dependencies {
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.navigation.compose)
+
+    // Compose
+    implementation(platform(libs.compose.bom))
+    implementation(libs.compose.ui)
+    implementation(libs.compose.ui.graphics)
+    implementation(libs.compose.ui.tooling.preview)
+    implementation(libs.compose.material3)
+    debugImplementation(libs.compose.ui.tooling)
+
+    // Hilt
+    implementation(libs.hilt.android)
+    ksp(libs.hilt.compiler)
+    implementation(libs.hilt.navigation.compose)
+
+    // Room
+    implementation(libs.room.runtime)
+    implementation(libs.room.ktx)
+    ksp(libs.room.compiler)
+
+    // Network
+    implementation(libs.retrofit)
+    implementation(libs.retrofit.converter.gson)
+    implementation(libs.okhttp)
+    implementation(libs.gson)
+    debugImplementation(libs.okhttp.logging)
+
+    // DataStore
+    implementation(libs.datastore.preferences)
+    implementation(libs.androidx.security.crypto)
+
+    // Coroutines
+    implementation(libs.kotlinx.coroutines.android)
+
+    // Test
+    testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
+}
