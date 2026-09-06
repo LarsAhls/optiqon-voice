@@ -52,8 +52,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import se.optiqon.voice.data.preferences.UserPreferences
 import se.optiqon.voice.domain.model.PostProcessingPrompt
 import se.optiqon.voice.domain.model.TextReplacementRule
+import se.optiqon.voice.domain.provider.ProviderPresets
 import se.optiqon.voice.ui.common.AppScaffold
-import se.optiqon.voice.ui.common.AppTopBar
+import se.optiqon.voice.ui.common.GroupCard
+import se.optiqon.voice.ui.common.HairlineDivider
+import se.optiqon.voice.ui.common.ListRow
+import se.optiqon.voice.ui.common.LogoTile
+import se.optiqon.voice.ui.common.SecondaryButton
+import se.optiqon.voice.ui.common.SectionEyebrow
+import se.optiqon.voice.ui.common.SwitchRow
 import se.optiqon.voice.ui.common.SectionCard
 import se.optiqon.voice.ui.common.StatusPill
 
@@ -62,6 +69,7 @@ private sealed interface SettingsMode {
     data object Rules : SettingsMode
     data object Prompts : SettingsMode
     data object BuiltIns : SettingsMode
+    data object Advanced : SettingsMode
     data object About : SettingsMode
 }
 
@@ -92,6 +100,16 @@ fun SettingsScreen(
     when (mode) {
         SettingsMode.Main -> SettingsMainScreen(
             preferences = preferences,
+            onSaveLlm = viewModel::saveLlmConfig,
+            onSaveGeneral = viewModel::saveGeneralSettings,
+            onRules = { mode = SettingsMode.Rules },
+            onPrompts = { mode = SettingsMode.Prompts },
+            onAdvanced = { mode = SettingsMode.Advanced },
+            onAbout = { mode = SettingsMode.About },
+            outerPadding = outerPadding
+        )
+        SettingsMode.Advanced -> AdvancedProviderScreen(
+            preferences = preferences,
             asrSaved = asrSaved,
             llmSaved = llmSaved,
             asrTestState = asrTestState,
@@ -100,10 +118,7 @@ fun SettingsScreen(
             onSaveLlm = viewModel::saveLlmConfig,
             onTestAsr = viewModel::testAsrConnection,
             onTestLlm = viewModel::testLlmConnection,
-            onSaveGeneral = viewModel::saveGeneralSettings,
-            onRules = { mode = SettingsMode.Rules },
-            onPrompts = { mode = SettingsMode.Prompts },
-            onAbout = { mode = SettingsMode.About },
+            onBack = { mode = SettingsMode.Main },
             outerPadding = outerPadding
         )
         SettingsMode.Rules -> TextReplacementRulesScreen(
@@ -180,6 +195,108 @@ fun SettingsScreen(
 @Composable
 private fun SettingsMainScreen(
     preferences: UserPreferences,
+    onSaveLlm: (String, String, String, Boolean) -> Unit,
+    onSaveGeneral: (Boolean, Boolean, Boolean, Long, Boolean, Boolean, Int, Boolean) -> Unit,
+    onRules: () -> Unit,
+    onPrompts: () -> Unit,
+    onAdvanced: () -> Unit,
+    onAbout: () -> Unit,
+    outerPadding: PaddingValues
+) {
+    val preset = ProviderPresets.byId(preferences.providerPresetId)
+    val connected = preferences.asrBaseUrl.isNotBlank() && preferences.asrApiKey.isNotBlank()
+
+    AppScaffold { padding ->
+        LazyColumn(
+            contentPadding = settingsContentPadding(padding, outerPadding),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            item("title") {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Settings", style = MaterialTheme.typography.displaySmall)
+                    LogoTile(size = 32.dp)
+                }
+            }
+
+            item("connection_eyebrow") { SettingsEyebrow("Connection") }
+            item("connection") {
+                GroupCard {
+                    ListRow(
+                        title = "Speech service",
+                        subtitle = if (connected) {
+                            "Your voice is sent here to be turned into text."
+                        } else {
+                            "No service connected yet — dictation will not work."
+                        },
+                        onClick = onAdvanced,
+                        trailing = {
+                            StatusPill(
+                                label = if (connected) "${preset.displayName} · connected" else "Not connected",
+                                containerColor = if (connected) {
+                                    MaterialTheme.colorScheme.secondaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.errorContainer
+                                },
+                                contentColor = if (connected) {
+                                    MaterialTheme.colorScheme.onSecondaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.onErrorContainer
+                                }
+                            )
+                        }
+                    )
+                    HairlineDivider()
+                    SwitchRow(
+                        title = "Clean up my text",
+                        subtitle = "Removes filler and fixes slips before the text is typed.",
+                        checked = preferences.llmEnabled,
+                        onCheckedChange = {
+                            onSaveLlm(preferences.llmBaseUrl, preferences.llmApiKey, preferences.llmModel, it)
+                        }
+                    )
+                }
+            }
+
+            item("bubble_eyebrow") { SettingsEyebrow("Bubble") }
+            item("bubble") { BubbleSettingsGroup(preferences = preferences, onSave = onSaveGeneral) }
+
+            item("history_eyebrow") { SettingsEyebrow("History") }
+            item("history") { HistorySettingsGroup(preferences = preferences, onSave = onSaveGeneral) }
+
+            item("processing_eyebrow") { SettingsEyebrow("Processing") }
+            item("processing") {
+                GroupCard {
+                    ListRow("Text replacement rules", subtitle = "Words the app should always write your way.", onClick = onRules)
+                    HairlineDivider()
+                    ListRow("Post-processing prompts", subtitle = "Custom cleanup instructions, and the built-in ones.", onClick = onPrompts)
+                }
+            }
+
+            item("advanced_eyebrow") { SettingsEyebrow("Advanced & about Optiqon Voice") }
+            item("advanced") {
+                GroupCard {
+                    // Base URLs and model IDs live behind this row, not on the ordinary path.
+                    ListRow("Advanced provider settings", subtitle = "Endpoints, keys and model names.", onClick = onAdvanced)
+                    HairlineDivider()
+                    ListRow("About Optiqon Voice", subtitle = "Version, GPLv3 and bundled font licences.", onClick = onAbout)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsEyebrow(text: String) {
+    SectionEyebrow(text, modifier = Modifier.padding(start = 4.dp, top = 10.dp, bottom = 2.dp))
+}
+
+@Composable
+private fun AdvancedProviderScreen(
+    preferences: UserPreferences,
     asrSaved: Boolean,
     llmSaved: Boolean,
     asrTestState: TestState,
@@ -188,24 +305,19 @@ private fun SettingsMainScreen(
     onSaveLlm: (String, String, String, Boolean) -> Unit,
     onTestAsr: (String, String, String) -> Unit,
     onTestLlm: (String, String, String) -> Unit,
-    onSaveGeneral: (Boolean, Boolean, Boolean, Long, Boolean, Boolean, Int, Boolean) -> Unit,
-    onRules: () -> Unit,
-    onPrompts: () -> Unit,
-    onAbout: () -> Unit,
+    onBack: () -> Unit,
     outerPadding: PaddingValues
 ) {
-    AppScaffold(
-        topBar = {
-            AppTopBar(
-                title = "Settings",
-                subtitle = "Global providers, reusable processing assets, recording, and history."
-            )
-        }
-    ) { padding ->
-        LazyColumn(
-            contentPadding = settingsContentPadding(padding, outerPadding),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
+    DrillInScaffold(title = "Advanced", onBack = onBack, onAdd = null, outerPadding = outerPadding) { padding ->
+        LazyColumn(contentPadding = padding, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            item("intro") {
+                Text(
+                    text = "These are the raw endpoints the app talks to. Onboarding fills them " +
+                        "in for you; change them only if you know what you are pointing at.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             item("providers") {
                 ProviderSettingsSection(
                     preferences = preferences,
@@ -218,20 +330,6 @@ private fun SettingsMainScreen(
                     onTestAsr = onTestAsr,
                     onTestLlm = onTestLlm
                 )
-            }
-            item("processing") {
-                SectionCard(title = "Processing", subtitle = "Reusable assets selected inside profiles.") {
-                    NavigationRow("Text replacement rules", "Add exact or regex replacements.", onRules)
-                    NavigationRow("Post-processing prompts", "Manage custom prompts and inspect built-ins.", onPrompts)
-                }
-            }
-            item("recording") {
-                RecordingHistorySection(preferences = preferences, onSave = onSaveGeneral)
-            }
-            item("about") {
-                SectionCard(title = "About", subtitle = "Version, licence and the notices this build ships.") {
-                    NavigationRow("About Optiqon Voice", "Version, GPLv3 and bundled font licences.", onAbout)
-                }
             }
         }
     }
@@ -452,24 +550,6 @@ private fun EmptyProcessingState(title: String, subtitle: String) {
 }
 
 @Composable
-private fun NavigationRow(title: String, subtitle: String, onClick: () -> Unit) {
-    Surface(onClick = onClick, color = Color.Transparent) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(title, style = MaterialTheme.typography.titleMedium)
-                Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Text("›", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-    HorizontalDivider(color = MaterialTheme.colorScheme.background.copy(alpha = 0.35f))
-}
-
-@Composable
 private fun ProviderSettingsSection(
     preferences: UserPreferences,
     asrSaved: Boolean,
@@ -523,16 +603,17 @@ private fun ProviderSettingsSection(
     }
 }
 
+/**
+ * Everything about the bubble itself. Splitting this from history keeps each group short
+ * enough to read at a glance, which is what the eyebrow headings promise.
+ */
 @Composable
-private fun RecordingHistorySection(
+private fun BubbleSettingsGroup(
     preferences: UserPreferences,
     onSave: (Boolean, Boolean, Boolean, Long, Boolean, Boolean, Int, Boolean) -> Unit
 ) {
     var silenceThreshold by rememberSaveable(preferences.silenceThresholdMs) {
         mutableStateOf(preferences.silenceThresholdMs.toFloat())
-    }
-    var retentionText by rememberSaveable(preferences.historyRetentionLimit) {
-        mutableStateOf(preferences.historyRetentionLimit.toString())
     }
 
     fun save(
@@ -540,22 +621,59 @@ private fun RecordingHistorySection(
         vibrateOnRecord: Boolean = preferences.vibrateOnRecord,
         pauseOtherAudio: Boolean = preferences.pauseOtherAudio,
         silenceThresholdMs: Long = silenceThreshold.toLong(),
-        historyEnabled: Boolean = preferences.historyEnabled,
-        keepStatsWithoutHistory: Boolean = preferences.keepStatsWithoutHistory,
-        historyRetentionLimit: Int = retentionText.toIntOrNull() ?: preferences.historyRetentionLimit,
         startOnBoot: Boolean = preferences.startOnBoot
     ) {
-        onSave(autoClipboard, vibrateOnRecord, pauseOtherAudio, silenceThresholdMs, historyEnabled, keepStatsWithoutHistory, historyRetentionLimit, startOnBoot)
+        onSave(
+            autoClipboard,
+            vibrateOnRecord,
+            pauseOtherAudio,
+            silenceThresholdMs,
+            preferences.historyEnabled,
+            preferences.keepStatsWithoutHistory,
+            preferences.historyRetentionLimit,
+            startOnBoot
+        )
     }
 
-    SectionCard(title = "Recording and history", subtitle = "Control recording feedback, audio focus, and saved transcript retention.") {
-        SettingSwitchRow("Start on boot", "Bring the dictation service back after the device restarts.", preferences.startOnBoot, { save(startOnBoot = it) })
-        SettingSwitchRow("Clipboard fallback", "Copy text when direct insertion is unavailable.", preferences.autoClipboard, { save(autoClipboard = it) })
-        SettingSwitchRow("Haptic feedback", "Vibrate when recording starts, stops, or fails.", preferences.vibrateOnRecord, { save(vibrateOnRecord = it) })
-        SettingSwitchRow("Pause other audio", "Request audio focus while recording so other apps pause.", preferences.pauseOtherAudio, { save(pauseOtherAudio = it) })
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("Silence detection", style = MaterialTheme.typography.titleMedium)
+    GroupCard {
+        SwitchRow(
+            title = "Start on boot",
+            subtitle = "Bring the bubble back after the phone restarts.",
+            checked = preferences.startOnBoot,
+            onCheckedChange = { save(startOnBoot = it) }
+        )
+        HairlineDivider()
+        SwitchRow(
+            title = "Copy to clipboard as a fallback",
+            subtitle = "When the app you are in will not accept typed text.",
+            checked = preferences.autoClipboard,
+            onCheckedChange = { save(autoClipboard = it) }
+        )
+        HairlineDivider()
+        SwitchRow(
+            title = "Vibrate",
+            subtitle = "A short buzz when recording starts, stops or fails.",
+            checked = preferences.vibrateOnRecord,
+            onCheckedChange = { save(vibrateOnRecord = it) }
+        )
+        HairlineDivider()
+        SwitchRow(
+            title = "Pause other audio",
+            subtitle = "Music and podcasts pause while you dictate.",
+            checked = preferences.pauseOtherAudio,
+            onCheckedChange = { save(pauseOtherAudio = it) }
+        )
+        HairlineDivider()
+        Column(
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Stop after a pause of", style = MaterialTheme.typography.titleMedium)
                 StatusPill("${"%.1f".format(silenceThreshold / 1000f)}s")
             }
             Slider(
@@ -566,17 +684,67 @@ private fun RecordingHistorySection(
                 steps = 8
             )
         }
-        SettingSwitchRow("Save dictation history", "Keep transcripts and retryable audio on this device.", preferences.historyEnabled, { save(historyEnabled = it) })
-        SettingSwitchRow("Keep stats without history", "When history is off, store counts and durations without dictated content.", preferences.keepStatsWithoutHistory, { save(keepStatsWithoutHistory = it) }, enabled = !preferences.historyEnabled)
-        OutlinedTextField(
-            value = retentionText,
-            onValueChange = { value -> retentionText = value.filter(Char::isDigit).take(4) },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Transcriptions to keep") },
-            singleLine = true
+    }
+}
+
+@Composable
+private fun HistorySettingsGroup(
+    preferences: UserPreferences,
+    onSave: (Boolean, Boolean, Boolean, Long, Boolean, Boolean, Int, Boolean) -> Unit
+) {
+    var retentionText by rememberSaveable(preferences.historyRetentionLimit) {
+        mutableStateOf(preferences.historyRetentionLimit.toString())
+    }
+
+    fun save(
+        historyEnabled: Boolean = preferences.historyEnabled,
+        keepStatsWithoutHistory: Boolean = preferences.keepStatsWithoutHistory,
+        historyRetentionLimit: Int = retentionText.toIntOrNull() ?: preferences.historyRetentionLimit
+    ) {
+        onSave(
+            preferences.autoClipboard,
+            preferences.vibrateOnRecord,
+            preferences.pauseOtherAudio,
+            preferences.silenceThresholdMs,
+            historyEnabled,
+            keepStatsWithoutHistory,
+            historyRetentionLimit,
+            preferences.startOnBoot
         )
-        Button(onClick = { save(historyRetentionLimit = retentionText.toIntOrNull() ?: preferences.historyRetentionLimit) }) {
-            Text("Save retention")
+    }
+
+    GroupCard {
+        SwitchRow(
+            title = "Keep my dictations",
+            subtitle = "Transcripts and retry audio stay on this phone only.",
+            checked = preferences.historyEnabled,
+            onCheckedChange = { save(historyEnabled = it) }
+        )
+        HairlineDivider()
+        SwitchRow(
+            title = "Keep counts without the text",
+            subtitle = "Numbers on Home still work when history is off.",
+            checked = preferences.keepStatsWithoutHistory,
+            onCheckedChange = { save(keepStatsWithoutHistory = it) },
+            enabled = !preferences.historyEnabled
+        )
+        HairlineDivider()
+        Column(
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            OutlinedTextField(
+                value = retentionText,
+                onValueChange = { value -> retentionText = value.filter(Char::isDigit).take(4) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Dictations to keep") },
+                singleLine = true,
+                shape = MaterialTheme.shapes.small
+            )
+            SecondaryButton(
+                text = "Save",
+                onClick = { save(historyRetentionLimit = retentionText.toIntOrNull() ?: preferences.historyRetentionLimit) }
+            )
         }
     }
 }

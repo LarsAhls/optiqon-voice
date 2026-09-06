@@ -2,6 +2,7 @@ package se.optiqon.voice.ui.profiles
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +16,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -23,7 +26,6 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Card
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -44,6 +46,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -61,8 +64,14 @@ import se.optiqon.voice.domain.model.TranscriptionLanguageOption
 import se.optiqon.voice.domain.model.TranscriptionLanguages
 import se.optiqon.voice.ui.common.AppScaffold
 import se.optiqon.voice.ui.common.AppTopBar
+import se.optiqon.voice.ui.common.LogoTile
+import se.optiqon.voice.ui.common.PillShape
 import se.optiqon.voice.ui.common.StatusPill
 import se.optiqon.voice.ui.theme.AppIcons
+import se.optiqon.voice.ui.theme.CardBorder
+import se.optiqon.voice.ui.theme.Hairline
+import se.optiqon.voice.ui.theme.SelectedBorder
+import se.optiqon.voice.ui.theme.SelectedHalo
 
 private sealed interface ProfilesMode {
     data object List : ProfilesMode
@@ -139,18 +148,12 @@ private fun ProfilesListScreen(
     outerPadding: PaddingValues
 ) {
     AppScaffold(
-        topBar = {
-            AppTopBar(
-                title = "Profiles",
-                subtitle = "Language, model, and cleanup presets for different dictation contexts."
-            )
-        },
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 onClick = onCreate,
                 modifier = Modifier.padding(bottom = outerPadding.calculateBottomPadding()),
                 icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                text = { Text("New") },
+                text = { Text("New profile") },
                 elevation = FloatingActionButtonDefaults.elevation()
             )
         }
@@ -159,6 +162,16 @@ private fun ProfilesListScreen(
             contentPadding = profilesContentPadding(padding, outerPadding),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+            item("title") {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Profiles", style = MaterialTheme.typography.displaySmall)
+                    LogoTile(size = 32.dp)
+                }
+            }
             items(profiles, key = { it.id }) { profile ->
                 ProfileCard(
                     profile = profile,
@@ -168,10 +181,23 @@ private fun ProfilesListScreen(
                     onDelete = { onDelete(profile.id) }
                 )
             }
+            item("footer") {
+                Text(
+                    text = "The profile in use decides the language, the service and how much " +
+                        "the text is cleaned up. Switching takes effect on the next dictation.",
+                    modifier = Modifier.padding(top = 6.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
     }
 }
 
+/**
+ * The whole card is the selector — a profile you are reading about is a profile you are
+ * considering switching to, and the radio on the left says which one is live.
+ */
 @Composable
 private fun ProfileCard(
     profile: Profile,
@@ -182,61 +208,125 @@ private fun ProfileCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        border = if (profile.isActive) {
-            BorderStroke(2.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.8f))
-        } else {
-            null
-        },
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        shape = RoundedCornerShape(24.dp),
+        border = if (profile.isActive) BorderStroke(1.dp, SelectedBorder) else BorderStroke(1.dp, CardBorder),
+        colors = CardDefaults.cardColors(
+            containerColor = if (profile.isActive) SelectedHalo else MaterialTheme.colorScheme.surface
+        ),
+        onClick = { if (!profile.isActive) onActivate() }
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text(
-                text = "⋮⋮",
-                style = MaterialTheme.typography.headlineSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RadioMark(selected = profile.isActive)
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = profile.name,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (profile.isActive) StatusPill("In use")
+                    }
                     Text(
-                        text = profile.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        text = profileSummary(profile),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    if (profile.isActive) StatusPill("Active")
                 }
-                ModelLine(icon = "▥", text = profile.asrModel)
-                ModelLine(icon = "✦", text = if (profile.llmEnabled) profile.llmModel else "Off")
+                IconButtonSurface(onClick = onEdit, prominent = profile.isActive) {
+                    Icon(Icons.Default.Edit, contentDescription = "Edit ${profile.name}")
+                }
             }
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+
+            if (profile.isActive) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    IconButtonSurface(onClick = onDuplicate) {
-                        Icon(AppIcons.ContentCopy, contentDescription = "Duplicate ${profile.name}")
-                    }
-                    IconButtonSurface(onClick = onEdit, prominent = true) {
-                        Icon(Icons.Default.Edit, contentDescription = "Edit ${profile.name}")
-                    }
-                    if (!profile.isActive) {
-                        IconButtonSurface(onClick = onDelete) {
-                            Icon(Icons.Default.Delete, contentDescription = "Delete ${profile.name}")
-                        }
-                    }
+                    profileChips(profile).forEach { chip -> ProfileChipLabel(chip) }
                 }
-                if (!profile.isActive) {
-                    TextButton(onClick = onActivate) { Text("Set active") }
-                } else {
-                    TextButton(onClick = onDelete, enabled = false) { Text("Active") }
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = onDuplicate) { Text("Duplicate") }
+                }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = onActivate) { Text("Use this") }
+                    TextButton(onClick = onDuplicate) { Text("Duplicate") }
+                    TextButton(onClick = onDelete) { Text("Delete") }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun RadioMark(selected: Boolean) {
+    Box(
+        modifier = Modifier
+            .size(24.dp)
+            .clip(CircleShape)
+            .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent)
+            .border(
+                width = if (selected) 0.dp else 1.5.dp,
+                color = if (selected) Color.Transparent else Hairline,
+                shape = CircleShape
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        if (selected) {
+            Icon(
+                Icons.Default.Check,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.size(16.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun ProfileChipLabel(text: String) {
+    Text(
+        text = text,
+        modifier = Modifier
+            .clip(PillShape)
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+}
+
+/** Plain language, because "FIX / whisper-large-v3" tells you nothing about what you will get. */
+private fun profileSummary(profile: Profile): String {
+    if (!profile.llmEnabled) return "Transcribe only, no cleanup"
+    val rewrite = when (profile.rewriteMode) {
+        RewriteMode.NONE -> "Kept word for word"
+        RewriteMode.FIX -> "Removes filler, fixes slips"
+        RewriteMode.POLISH -> "Polished and formal"
+    }
+    val summarize = when (profile.summarizeMode) {
+        SummarizeMode.NONE -> null
+        SummarizeMode.LIGHT -> "tightened a little"
+        SummarizeMode.HARD -> "condensed hard"
+    }
+    val style = if (profile.outputStyle == OutputStyle.MINIMAL) "lowercase" else null
+    return listOfNotNull(rewrite, summarize, style).joinToString(" · ")
+}
+
+private fun profileChips(profile: Profile): List<String> {
+    val language = profile.language?.uppercase() ?: "Auto"
+    val cleanup = if (profile.llmEnabled) "Cleanup on" else "Cleanup off"
+    val emoji = if (profile.emojiAllowed) "Emoji ok" else null
+    return listOfNotNull(language, cleanup, emoji)
 }
 
 @Composable
@@ -248,26 +338,12 @@ private fun IconButtonSurface(
     Surface(
         onClick = onClick,
         shape = MaterialTheme.shapes.large,
-        color = if (prominent) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+        color = if (prominent) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
         contentColor = if (prominent) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
     ) {
-        Box(modifier = Modifier.size(width = 56.dp, height = 48.dp), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.size(width = 48.dp, height = 44.dp), contentAlignment = Alignment.Center) {
             content()
         }
-    }
-}
-
-@Composable
-private fun ModelLine(icon: String, text: String) {
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(icon, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(
-            text = text,
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
     }
 }
 
