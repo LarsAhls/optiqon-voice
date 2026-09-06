@@ -1,4 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.OptiqonVoice" parent="android:Theme.Material.Light.NoActionBar" />
+    <!--
+        The window is painted before Compose draws its first frame. A light platform theme
+        here would flash white on every cold start of an app that is only ever dark.
+    -->
+    <style name="Theme.OptiqonVoice" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/canvas</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+    </style>
 </resources>

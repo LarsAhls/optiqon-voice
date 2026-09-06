@@ -1,11 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    The launcher foreground is the same mark, scaled to sit inside the adaptive icon's safe
+    circle so no launcher shape can clip the tail.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <!-- Microphone icon -->
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M54,24c-4.42,0 -8,3.58 -8,8v20c0,4.42 3.58,8 8,8s8,-3.58 8,-8V32c0,-4.42 -3.58,-8 -8,-8zM66,52c0,6.63 -5.37,12 -12,12s-12,-5.37 -12,-12h-4c0,8.28 6.36,15.1 14,15.87V76h4v-8.13c7.64,-0.77 14,-7.59 14,-15.87h-4z" />
+    android:viewportWidth="120"
+    android:viewportHeight="120">
+    <group
+        android:pivotX="60"
+        android:pivotY="60"
+        android:scaleX="0.66"
+        android:scaleY="0.66"
+        android:translateX="-6"
+        android:translateY="-6">
+        <path
+            android:pathData="M16,60 a44,44 0 1,0 88,0 a44,44 0 1,0 -88,0"
+            android:strokeColor="#15120E"
+            android:strokeWidth="12" />
+        <path
+            android:pathData="M76,89 L90,103"
+            android:strokeColor="#4C7358"
+            android:strokeWidth="12"
+            android:strokeLineCap="round" />
+        <path
+            android:pathData="M48,60 a12,12 0 1,0 24,0 a12,12 0 1,0 -24,0"
+            android:fillColor="#4C7358" />
+    </group>
 </vector>

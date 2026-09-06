@@ -5,9 +5,14 @@ import androidx.compose.material3.Shapes
 import androidx.compose.ui.unit.dp
 
 val Shapes = Shapes(
-    extraSmall = RoundedCornerShape(12.dp),
-    small = RoundedCornerShape(16.dp),
-    medium = RoundedCornerShape(20.dp),
-    large = RoundedCornerShape(28.dp),
-    extraLarge = RoundedCornerShape(36.dp)
+    // Inline chips inside a card.
+    extraSmall = RoundedCornerShape(8.dp),
+    // Text fields.
+    small = RoundedCornerShape(14.dp),
+    // Rows that can be picked, such as the onboarding options.
+    medium = RoundedCornerShape(18.dp),
+    // Cards.
+    large = RoundedCornerShape(22.dp),
+    // Bottom sheets.
+    extraLarge = RoundedCornerShape(28.dp)
 )
