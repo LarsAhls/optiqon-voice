@@ -210,5 +210,7 @@ dependencies {
     testImplementation(libs.roborazzi.compose)
     testImplementation(libs.roborazzi.junit.rule)
     testImplementation(libs.okhttp.mockwebserver)
+    // The app refuses plain HTTP, so the verifier can only be exercised over TLS.
+    testImplementation(libs.okhttp.tls)
     testImplementation(libs.room.testing)
 }

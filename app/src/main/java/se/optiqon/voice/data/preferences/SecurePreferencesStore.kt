@@ -9,7 +9,11 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class SecurePreferencesStore @Inject constructor(
+/**
+ * Open, and the backing store with it, only so tests can swap in a plain [SharedPreferences]:
+ * EncryptedSharedPreferences needs the AndroidKeyStore, which does not exist off-device.
+ */
+open class SecurePreferencesStore @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
     companion object {
@@ -18,7 +22,7 @@ class SecurePreferencesStore @Inject constructor(
         private const val LLM_API_KEY = "llm_api_key"
     }
 
-    private val sharedPreferences: SharedPreferences by lazy {
+    protected open val sharedPreferences: SharedPreferences by lazy {
         val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
 
         EncryptedSharedPreferences.create(
