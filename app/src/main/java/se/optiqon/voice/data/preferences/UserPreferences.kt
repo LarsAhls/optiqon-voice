@@ -17,5 +17,12 @@ data class UserPreferences(
     val historyEnabled: Boolean = true,
     val keepStatsWithoutHistory: Boolean = false,
     val historyRetentionLimit: Int = 500,
-    val startOnBoot: Boolean = true
+    val startOnBoot: Boolean = true,
+    /**
+     * False until the first-run flow has been walked through. Installs that predate the flow
+     * are treated as done, so nobody who already has a working setup is sent back to step one.
+     */
+    val onboardingComplete: Boolean = false,
+    /** Which provider preset filled the endpoint fields in, or "custom" if the user did. */
+    val providerPresetId: String = "custom"
 )

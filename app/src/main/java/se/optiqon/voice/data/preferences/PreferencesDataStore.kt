@@ -49,6 +49,8 @@ class PreferencesDataStore @Inject constructor(
         val KEEP_STATS_WITHOUT_HISTORY = booleanPreferencesKey("keep_stats_without_history")
         val HISTORY_RETENTION_LIMIT = intPreferencesKey("history_retention_limit")
         val START_ON_BOOT = booleanPreferencesKey("start_on_boot")
+        val ONBOARDING_COMPLETE = booleanPreferencesKey("onboarding_complete")
+        val PROVIDER_PRESET_ID = stringPreferencesKey("provider_preset_id")
     }
 
     val preferences: Flow<UserPreferences> = context.dataStore.data
@@ -78,7 +80,12 @@ class PreferencesDataStore @Inject constructor(
             historyEnabled = prefs[Keys.HISTORY_ENABLED] ?: true,
             keepStatsWithoutHistory = prefs[Keys.KEEP_STATS_WITHOUT_HISTORY] ?: false,
             historyRetentionLimit = (prefs[Keys.HISTORY_RETENTION_LIMIT] ?: 500).coerceIn(1, 5000),
-            startOnBoot = prefs[Keys.START_ON_BOOT] ?: true
+            startOnBoot = prefs[Keys.START_ON_BOOT] ?: true,
+            // An install that already has an endpoint configured has, by any useful
+            // definition, been through setup — the flag simply did not exist when it did.
+            onboardingComplete = prefs[Keys.ONBOARDING_COMPLETE]
+                ?: prefs[Keys.ASR_BASE_URL].orEmpty().isNotBlank(),
+            providerPresetId = prefs[Keys.PROVIDER_PRESET_ID] ?: "custom"
         )
     }
     .distinctUntilChanged()
@@ -122,6 +129,18 @@ class PreferencesDataStore @Inject constructor(
             prefs[Keys.KEEP_STATS_WITHOUT_HISTORY] = keepStatsWithoutHistory
             prefs[Keys.HISTORY_RETENTION_LIMIT] = historyRetentionLimit.coerceIn(1, 5000)
             prefs[Keys.START_ON_BOOT] = startOnBoot
+        }
+    }
+
+    suspend fun updateProviderPreset(presetId: String) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.PROVIDER_PRESET_ID] = presetId
+        }
+    }
+
+    suspend fun setOnboardingComplete(complete: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.ONBOARDING_COMPLETE] = complete
         }
     }
 
