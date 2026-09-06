@@ -116,6 +116,16 @@ android {
     room {
         schemaDirectory("$projectDir/schemas")
     }
+
+    // Robolectric needs the merged resources and the real AndroidManifest to inflate a
+    // Compose hierarchy, and Roborazzi needs the native graphics mode to get pixels out
+    // of it. Without both, every screenshot test would render an empty bitmap.
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+            isReturnDefaultValues = true
+        }
+    }
 }
 
 /**
@@ -124,6 +134,11 @@ android {
  * forwarded through providers so the configuration cache stays valid.
  */
 tasks.withType<Test>().configureEach {
+    systemProperty("robolectric.graphicsMode", "NATIVE")
+    // Roborazzi is used without its Gradle plugin, so the task type it would otherwise
+    // set has to be declared here. Recording is the mode the screenshots are for: the
+    // baselines are reviewed by eye against the design handoff, not diffed by the build.
+    systemProperty("roborazzi.test.record", "true")
     testLogging {
         showStandardStreams = true
         events("passed", "skipped", "failed")
@@ -185,4 +200,15 @@ dependencies {
     // Test
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.androidx.test.ext.junit)
+    testImplementation(platform(libs.compose.bom))
+    testImplementation(libs.compose.ui.test.junit4)
+    debugImplementation(libs.compose.ui.test.manifest)
+    testImplementation(libs.roborazzi)
+    testImplementation(libs.roborazzi.compose)
+    testImplementation(libs.roborazzi.junit.rule)
+    testImplementation(libs.okhttp.mockwebserver)
+    testImplementation(libs.room.testing)
 }
