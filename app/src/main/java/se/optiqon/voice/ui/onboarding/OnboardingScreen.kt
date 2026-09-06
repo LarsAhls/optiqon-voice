@@ -112,18 +112,19 @@ private fun StepHeading(title: String, body: String) {
 private fun LanguageStep(state: OnboardingUiState, viewModel: OnboardingViewModel) {
     Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
         StepHeading(
-            title = "What do you dictate in?",
-            body = "Naming your languages gives the transcriber a much better chance than " +
-                "letting it guess. You can pick more than one, and change this later."
+            title = "Speak.\nIt types.",
+            body = "A small bubble floats over your apps. Tap it, talk, and clean text lands " +
+                "where your cursor is."
         )
-        SectionEyebrow("Languages")
+        SectionEyebrow("Which language do you speak most?")
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             LANGUAGE_CHOICES.forEach { choice ->
                 OptionRow(
                     title = choice.label,
-                    subtitle = choice.code.uppercase(),
-                    selected = choice.code in state.languages,
-                    onClick = { viewModel.toggleLanguage(choice.code) }
+                    subtitle = choice.subtitle,
+                    badge = choice.badge,
+                    selected = choice.code == state.language,
+                    onClick = { viewModel.selectLanguage(choice.code) }
                 )
             }
         }
@@ -135,9 +136,9 @@ private fun ConnectStep(state: OnboardingUiState, viewModel: OnboardingViewModel
     val context = LocalContext.current
     Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
         StepHeading(
-            title = "Connect a transcriber",
-            body = "Your speech is sent to a provider you choose and pay for directly. " +
-                "The key stays encrypted on this device."
+            title = "Connect a\nspeech service",
+            body = "Your voice is sent to a service that turns it into text. Groq is free to " +
+                "start, fast, and works well with Swedish."
         )
 
         SectionEyebrow("Provider")
@@ -233,9 +234,9 @@ private fun ConnectStep(state: OnboardingUiState, viewModel: OnboardingViewModel
 private fun PermissionsStep() {
     Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
         StepHeading(
-            title = "Three permissions",
-            body = "The bubble has to float over other apps, hear you, and type into the " +
-                "field you are looking at. Android grants each of those separately."
+            title = "Three things\nAndroid asks for",
+            body = "Each one opens a system screen. Flip the switch there and come back — " +
+                "this list updates by itself."
         )
         SectionEyebrow("Required")
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -244,6 +245,13 @@ private fun PermissionsStep() {
             PermissionCard(rememberAccessibilityPermissionState())
             PermissionCard(rememberNotificationPermissionState())
         }
+        Text(
+            text = "Voice does not type into password fields or other protected fields. " +
+                "Your voice goes only to the speech service you chose. OPTIQON hears from " +
+                "you only if you send feedback.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
@@ -268,20 +276,28 @@ private fun StepActions(state: OnboardingUiState, viewModel: OnboardingViewModel
 
             OnboardingStep.PERMISSIONS -> {
                 PrimaryButton("Start using Optiqon Voice", onClick = viewModel::finish)
-                SecondaryButton("Back", onClick = viewModel::back)
+                // Leaving early is allowed: Home lists whatever is still missing, so a
+                // permission screen is never a dead end.
+                SecondaryButton("Finish later", onClick = viewModel::finish)
+                GhostButton("Back", onClick = viewModel::back)
             }
         }
     }
 }
 
-private data class LanguageChoice(val code: String, val label: String)
+private data class LanguageChoice(
+    val code: String?,
+    val label: String,
+    val subtitle: String? = null,
+    val badge: String? = null
+)
 
 /**
- * The quick options the rest of the app already offers, minus "Auto" — this step exists
- * precisely to avoid leaving the choice to the provider — plus English, which is the other
- * language nearly every user of this app dictates in.
+ * One answer, not a set: naming the language you actually speak is what makes the
+ * transcription good, and `null` is the honest "let it detect" option rather than a blank.
  */
-private val LANGUAGE_CHOICES: List<LanguageChoice> =
-    TranscriptionLanguages.quickOptions
-        .mapNotNull { option -> option.code?.let { LanguageChoice(it, option.label) } }
-        .plus(LanguageChoice("en", "English"))
+private val LANGUAGE_CHOICES: List<LanguageChoice> = listOf(
+    LanguageChoice(TranscriptionLanguages.DEFAULT_CODE, "Svenska", badge = "Rekommenderat"),
+    LanguageChoice("en", "English"),
+    LanguageChoice(null, "Let the app detect it", subtitle = "Slightly less accurate")
+)

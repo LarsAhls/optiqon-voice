@@ -62,6 +62,7 @@ private sealed interface SettingsMode {
     data object Rules : SettingsMode
     data object Prompts : SettingsMode
     data object BuiltIns : SettingsMode
+    data object About : SettingsMode
 }
 
 @Composable
@@ -102,6 +103,7 @@ fun SettingsScreen(
             onSaveGeneral = viewModel::saveGeneralSettings,
             onRules = { mode = SettingsMode.Rules },
             onPrompts = { mode = SettingsMode.Prompts },
+            onAbout = { mode = SettingsMode.About },
             outerPadding = outerPadding
         )
         SettingsMode.Rules -> TextReplacementRulesScreen(
@@ -125,6 +127,10 @@ fun SettingsScreen(
             prompts = prompts.filter(PostProcessingPrompt::builtIn),
             onBack = { mode = SettingsMode.Prompts },
             onOpen = { viewingPrompt = it },
+            outerPadding = outerPadding
+        )
+        SettingsMode.About -> AboutScreen(
+            onBack = { mode = SettingsMode.Main },
             outerPadding = outerPadding
         )
     }
@@ -185,6 +191,7 @@ private fun SettingsMainScreen(
     onSaveGeneral: (Boolean, Boolean, Boolean, Long, Boolean, Boolean, Int, Boolean) -> Unit,
     onRules: () -> Unit,
     onPrompts: () -> Unit,
+    onAbout: () -> Unit,
     outerPadding: PaddingValues
 ) {
     AppScaffold(
@@ -220,6 +227,11 @@ private fun SettingsMainScreen(
             }
             item("recording") {
                 RecordingHistorySection(preferences = preferences, onSave = onSaveGeneral)
+            }
+            item("about") {
+                SectionCard(title = "About", subtitle = "Version, licence and the notices this build ships.") {
+                    NavigationRow("About Optiqon Voice", "Version, GPLv3 and bundled font licences.", onAbout)
+                }
             }
         }
     }
@@ -338,7 +350,7 @@ private fun BuiltInPromptsScreen(
 }
 
 @Composable
-private fun DrillInScaffold(
+internal fun DrillInScaffold(
     title: String,
     onBack: () -> Unit,
     onAdd: (() -> Unit)?,

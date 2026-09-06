@@ -7,6 +7,7 @@ import se.optiqon.voice.data.db.entity.ProfileEntity
 import se.optiqon.voice.data.db.entity.toEntity
 import se.optiqon.voice.data.preferences.PreferencesDataStore
 import se.optiqon.voice.domain.model.Profile
+import se.optiqon.voice.domain.model.TranscriptionLanguages
 import se.optiqon.voice.domain.processing.BuiltInPrompt
 import se.optiqon.voice.domain.processing.BuiltInPrompts
 import kotlinx.coroutines.flow.Flow
@@ -33,10 +34,14 @@ class ProfileRepository @Inject constructor(
             val prefs = preferencesDataStore.preferences.first()
             profileDao.insert(
                 ProfileEntity(
-                    name = "Default",
+                    name = "Standard",
                     isActive = true,
                     asrModel = prefs.asrModel,
-                    language = prefs.activeLanguage,
+                    // A fresh install has no language yet — onboarding runs after this seed —
+                    // so the profile starts on the app's default rather than on Auto.
+                    language = prefs.activeLanguage
+                        ?: prefs.preferredLanguages.firstOrNull()
+                        ?: TranscriptionLanguages.DEFAULT_CODE,
                     llmEnabled = prefs.llmEnabled,
                     llmModel = prefs.llmModel
                 )
@@ -46,10 +51,26 @@ class ProfileRepository @Inject constructor(
         }
     }
 
+    /**
+     * Onboarding answers belong on the profile the bubble actually uses, not only in
+     * preferences — otherwise the first dictation runs on the seeded defaults.
+     */
+    suspend fun applyLanguageToActiveProfile(language: String?) {
+        ensureDefaults()
+        val active = profileDao.getActiveProfile() ?: return
+        profileDao.update(active.copy(language = language))
+    }
+
+    suspend fun applyProviderToActiveProfile(asrModel: String, llmModel: String, llmEnabled: Boolean) {
+        ensureDefaults()
+        val active = profileDao.getActiveProfile() ?: return
+        profileDao.update(active.copy(asrModel = asrModel, llmModel = llmModel, llmEnabled = llmEnabled))
+    }
+
     suspend fun getActiveProfile(): Profile {
         ensureDefaults()
         return profileDao.getActiveProfile()?.toDomain()
-            ?: Profile(name = "Default", isActive = true)
+            ?: Profile(name = "Standard", isActive = true)
     }
 
     suspend fun getProfile(id: Long): Profile? = profileDao.getProfile(id)?.toDomain()

@@ -31,6 +31,9 @@ data class TranscriptionLanguageOption(
 )
 
 object TranscriptionLanguages {
+    /** What a profile is seeded with before anyone has said otherwise. */
+    const val DEFAULT_CODE = "sv"
+
     val quickOptions: List<TranscriptionLanguageOption> = listOf(
         TranscriptionLanguageOption(code = null, label = "Auto"),
         TranscriptionLanguageOption(code = "sv", label = "Svenska")

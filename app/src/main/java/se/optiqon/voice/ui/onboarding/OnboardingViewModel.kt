@@ -9,6 +9,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import se.optiqon.voice.data.preferences.PreferencesDataStore
+import se.optiqon.voice.data.repository.ProfileRepository
+import se.optiqon.voice.domain.model.TranscriptionLanguages
 import se.optiqon.voice.domain.provider.ProviderPreset
 import se.optiqon.voice.domain.provider.ProviderPresets
 import se.optiqon.voice.domain.provider.ProviderVerifier
@@ -27,7 +29,7 @@ sealed interface ConnectionState {
 
 data class OnboardingUiState(
     val step: OnboardingStep = OnboardingStep.LANGUAGE,
-    val languages: Set<String> = setOf(DEFAULT_LANGUAGE),
+    val language: String? = DEFAULT_LANGUAGE,
     val preset: ProviderPreset = ProviderPresets.RECOMMENDED,
     val showAdvanced: Boolean = false,
     val baseUrl: String = "",
@@ -50,27 +52,22 @@ data class OnboardingUiState(
     val canLeaveConnectStep: Boolean get() = connection == ConnectionState.Verified
 
     companion object {
-        const val DEFAULT_LANGUAGE = "sv"
+        const val DEFAULT_LANGUAGE = TranscriptionLanguages.DEFAULT_CODE
     }
 }
 
 @HiltViewModel
 class OnboardingViewModel @Inject constructor(
     private val preferencesDataStore: PreferencesDataStore,
-    private val providerVerifier: ProviderVerifier
+    private val providerVerifier: ProviderVerifier,
+    private val profileRepository: ProfileRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(OnboardingUiState())
     val uiState: StateFlow<OnboardingUiState> = _uiState.asStateFlow()
 
-    fun toggleLanguage(code: String) {
-        _uiState.update { state ->
-            val next = if (code in state.languages) state.languages - code else state.languages + code
-            // The pipeline needs at least one language to ask for; an empty set would mean
-            // silently falling back to whatever the provider happens to guess.
-            state.copy(languages = next.ifEmpty { state.languages })
-        }
-    }
+    /** `null` is the deliberate "let the provider detect it" choice, not an absent answer. */
+    fun selectLanguage(code: String?) = _uiState.update { it.copy(language = code) }
 
     fun selectPreset(preset: ProviderPreset) {
         _uiState.update { state ->
@@ -117,14 +114,21 @@ class OnboardingViewModel @Inject constructor(
                 if (!state.isCustomPreset) {
                     // Filled in but left switched off, so turning cleanup on later is one tap
                     // rather than another round of endpoint hunting.
+                    // Cleanup on by default: the design's Standard profile removes filler and
+                    // fixes slips, and it runs on the key and host just verified.
                     preferencesDataStore.updateLlmConfig(
                         baseUrl = state.preset.baseUrl,
                         apiKey = state.apiKey,
                         model = state.preset.llmModel,
-                        enabled = false
+                        enabled = true
                     )
                 }
                 preferencesDataStore.updateProviderPreset(state.preset.id)
+                profileRepository.applyProviderToActiveProfile(
+                    asrModel = state.asrModel,
+                    llmModel = state.preset.llmModel,
+                    llmEnabled = !state.isCustomPreset
+                )
             }
             _uiState.update { it.copy(connection = result.toConnectionState()) }
         }
@@ -145,7 +149,9 @@ class OnboardingViewModel @Inject constructor(
         when (state.step) {
             OnboardingStep.LANGUAGE -> {
                 viewModelScope.launch {
-                    preferencesDataStore.updatePreferredLanguages(state.languages.toList())
+                    preferencesDataStore.updatePreferredLanguages(listOfNotNull(state.language))
+                    preferencesDataStore.updateActiveLanguage(state.language)
+                    profileRepository.applyLanguageToActiveProfile(state.language)
                 }
                 _uiState.update { it.copy(step = OnboardingStep.CONNECT) }
             }
