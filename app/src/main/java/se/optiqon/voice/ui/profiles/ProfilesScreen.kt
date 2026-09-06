@@ -50,6 +50,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.activity.compose.BackHandler
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -172,6 +173,16 @@ private fun ProfilesListScreen(
                     LogoTile(size = 32.dp)
                 }
             }
+            // What a profile is, before the list of them rather than after it.
+            item("intro") {
+                Text(
+                    text = "The profile in use decides the language, the service and how much " +
+                        "the text is cleaned up. Switching takes effect on the next dictation.",
+                    modifier = Modifier.padding(bottom = 6.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             items(profiles, key = { it.id }) { profile ->
                 ProfileCard(
                     profile = profile,
@@ -183,11 +194,11 @@ private fun ProfilesListScreen(
             }
             item("footer") {
                 Text(
-                    text = "The profile in use decides the language, the service and how much " +
-                        "the text is cleaned up. Switching takes effect on the next dictation.",
-                    modifier = Modifier.padding(top = 6.dp),
+                    text = "Switch profiles from the bubble too: press and hold it.",
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.outline,
+                    textAlign = TextAlign.Center
                 )
             }
         }

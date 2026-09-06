@@ -65,7 +65,7 @@ import se.optiqon.voice.service.BubbleService
 import se.optiqon.voice.ui.common.GhostButton
 import se.optiqon.voice.ui.common.HairlineDivider
 import se.optiqon.voice.ui.common.OptiqonMark
-import se.optiqon.voice.ui.common.PermissionCard
+import se.optiqon.voice.ui.common.PermissionChecklist
 import se.optiqon.voice.ui.common.PermissionStatus
 import se.optiqon.voice.ui.common.PillShape
 import se.optiqon.voice.ui.common.PrimaryButton
@@ -161,7 +161,9 @@ fun HomeScreen(
                     }
                 )
             }
-            items(missingPermissions, key = { it.name }) { status -> PermissionCard(status = status) }
+            // The same checklist the first run shows, so a permission revoked later is
+            // picked up where it was left rather than presented as a new kind of problem.
+            item("setup_list") { PermissionChecklist(missingPermissions) }
         }
 
         item("recent_header") { SectionEyebrow("Recent") }

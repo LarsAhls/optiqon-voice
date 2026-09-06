@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -28,6 +29,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -225,29 +227,18 @@ private fun SettingsMainScreen(
             item("connection_eyebrow") { SettingsEyebrow("Connection") }
             item("connection") {
                 GroupCard {
+                    // The state of the connection is the row's second line, not a badge
+                    // shouting beside it: not being connected yet is the ordinary state on
+                    // the first run, and nothing has gone wrong.
                     ListRow(
                         title = "Speech service",
                         subtitle = if (connected) {
-                            "Your voice is sent here to be turned into text."
+                            "${preset.displayName} · connected"
                         } else {
-                            "No service connected yet — dictation will not work."
+                            "Not connected yet — dictation will not work"
                         },
                         onClick = onAdvanced,
-                        trailing = {
-                            StatusPill(
-                                label = if (connected) "${preset.displayName} · connected" else "Not connected",
-                                containerColor = if (connected) {
-                                    MaterialTheme.colorScheme.secondaryContainer
-                                } else {
-                                    MaterialTheme.colorScheme.errorContainer
-                                },
-                                contentColor = if (connected) {
-                                    MaterialTheme.colorScheme.onSecondaryContainer
-                                } else {
-                                    MaterialTheme.colorScheme.onErrorContainer
-                                }
-                            )
-                        }
+                        leading = { ConnectionDot(connected = connected) }
                     )
                     HairlineDivider()
                     SwitchRow(
@@ -681,7 +672,14 @@ private fun BubbleSettingsGroup(
                 onValueChange = { silenceThreshold = it },
                 onValueChangeFinished = { save(silenceThresholdMs = silenceThreshold.toLong()) },
                 valueRange = 500f..5000f,
-                steps = 8
+                steps = 8,
+                colors = SliderDefaults.colors(
+                    thumbColor = MaterialTheme.colorScheme.primary,
+                    activeTrackColor = MaterialTheme.colorScheme.primary,
+                    activeTickColor = MaterialTheme.colorScheme.onPrimary,
+                    inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+                    inactiveTickColor = MaterialTheme.colorScheme.outline
+                )
             )
         }
     }
@@ -808,5 +806,22 @@ internal fun settingsContentPadding(padding: PaddingValues, outerPadding: Paddin
         end = 20.dp,
         top = padding.calculateTopPadding() + 16.dp,
         bottom = padding.calculateBottomPadding() + outerPadding.calculateBottomPadding() + 96.dp
+    )
+}
+
+/** Pine when the service answered, clay while it has not been set up yet. */
+@Composable
+private fun ConnectionDot(connected: Boolean) {
+    Box(
+        modifier = Modifier
+            .size(8.dp)
+            .background(
+                color = if (connected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.tertiary
+                },
+                shape = CircleShape
+            )
     )
 }

@@ -139,6 +139,7 @@ fun ListRow(
     subtitle: String? = null,
     onClick: (() -> Unit)? = null,
     enabled: Boolean = true,
+    leading: @Composable (RowScope.() -> Unit)? = null,
     trailing: @Composable (RowScope.() -> Unit)? = null
 ) {
     val contentColor = if (enabled) {
@@ -159,6 +160,7 @@ fun ListRow(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        if (leading != null) leading()
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(text = title, style = MaterialTheme.typography.titleMedium, color = contentColor)
             if (!subtitle.isNullOrBlank()) {
@@ -262,12 +264,20 @@ fun OptionRow(
                     contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                 )
             }
+            // An unselected row still shows where the choice is made, so the group reads as a
+            // set of alternatives rather than as three separate buttons.
             if (selected) {
                 Icon(
                     imageVector = Icons.Default.CheckCircle,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(24.dp)
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .border(1.5.dp, MaterialTheme.colorScheme.outline, CircleShape)
                 )
             }
         }
@@ -378,42 +388,5 @@ fun InlineStatus(text: String, modifier: Modifier = Modifier) {
             style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.primary
         )
-    }
-}
-
-/** A small round step marker: done, in progress, or not reached yet. */
-@Composable
-fun StepMarker(
-    number: Int,
-    done: Boolean,
-    active: Boolean,
-    modifier: Modifier = Modifier
-) {
-    val outline = when {
-        done -> Color.Transparent
-        active -> MaterialTheme.colorScheme.primary
-        else -> MaterialTheme.colorScheme.outline
-    }
-    Box(
-        modifier = modifier
-            .size(32.dp)
-            .background(if (done) MaterialTheme.colorScheme.primary else Color.Transparent, CircleShape)
-            .border(1.5.dp, outline, CircleShape),
-        contentAlignment = Alignment.Center
-    ) {
-        if (done) {
-            Icon(
-                imageVector = Icons.Default.Check,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier.size(18.dp)
-            )
-        } else {
-            Text(
-                text = number.toString(),
-                style = MaterialTheme.typography.labelLarge,
-                color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-            )
-        }
     }
 }

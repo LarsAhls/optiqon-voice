@@ -33,11 +33,11 @@ import se.optiqon.voice.domain.provider.ProviderPresets
 import se.optiqon.voice.ui.common.GhostButton
 import se.optiqon.voice.ui.common.InlineStatus
 import se.optiqon.voice.ui.common.OptionRow
-import se.optiqon.voice.ui.common.PermissionCard
+import se.optiqon.voice.ui.common.OptiqonMark
+import se.optiqon.voice.ui.common.PermissionChecklist
 import se.optiqon.voice.ui.common.PrimaryButton
 import se.optiqon.voice.ui.common.SecondaryButton
 import se.optiqon.voice.ui.common.SectionEyebrow
-import se.optiqon.voice.ui.common.StepMarker
 import se.optiqon.voice.ui.common.Wordmark
 import se.optiqon.voice.ui.common.rememberAccessibilityPermissionState
 import se.optiqon.voice.ui.common.rememberMicrophonePermissionState
@@ -69,8 +69,7 @@ fun OnboardingScreen(
         verticalArrangement = Arrangement.spacedBy(24.dp)
     ) {
         Spacer(Modifier.height(24.dp))
-        Wordmark()
-        StepIndicator(state.step)
+        StepHeader(state.step)
 
         when (state.step) {
             OnboardingStep.LANGUAGE -> LanguageStep(state, viewModel)
@@ -83,16 +82,20 @@ fun OnboardingScreen(
     }
 }
 
+/** The app's name on the left, how far you have got on the right. Same on all three steps. */
 @Composable
-private fun StepIndicator(current: OnboardingStep) {
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-        OnboardingStep.entries.forEachIndexed { index, step ->
-            StepMarker(
-                number = index + 1,
-                done = step.ordinal < current.ordinal,
-                active = step == current
-            )
-        }
+private fun StepHeader(current: OnboardingStep) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Wordmark()
+        Text(
+            text = "${current.ordinal + 1} of ${OnboardingStep.entries.size}",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
@@ -111,6 +114,9 @@ private fun StepHeading(title: String, body: String) {
 @Composable
 private fun LanguageStep(state: OnboardingUiState, viewModel: OnboardingViewModel) {
     Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        // The mark, once and large: the first screen is the only place the app introduces
+        // itself, and everything below it is a question.
+        OptiqonMark(modifier = Modifier.align(Alignment.CenterHorizontally), size = 120.dp)
         StepHeading(
             title = "Speak.\nIt types.",
             body = "A small bubble floats over your apps. Tap it, talk, and clean text lands " +
@@ -234,17 +240,21 @@ private fun ConnectStep(state: OnboardingUiState, viewModel: OnboardingViewModel
 private fun PermissionsStep() {
     Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
         StepHeading(
-            title = "Three things\nAndroid asks for",
+            // Four rows, not the handoff's three: notifications are their own Android
+            // permission from 13 on, and the headline must not promise a shorter list.
+            title = "A few things\nAndroid asks for",
             body = "Each one opens a system screen. Flip the switch there and come back — " +
                 "this list updates by itself."
         )
         SectionEyebrow("Required")
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            PermissionCard(rememberMicrophonePermissionState())
-            PermissionCard(rememberOverlayPermissionState())
-            PermissionCard(rememberAccessibilityPermissionState())
-            PermissionCard(rememberNotificationPermissionState())
-        }
+        PermissionChecklist(
+            listOf(
+                rememberMicrophonePermissionState(),
+                rememberOverlayPermissionState(),
+                rememberAccessibilityPermissionState(),
+                rememberNotificationPermissionState()
+            )
+        )
         Text(
             text = "Voice does not type into password fields or other protected fields. " +
                 "Your voice goes only to the speech service you chose. OPTIQON hears from " +
