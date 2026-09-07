@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The Optiqon mark: a ring, a dot at its centre, and a tail leaving the ring at the lower
+    right. Drawn as strokes so it stays even-weighted at any size. The two colours are
+    tinted by the caller, since the mark appears both on the dark screens and on a light
+    tile.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="120dp"
+    android:height="120dp"
+    android:viewportWidth="120"
+    android:viewportHeight="120">
+    <path
+        android:pathData="M16,60 a44,44 0 1,0 88,0 a44,44 0 1,0 -88,0"
+        android:strokeColor="#F2F4F1"
+        android:strokeWidth="12" />
+    <path
+        android:pathData="M76,89 L90,103"
+        android:strokeColor="#7EC8BA"
+        android:strokeWidth="12"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M48,60 a12,12 0 1,0 24,0 a12,12 0 1,0 -24,0"
+        android:fillColor="#7EC8BA" />
+</vector>

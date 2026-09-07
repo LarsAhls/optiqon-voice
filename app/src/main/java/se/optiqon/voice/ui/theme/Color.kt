@@ -29,3 +29,24 @@ val Ink100 = Color(0xFF111311)
 val Slate80 = Color(0xFF96A5A0)
 val Slate100 = Color(0xFF3A433F)
 val Slate110 = Color(0xFF1E2725)
+
+/*
+ * Surface ladder for the redesign. The three greens are deliberately close together: the
+ * hierarchy is carried by the hairlines between them, not by contrast, so the screens read
+ * as one dark sheet of paper rather than as stacked panels.
+ */
+val Canvas = Color(0xFF0F1513)
+val SurfaceCard = Color(0xFF182220)
+val SurfaceRaised = Color(0xFF1F2B28)
+
+val TextPrimary = Color(0xFFF2F4F1)
+val TextSecondary = Color(0xFF98A6A0)
+val TextTertiary = Ink40
+
+/** Dividers and the resting border of a card. White at low alpha, so it works on all three surfaces. */
+val Hairline = Color(0x0FFFFFFF)
+val CardBorder = Color(0x14FFFFFF)
+
+/** A selected card is outlined in pine and sits in a wide, very faint halo of the same colour. */
+val SelectedBorder = Color(0x737EC8BA)
+val SelectedHalo = Color(0x0D7EC8BA)

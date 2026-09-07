@@ -5,6 +5,10 @@ import androidx.lifecycle.viewModelScope
 import se.optiqon.voice.data.db.dao.DictationDao
 import se.optiqon.voice.data.db.dao.LifetimeStatsDao
 import se.optiqon.voice.data.db.entity.DictationStats
+import se.optiqon.voice.data.preferences.PreferencesDataStore
+import se.optiqon.voice.data.repository.ProfileRepository
+import se.optiqon.voice.domain.model.Profile
+import se.optiqon.voice.domain.provider.ProviderPresets
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -25,8 +29,19 @@ private val EMPTY_STATS = DictationStats(count = 0, wordCount = 0, durationMs = 
 @HiltViewModel
 class HomeViewModel @Inject constructor(
     dictationDao: DictationDao,
-    lifetimeStatsDao: LifetimeStatsDao
+    lifetimeStatsDao: LifetimeStatsDao,
+    profileRepository: ProfileRepository,
+    preferencesDataStore: PreferencesDataStore
 ) : ViewModel() {
+
+    /** What the header chip says: the profile in use and the service behind it. */
+    val activeProfile: StateFlow<Profile?> = profileRepository.activeProfile
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    val providerName: StateFlow<String> = preferencesDataStore.preferences
+        .map { ProviderPresets.byId(it.providerPresetId).displayName }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "")
+
     private val startOfToday = MutableStateFlow(currentStartOfDay())
 
     val todayStats: StateFlow<DictationStats> = startOfToday

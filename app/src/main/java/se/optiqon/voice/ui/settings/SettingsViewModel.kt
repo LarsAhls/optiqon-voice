@@ -3,7 +3,6 @@ package se.optiqon.voice.ui.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import se.optiqon.voice.data.api.ApiClientFactory
-import se.optiqon.voice.data.api.AsrApiService
 import se.optiqon.voice.data.api.LlmApiService
 import se.optiqon.voice.data.api.model.ChatCompletionRequest
 import se.optiqon.voice.data.api.model.ChatMessage
@@ -11,6 +10,8 @@ import se.optiqon.voice.data.preferences.PreferencesDataStore
 import se.optiqon.voice.data.preferences.UserPreferences
 import se.optiqon.voice.data.repository.ProcessingRepository
 import se.optiqon.voice.domain.model.PostProcessingPrompt
+import se.optiqon.voice.domain.provider.ProviderVerifier
+import se.optiqon.voice.domain.provider.VerificationResult
 import se.optiqon.voice.domain.model.TextReplacementRule
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -21,9 +22,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.MultipartBody
-import okhttp3.RequestBody.Companion.toRequestBody
 import retrofit2.HttpException
 import javax.inject.Inject
 
@@ -38,7 +36,8 @@ sealed class TestState {
 class SettingsViewModel @Inject constructor(
     private val preferencesDataStore: PreferencesDataStore,
     private val apiClientFactory: ApiClientFactory,
-    private val processingRepository: ProcessingRepository
+    private val processingRepository: ProcessingRepository,
+    private val providerVerifier: ProviderVerifier
 ) : ViewModel() {
     private var asrSavedResetJob: Job? = null
     private var llmSavedResetJob: Job? = null
@@ -164,24 +163,11 @@ class SettingsViewModel @Inject constructor(
         asrTestJob = viewModelScope.launch {
             asrTestResetJob?.cancel()
             _asrTestState.value = TestState.Testing
-            try {
-                val service = apiClientFactory.create(AsrApiService::class.java, baseUrl, apiKey)
-                // Send a tiny silent WAV to actually test the endpoint
-                val silentWav = createSilentWav()
-                val filePart = MultipartBody.Part.createFormData(
-                    "file", "test.wav",
-                    silentWav.toRequestBody("audio/wav".toMediaType())
-                )
-                val modelPart = model.toRequestBody("text/plain".toMediaType())
-                service.transcribe(filePart, modelPart)
-                _asrTestState.value = TestState.Success("Connected")
-            } catch (e: HttpException) {
-                val errorBody = try {
-                    e.response()?.errorBody()?.string()?.take(300) ?: "No details"
-                } catch (_: Exception) { "Could not read error body" }
-                _asrTestState.value = TestState.Error("HTTP ${e.code()}: $errorBody")
-            } catch (e: Exception) {
-                _asrTestState.value = TestState.Error(e.message ?: "Unknown error")
+            _asrTestState.value = when (val result = providerVerifier.verifyTranscription(baseUrl, apiKey, model)) {
+                is VerificationResult.Ok -> TestState.Success("Connected")
+                is VerificationResult.Rejected -> TestState.Error("HTTP ${result.status}: ${result.detail}")
+                is VerificationResult.Unreachable -> TestState.Error(result.detail)
+                is VerificationResult.Invalid -> TestState.Error(result.detail)
             }
             asrTestResetJob = viewModelScope.launch {
                 delay(5000)
@@ -220,26 +206,4 @@ class SettingsViewModel @Inject constructor(
     }
 
     /** Create a minimal valid WAV file (0.1s of silence) for testing the ASR endpoint */
-    private fun createSilentWav(): ByteArray {
-        val sampleRate = 16000
-        val numSamples = sampleRate / 10 // 0.1 second
-        val dataSize = numSamples * 2 // 16-bit = 2 bytes per sample
-        val buffer = java.nio.ByteBuffer.allocate(44 + dataSize)
-            .order(java.nio.ByteOrder.LITTLE_ENDIAN)
-        buffer.put("RIFF".toByteArray())
-        buffer.putInt(36 + dataSize)
-        buffer.put("WAVE".toByteArray())
-        buffer.put("fmt ".toByteArray())
-        buffer.putInt(16)
-        buffer.putShort(1) // PCM
-        buffer.putShort(1) // mono
-        buffer.putInt(sampleRate)
-        buffer.putInt(sampleRate * 2) // byte rate
-        buffer.putShort(2) // block align
-        buffer.putShort(16) // bits per sample
-        buffer.put("data".toByteArray())
-        buffer.putInt(dataSize)
-        // silence = zeros (already initialized to 0)
-        return buffer.array()
-    }
 }

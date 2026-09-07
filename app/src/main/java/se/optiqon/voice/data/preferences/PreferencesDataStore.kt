@@ -26,10 +26,16 @@ import javax.inject.Singleton
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
 @Singleton
-class PreferencesDataStore @Inject constructor(
+open class PreferencesDataStore @Inject constructor(
     @ApplicationContext private val context: Context,
     private val securePreferencesStore: SecurePreferencesStore
 ) {
+    /**
+     * Open only so tests can point at a file of their own: the delegate above is one
+     * instance per process, so every test would otherwise share one store, and its contents.
+     */
+    protected open val store: DataStore<Preferences> get() = context.dataStore
+
     private object Keys {
         val ASR_BASE_URL = stringPreferencesKey("asr_base_url")
         val ASR_API_KEY = stringPreferencesKey("asr_api_key")
@@ -49,9 +55,13 @@ class PreferencesDataStore @Inject constructor(
         val KEEP_STATS_WITHOUT_HISTORY = booleanPreferencesKey("keep_stats_without_history")
         val HISTORY_RETENTION_LIMIT = intPreferencesKey("history_retention_limit")
         val START_ON_BOOT = booleanPreferencesKey("start_on_boot")
+        val ONBOARDING_COMPLETE = booleanPreferencesKey("onboarding_complete")
+        val PROVIDER_PRESET_ID = stringPreferencesKey("provider_preset_id")
     }
 
-    val preferences: Flow<UserPreferences> = context.dataStore.data
+    // A getter, not an initialised field: [store] is overridable, and an open member must not
+    // be read while the constructor is still running.
+    val preferences: Flow<UserPreferences> get() = store.data
         .catch { exception ->
             if (exception is IOException) {
                 Log.e("PreferencesDataStore", "Error reading preferences", exception)
@@ -78,7 +88,12 @@ class PreferencesDataStore @Inject constructor(
             historyEnabled = prefs[Keys.HISTORY_ENABLED] ?: true,
             keepStatsWithoutHistory = prefs[Keys.KEEP_STATS_WITHOUT_HISTORY] ?: false,
             historyRetentionLimit = (prefs[Keys.HISTORY_RETENTION_LIMIT] ?: 500).coerceIn(1, 5000),
-            startOnBoot = prefs[Keys.START_ON_BOOT] ?: true
+            startOnBoot = prefs[Keys.START_ON_BOOT] ?: true,
+            // An install that already has an endpoint configured has, by any useful
+            // definition, been through setup — the flag simply did not exist when it did.
+            onboardingComplete = prefs[Keys.ONBOARDING_COMPLETE]
+                ?: prefs[Keys.ASR_BASE_URL].orEmpty().isNotBlank(),
+            providerPresetId = prefs[Keys.PROVIDER_PRESET_ID] ?: "custom"
         )
     }
     .distinctUntilChanged()
@@ -86,7 +101,7 @@ class PreferencesDataStore @Inject constructor(
 
     suspend fun updateAsrConfig(baseUrl: String, apiKey: String, model: String) {
         securePreferencesStore.updateAsrApiKey(apiKey.trim())
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             prefs[Keys.ASR_BASE_URL] = baseUrl.trim()
             prefs.remove(Keys.ASR_API_KEY)
             prefs[Keys.ASR_MODEL] = model.trim()
@@ -95,7 +110,7 @@ class PreferencesDataStore @Inject constructor(
 
     suspend fun updateLlmConfig(baseUrl: String, apiKey: String, model: String, enabled: Boolean) {
         securePreferencesStore.updateLlmApiKey(apiKey.trim())
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             prefs[Keys.LLM_BASE_URL] = baseUrl.trim()
             prefs.remove(Keys.LLM_API_KEY)
             prefs[Keys.LLM_MODEL] = model.trim()
@@ -113,7 +128,7 @@ class PreferencesDataStore @Inject constructor(
         historyRetentionLimit: Int,
         startOnBoot: Boolean
     ) {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             prefs[Keys.AUTO_CLIPBOARD] = autoClipboard
             prefs[Keys.VIBRATE_ON_RECORD] = vibrateOnRecord
             prefs[Keys.PAUSE_OTHER_AUDIO] = pauseOtherAudio
@@ -125,8 +140,20 @@ class PreferencesDataStore @Inject constructor(
         }
     }
 
+    suspend fun updateProviderPreset(presetId: String) {
+        store.edit { prefs ->
+            prefs[Keys.PROVIDER_PRESET_ID] = presetId
+        }
+    }
+
+    suspend fun setOnboardingComplete(complete: Boolean) {
+        store.edit { prefs ->
+            prefs[Keys.ONBOARDING_COMPLETE] = complete
+        }
+    }
+
     suspend fun updateActiveLanguage(language: String?) {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             if (language == null) {
                 prefs.remove(Keys.ACTIVE_LANGUAGE)
             } else {
@@ -136,26 +163,26 @@ class PreferencesDataStore @Inject constructor(
     }
 
     suspend fun toggleLlmEnabled() {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             prefs[Keys.LLM_ENABLED] = !(prefs[Keys.LLM_ENABLED] ?: false)
         }
     }
 
     suspend fun toggleHistoryEnabled() {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             prefs[Keys.HISTORY_ENABLED] = !(prefs[Keys.HISTORY_ENABLED] ?: true)
         }
     }
 
     suspend fun updatePreferredLanguages(languages: List<String>) {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             prefs[Keys.PREFERRED_LANGUAGES] = languages.joinToString(",")
             prefs.remove(Keys.LANGUAGE)
         }
     }
 
     suspend fun runStartupMigrations() {
-        migrateLegacySecretsIfNeeded(context.dataStore.data.first())
+        migrateLegacySecretsIfNeeded(store.data.first())
     }
 
     private fun resolveActiveLanguage(prefs: Preferences): String? {
@@ -189,7 +216,7 @@ class PreferencesDataStore @Inject constructor(
             securePreferencesStore.updateLlmApiKey(legacyLlmApiKey)
         }
 
-        context.dataStore.edit { mutablePrefs ->
+        store.edit { mutablePrefs ->
             mutablePrefs.remove(Keys.ASR_API_KEY)
             mutablePrefs.remove(Keys.LLM_API_KEY)
         }

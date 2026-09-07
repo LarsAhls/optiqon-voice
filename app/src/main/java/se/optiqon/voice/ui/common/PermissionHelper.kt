@@ -9,17 +9,19 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -32,6 +34,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -46,57 +49,110 @@ data class PermissionStatus(
     val onRequest: () -> Unit
 )
 
+/**
+ * The permissions as a list of steps rather than as a wall of warnings. Nothing here is an
+ * error: a permission that has not been granted yet is simply the next thing to do, and only
+ * the step the user is on carries a button, so the screen has one obvious next action.
+ */
 @Composable
-fun PermissionCard(status: PermissionStatus) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = if (status.granted)
-                MaterialTheme.colorScheme.primaryContainer
-            else
-                MaterialTheme.colorScheme.errorContainer
-        )
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Text(
-                        text = status.name,
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Text(
-                        text = status.description,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Icon(
-                    imageVector = if (status.granted) Icons.Default.CheckCircle else Icons.Default.Warning,
-                    contentDescription = if (status.granted) "Granted" else "Not granted",
-                    tint = if (status.granted)
-                        MaterialTheme.colorScheme.primary
-                    else
-                        MaterialTheme.colorScheme.error
-                )
-            }
+fun PermissionChecklist(statuses: List<PermissionStatus>, modifier: Modifier = Modifier) {
+    val active = statuses.indexOfFirst { !it.granted }
+    Column(modifier = modifier.fillMaxWidth()) {
+        statuses.forEachIndexed { index, status ->
+            if (index > 0) HairlineDivider()
+            PermissionStep(status = status, number = index + 1, isActive = index == active)
+        }
+    }
+}
 
+@Composable
+private fun PermissionStep(status: PermissionStatus, number: Int, isActive: Boolean) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 18.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        StepCircle(number = number, granted = status.granted, isActive = isActive)
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Done recedes, the current step is the only one at full contrast, and the steps
+            // after it stay legible but quiet.
+            Text(
+                text = status.name,
+                style = MaterialTheme.typography.titleMedium,
+                color = if (isActive) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                textDecoration = if (status.granted) TextDecoration.LineThrough else null
+            )
             if (!status.granted) {
-                Button(onClick = status.onRequest, modifier = Modifier.fillMaxWidth()) {
-                    Text(status.actionLabel)
+                Text(
+                    text = status.description,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (isActive) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.outline
+                    }
+                )
+                if (isActive) {
+                    GhostButton(
+                        text = status.actionLabel,
+                        icon = Icons.AutoMirrored.Filled.ArrowForward,
+                        accent = true,
+                        onClick = status.onRequest
+                    )
                 }
             }
+        }
+        if (status.granted) {
+            Text(
+                text = "Done",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+    }
+}
+
+/** Filled with a check once the step is done, outlined and numbered until then. */
+@Composable
+private fun StepCircle(number: Int, granted: Boolean, isActive: Boolean) {
+    val outline = if (isActive) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.outline
+    }
+    Box(
+        modifier = Modifier
+            .size(32.dp)
+            .then(
+                if (granted) {
+                    Modifier.background(MaterialTheme.colorScheme.primary, CircleShape)
+                } else {
+                    Modifier.border(1.5.dp, outline, CircleShape)
+                }
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        if (granted) {
+            Icon(
+                imageVector = Icons.Default.Check,
+                contentDescription = "Granted",
+                tint = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.size(18.dp)
+            )
+        } else {
+            Text(
+                text = number.toString(),
+                style = MaterialTheme.typography.labelLarge,
+                color = outline
+            )
         }
     }
 }
