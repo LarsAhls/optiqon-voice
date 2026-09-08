@@ -44,5 +44,16 @@ data class StorageRoot(val name: String) {
          * audio are opened by the same paths they were written under.
          */
         val DEFAULT = StorageRoot("default")
+
+        /**
+         * Where a process with no confirmed identity writes once the data on the device belongs
+         * to somebody.
+         *
+         * Not a hiding place and not a deletion: the owner's files stay exactly where they are,
+         * and this process simply does not open them. It is its own root rather than "no storage
+         * at all" because the app still has to be able to start, render a signed-out screen and
+         * remember that it did.
+         */
+        val SIGNED_OUT = StorageRoot("signedout")
     }
 }

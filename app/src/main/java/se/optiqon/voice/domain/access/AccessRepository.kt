@@ -48,6 +48,9 @@ data class AccessConfig(val graceMs: Long = AccessGate.PROPOSED_GRACE_MS)
  *     [AccountStatus] as "the server said so" rather than "the cache said so".
  *  2. **A slow answer never overwrites a newer one.** An answer carries the epoch it was asked
  *     under and its position in the read order; one that is stale in either respect is dropped.
+ *     Both tests are made *at the moment of writing*, inside the store's own transaction —
+ *     checking first and writing afterwards would let two answers pass the same check and then
+ *     commit in the wrong order.
  */
 @Singleton
 class AccessRepository @Inject constructor(
@@ -136,17 +139,12 @@ class AccessRepository @Inject constructor(
         seq: Long,
         status: AccountStatus
     ): Boolean {
-        // The identity moved while this answer was in flight: a sign-out, a switch, or a
-        // sign-in as the same person. Whoever is here now did not ask this question.
+        // A cheap early exit for an answer that is already obsolete before it reaches the
+        // store. It is *not* the check that matters: the identity can move again between here
+        // and the commit, so the same question is asked once more inside the transaction.
         if (!activeIdentity.isCurrent(epoch)) return false
 
-        val stored = accessStateStore.snapshot(epoch.uid).first()
-        // Within one epoch the read order decides. An answer that started earlier and finished
-        // later must not undo the newer one — which is what makes a revocation stick instead of
-        // being resurrected by an approval that was already in the air when it arrived.
-        if (stored != null && stored.epochToken == epoch.token && stored.seq >= seq) return false
-
-        accessStateStore.record(
+        val stored = accessStateStore.recordIfAccepted(
             AccessSnapshot(
                 uid = epoch.uid,
                 status = status,
@@ -155,9 +153,24 @@ class AccessRepository @Inject constructor(
                 epochToken = epoch.token,
                 seq = seq
             )
-        )
-        invalidations.value = invalidations.value + 1
-        return true
+        ) { current ->
+            // Re-runnable by contract: this reads its argument and the live identity, nothing
+            // carried over from an earlier run of the transform.
+            when {
+                // The identity moved while this answer was in flight: a sign-out, a switch, or
+                // a sign-in as the same person. Whoever is here now did not ask this question.
+                !activeIdentity.isCurrent(epoch) -> false
+                // Within one epoch the read order decides. An answer that started earlier and
+                // finished later must not undo the newer one — which is what makes a revocation
+                // stick instead of being resurrected by an approval that was already in the air
+                // when it arrived.
+                current != null && current.epochToken == epoch.token && current.seq >= seq -> false
+                else -> true
+            }
+        }
+
+        if (stored) invalidations.value = invalidations.value + 1
+        return stored
     }
 
     /** Recomputes the deadline without a stored change; used when a refresh reports no verdict. */

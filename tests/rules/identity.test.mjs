@@ -47,6 +47,40 @@ describe('registration is a claim, not a grant', () => {
     }));
   });
 
+  // A name is required and a phone number is not, which only means something if the rules
+  // and the client agree on what a name is. They previously did not: `displayName.size() > 0`
+  // accepts a single space, so a registration could arrive that the person approving it
+  // cannot identify. These pin the same bounds DisplayName.kt applies.
+  test('a blank or untrimmed name is not a registration', async () => {
+    const db = as(env, 'newbie').firestore();
+    const base = {
+      uid: 'newbie',
+      email: 'newbie@example.com',
+      status: 'pending',
+      createdAt: serverTimestamp(),
+    };
+    const register = (displayName) =>
+      setDoc(doc(db, 'users/newbie'), { ...base, displayName });
+
+    await assertFails(register(''));
+    await assertFails(register(' '));
+    await assertFails(register('  Newbie  '));
+    await assertFails(register('N'));
+    await assertFails(register('N'.repeat(81)));
+    await assertFails(register(42));
+    await assertSucceeds(register('Newbie'));
+  });
+
+  test('the owner cannot rename themselves to something unregistrable', async () => {
+    const db = as(env, 'alice').firestore();
+    const ref = doc(db, 'users/alice');
+
+    await assertFails(updateDoc(ref, { displayName: ' ' }));
+    await assertFails(updateDoc(ref, { displayName: 'A' }));
+    await assertFails(updateDoc(ref, { displayName: 'A'.repeat(81) }));
+    await assertSucceeds(updateDoc(ref, { displayName: 'Alice Anderson' }));
+  });
+
   test('a pending user cannot approve themselves (test 3)', async () => {
     const db = as(env, 'pat').firestore();
     await assertFails(updateDoc(doc(db, 'users/pat'), { status: 'approved' }));

@@ -13,6 +13,7 @@ import se.optiqon.voice.domain.access.AccountRegistrar
 import se.optiqon.voice.domain.access.AccountStatus
 import se.optiqon.voice.domain.access.ActiveIdentity
 import se.optiqon.voice.domain.access.AuthGateway
+import se.optiqon.voice.domain.access.DisplayName
 import se.optiqon.voice.domain.access.RefreshOutcome
 import se.optiqon.voice.domain.transcription.NetworkMonitor
 import javax.inject.Inject
@@ -41,7 +42,15 @@ class RegistrationRepository @Inject constructor(
      * Registers the signed-in account if it has no document yet, then records whatever status
      * the server reports.
      */
-    override suspend fun registerAndRefresh(displayName: String?): RefreshOutcome {
+    override suspend fun registerAndRefresh(displayName: String): RefreshOutcome {
+        // The name is the one field the server cannot check for us and cannot infer. Refusing an
+        // unusable one here rather than substituting something plausible is the whole point: the
+        // local part of an email address is not a name the user chose, and a document created
+        // with it cannot be told apart afterwards from one they did choose.
+        val name = DisplayName.normalize(displayName)
+        if (!DisplayName.isValid(name)) {
+            return RefreshOutcome.Failed(IllegalArgumentException("displayName"))
+        }
         val epoch = activeIdentity.current.value ?: return RefreshOutcome.NoAccount
         if (authGateway.currentUid != epoch.uid) return RefreshOutcome.NoAccount
         authGateway.reload()
@@ -61,7 +70,7 @@ class RegistrationRepository @Inject constructor(
                     mapOf(
                         "uid" to epoch.uid,
                         "email" to email,
-                        "displayName" to (displayName ?: email.substringBefore('@')),
+                        "displayName" to name,
                         "status" to "pending",
                         "createdAt" to FieldValue.serverTimestamp()
                     )

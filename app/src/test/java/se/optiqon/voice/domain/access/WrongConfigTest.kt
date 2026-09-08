@@ -21,6 +21,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import se.optiqon.voice.data.storage.DeviceDataOwner
 import se.optiqon.voice.data.storage.ProcessRestarter
+import se.optiqon.voice.data.storage.StorageOwnership
 import se.optiqon.voice.data.storage.StorageRoot
 import se.optiqon.voice.domain.transcription.NetworkMonitor
 import se.optiqon.voice.testing.AccessFixture
@@ -224,6 +225,12 @@ class WrongConfigTest {
         val access = AccessFixture(context, backgroundScope)
         val owner = DeviceDataOwner(context)
         val restarter = RecordingRestarter()
+        val ownership = StorageOwnership(owner) { access.auth.currentUid }
+        // Read once here, because that is when the app reads it: the root is resolved as the
+        // first storage handle is injected at start-up, before any of these accounts sign in.
+        // Leaving it to resolve lazily *during* a switch would let the switch reconcile itself
+        // and hide the very restart these tests are about.
+        ownership.root
         AccessSession(
             authGateway = access.auth,
             accessRepository = access.repository,
@@ -232,7 +239,7 @@ class WrongConfigTest {
             networkMonitor = NetworkMonitor(context),
             deviceDataOwner = owner,
             processRestarter = restarter,
-            storageRoot = StorageRoot.DEFAULT,
+            storageOwnership = ownership,
             scope = backgroundScope
         ).start()
         settle()

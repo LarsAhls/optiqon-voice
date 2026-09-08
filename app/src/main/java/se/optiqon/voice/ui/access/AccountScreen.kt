@@ -28,6 +28,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import se.optiqon.voice.R
 import se.optiqon.voice.domain.access.BlockReason
+import se.optiqon.voice.domain.access.DisplayName
 
 /**
  * The screen every unapproved account sees. Registration is required for the whole app, so
@@ -50,6 +51,7 @@ fun AccountScreen(
         modifier = modifier,
         onGoogle = { activity?.let(viewModel::signInWithGoogle) },
         onEmail = viewModel::submitEmail,
+        onName = viewModel::submitName,
         onClaim = viewModel::answerDataClaim,
         onRefresh = viewModel::refresh,
         onSignOut = viewModel::signOut,
@@ -73,6 +75,7 @@ fun AccountScreenContent(
     modifier: Modifier = Modifier.fillMaxSize(),
     onGoogle: () -> Unit = {},
     onEmail: (String) -> Unit = {},
+    onName: (String) -> Unit = {},
     onClaim: (Boolean) -> Unit = {},
     onRefresh: () -> Unit = {},
     onSignOut: () -> Unit = {},
@@ -92,6 +95,14 @@ fun AccountScreenContent(
                 busy = busy,
                 onGoogle = onGoogle,
                 onEmail = onEmail
+            )
+
+            is AccountUiState.NeedsName -> NeedsName(
+                email = state.email,
+                suggestion = state.suggestion,
+                busy = busy,
+                onName = onName,
+                onSignOut = onSignOut
             )
 
             is AccountUiState.ClaimChoice -> ClaimChoice(
@@ -184,6 +195,50 @@ private fun SupportContact() {
         }) {
             Text(stringResource(R.string.support_contact_action))
         }
+    }
+}
+
+/**
+ * The name step, between a proven account and a registration request.
+ *
+ * A name is required and a phone number is not, which is a product decision that only holds if
+ * the name is one the person actually gave. The provider's own name is offered pre-filled — for
+ * the Google route it is usually right, and retyping it would be busywork — but it stands in an
+ * editable field, so accepting it is an act rather than an assumption. There is no derivation
+ * from the email address anywhere: `first.last@` reads as a name often enough to be accepted
+ * unread, and a name nobody chose is worse when it is nearly right.
+ *
+ * Signing out is offered here because this is the first screen after a sign-in, and somebody who
+ * has just signed in as the wrong account must be able to leave without registering that account.
+ */
+@Composable
+private fun NeedsName(
+    email: String?,
+    suggestion: String,
+    busy: Boolean,
+    onName: (String) -> Unit,
+    onSignOut: () -> Unit
+) {
+    var name by rememberSaveable(suggestion) { mutableStateOf(suggestion) }
+
+    Text(stringResource(R.string.registration_name_title), style = MaterialTheme.typography.headlineSmall)
+    email?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+    Text(stringResource(R.string.registration_name_body), style = MaterialTheme.typography.bodyMedium)
+
+    OutlinedTextField(
+        value = name,
+        onValueChange = { if (it.length <= DisplayName.MAX_LENGTH) name = it },
+        singleLine = true,
+        label = { Text(stringResource(R.string.registration_name_label)) }
+    )
+
+    // The same predicate the view model re-applies. A disabled button is a courtesy, not the
+    // check: whitespace looks like a name in a text field and is not one.
+    Button(onClick = { onName(name) }, enabled = !busy && DisplayName.isValid(name)) {
+        Text(stringResource(R.string.registration_name_submit))
+    }
+    TextButton(onClick = onSignOut, enabled = !busy) {
+        Text(stringResource(R.string.registration_sign_out))
     }
 }
 

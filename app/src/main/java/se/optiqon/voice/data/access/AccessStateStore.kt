@@ -42,27 +42,59 @@ open class AccessStateStore @Inject constructor(
 
     fun snapshot(uid: String): Flow<AccessSnapshot?> = store.data
         .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
-        .map { prefs ->
-            val stored = prefs[statusKey(uid)] ?: return@map null
-            // An unparseable value is treated as no verdict at all rather than as approval.
-            val status = AccountStatus.entries.firstOrNull { it.name == stored } ?: return@map null
-            AccessSnapshot(
-                uid = uid,
-                status = status,
-                verifiedAtWallMs = prefs[wallKey(uid)] ?: 0L,
-                verifiedAtElapsedMs = prefs[elapsedKey(uid)] ?: 0L,
-                epochToken = prefs[epochKey(uid)] ?: 0L,
-                seq = prefs[seqKey(uid)] ?: 0L
-            )
-        }
+        .map { prefs -> read(prefs, uid) }
 
     suspend fun record(snapshot: AccessSnapshot) {
+        recordIfAccepted(snapshot) { true }
+    }
+
+    /**
+     * Stores [snapshot] only if [accept] says so, deciding and writing in one step.
+     *
+     * The decision has to happen *here* rather than in the caller, and the difference is not
+     * stylistic. Reading the stored verdict, deciding, and then writing is three steps with two
+     * gaps in them: two answers that arrive together can both read the same "nothing stored
+     * yet", both conclude they are newest, and then commit in whichever order the dispatcher
+     * happens to pick — so an older approval can land on top of a newer revocation. DataStore
+     * serialises `updateData` per instance, so a predicate evaluated inside the transform sees
+     * the state that will actually be overwritten, and nothing can slip between the two.
+     *
+     * @param accept given the currently stored snapshot for this uid, or null if there is none.
+     * It may be re-run — DataStore retries the transform on a write conflict — so it must
+     * decide from its argument and from live state only, never from anything a previous run
+     * left behind.
+     *
+     * @return whether the snapshot was stored.
+     */
+    suspend fun recordIfAccepted(
+        snapshot: AccessSnapshot,
+        accept: (AccessSnapshot?) -> Boolean
+    ): Boolean {
+        var accepted = false
         store.edit { prefs ->
-            prefs[statusKey(snapshot.uid)] = snapshot.status.name
-            prefs[wallKey(snapshot.uid)] = snapshot.verifiedAtWallMs
-            prefs[elapsedKey(snapshot.uid)] = snapshot.verifiedAtElapsedMs
-            prefs[epochKey(snapshot.uid)] = snapshot.epochToken
-            prefs[seqKey(snapshot.uid)] = snapshot.seq
+            accepted = accept(read(prefs, snapshot.uid))
+            if (accepted) {
+                prefs[statusKey(snapshot.uid)] = snapshot.status.name
+                prefs[wallKey(snapshot.uid)] = snapshot.verifiedAtWallMs
+                prefs[elapsedKey(snapshot.uid)] = snapshot.verifiedAtElapsedMs
+                prefs[epochKey(snapshot.uid)] = snapshot.epochToken
+                prefs[seqKey(snapshot.uid)] = snapshot.seq
+            }
         }
+        return accepted
+    }
+
+    private fun read(prefs: Preferences, uid: String): AccessSnapshot? {
+        val stored = prefs[statusKey(uid)] ?: return null
+        // An unparseable value is treated as no verdict at all rather than as approval.
+        val status = AccountStatus.entries.firstOrNull { it.name == stored } ?: return null
+        return AccessSnapshot(
+            uid = uid,
+            status = status,
+            verifiedAtWallMs = prefs[wallKey(uid)] ?: 0L,
+            verifiedAtElapsedMs = prefs[elapsedKey(uid)] ?: 0L,
+            epochToken = prefs[epochKey(uid)] ?: 0L,
+            seq = prefs[seqKey(uid)] ?: 0L
+        )
     }
 }

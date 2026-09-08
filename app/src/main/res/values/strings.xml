@@ -20,6 +20,11 @@
     <string name="registration_email_confirm">Confirm this address and sign in</string>
     <string name="registration_pending_title">Waiting for approval</string>
     <string name="registration_pending_body">Your registration has been received. Dictation unlocks once the account is approved.</string>
+    <string name="registration_name_title">What should we call you?</string>
+    <string name="registration_name_body">This name is what the person approving your account will see. It is stored with your account and nothing else.</string>
+    <string name="registration_name_label">Name</string>
+    <string name="registration_name_submit">Register</string>
+    <string name="registration_name_invalid">Enter a name of at least 2 characters.</string>
     <string name="registration_check_again">Check again</string>
     <string name="registration_sign_out">Sign out</string>
     <string name="registration_not_configured">This build has no Firebase configuration, so signing in is unavailable.</string>
@@ -50,10 +55,11 @@
     <string name="registration_grace_expired_title">Sign in again to keep dictating</string>
     <string name="registration_grace_expired_body">This device has not been able to reach the server for a while, so dictation is paused until it can confirm the account again.</string>
     <string name="support_contact_title">Contact support</string>
-    <string name="support_contact_body">Contact the person who invited you to OPTIQON Voice. The app does not send anything for you.</string>
-    <!-- Empty until Lars decides the support address. When empty, the screen shows the text
-         above and no mail button; nothing is ever sent automatically. -->
-    <string name="support_contact_email"></string>
+    <string name="support_contact_body">Write to support, or to the person who invited you to OPTIQON Voice. The button opens your own mail app; the app does not send anything for you.</string>
+    <!-- The decided support address. It only ever fills in the "To" field of the user's own
+         mail app on an explicit tap; the app itself sends nothing, here or anywhere. An empty
+         value stays valid and removes the button rather than opening an empty composer. -->
+    <string name="support_contact_email" translatable="false">support@optiqon.se</string>
     <string name="support_contact_action">Write to support</string>
     <string name="session_verification_failed_title">Could not verify your account</string>
     <string name="session_verification_failed_body">Dictation still works. The app will keep trying in the background.</string>

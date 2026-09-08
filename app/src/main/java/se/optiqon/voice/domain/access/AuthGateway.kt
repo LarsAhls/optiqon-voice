@@ -19,6 +19,12 @@ interface AuthGateway {
 
     val currentEmail: String?
 
+    /**
+     * The name the provider already knows, if any. A *suggestion* only — it is offered to the
+     * user to confirm or change, and is never sent as an assumption about what they are called.
+     */
+    val currentDisplayName: String?
+
     val isEmailVerified: Boolean
 
     /** Re-reads the account from the server, so a freshly verified email is noticed. */

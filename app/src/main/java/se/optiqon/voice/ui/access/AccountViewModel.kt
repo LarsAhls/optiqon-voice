@@ -22,6 +22,7 @@ import se.optiqon.voice.domain.access.AccessSession
 import se.optiqon.voice.domain.access.AccountRegistrar
 import se.optiqon.voice.domain.access.AuthGateway
 import se.optiqon.voice.domain.access.BlockReason
+import se.optiqon.voice.domain.access.DisplayName
 import se.optiqon.voice.domain.access.EmailLinkRelay
 import se.optiqon.voice.domain.access.RefreshOutcome
 import se.optiqon.voice.domain.access.SignInClient
@@ -35,6 +36,18 @@ sealed interface AccountUiState {
      * which happens when the link is followed on a device other than the one that asked for it.
      */
     data class SignedOut(val configured: Boolean, val completingLink: Boolean) : AccountUiState
+
+    /**
+     * Signed in, with no registration yet, asking what the person is called.
+     *
+     * A step of its own rather than a field on the sign-in screen because it belongs to the
+     * account that has just been proven, not to the one being chosen — and because the Google
+     * route has no form at all, so this is the only place that name could be confirmed.
+     *
+     * @param suggestion the provider's own name for the account, or empty. Pre-filled and
+     * editable; never sent unless the user leaves it standing.
+     */
+    data class NeedsName(val email: String?, val suggestion: String) : AccountUiState
     data class Waiting(val email: String?, val reason: BlockReason) : AccountUiState
     /**
      * The account is approved, but has not yet said what should happen to the data already on
@@ -92,7 +105,7 @@ class AccountViewModel @Inject constructor(
         if (remembered != null) {
             _busy.value = true
             try {
-                signInClient.completeEmailLink(link, remembered).thenRegister()
+                signInClient.completeEmailLink(link, remembered).thenAwaitName()
             } finally {
                 _busy.value = false
             }
@@ -110,6 +123,16 @@ class AccountViewModel @Inject constructor(
      * that read `currentUid` at combine time would still be showing "sign in" to somebody who
      * just did.
      */
+    /**
+     * The provider's name, offered as a starting point.
+     *
+     * Not derived from the email address. `first.last@` looks like a name and frequently is not
+     * one, and a value the user never chose is worse when it is *nearly* right than when it is
+     * obviously missing — they accept it without reading it.
+     */
+    private fun suggestedName(): String =
+        DisplayName.normalize(authGateway.currentDisplayName.orEmpty())
+
     val state: StateFlow<AccountUiState> = combine(
         accessRepository.decision,
         authGateway.uidChanges(),
@@ -125,6 +148,9 @@ class AccountViewModel @Inject constructor(
                 } else {
                     AccountUiState.Approved
                 }
+            decision is AccessDecision.Blocked &&
+                decision.reason == BlockReason.NOT_REGISTERED ->
+                AccountUiState.NeedsName(authGateway.currentEmail, suggestedName())
             decision is AccessDecision.Blocked ->
                 AccountUiState.Waiting(authGateway.currentEmail, decision.reason)
             else -> AccountUiState.Loading
@@ -133,7 +159,7 @@ class AccountViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AccountUiState.Loading)
 
     fun signInWithGoogle(activity: Activity) = run {
-        signInClient.signInWithGoogle(activity).thenRegister()
+        signInClient.signInWithGoogle(activity).thenAwaitName()
     }
 
     /**
@@ -146,7 +172,7 @@ class AccountViewModel @Inject constructor(
         val pendingLink = _linkAwaitingEmail.value
         if (pendingLink != null) {
             _linkAwaitingEmail.value = null
-            signInClient.completeEmailLink(pendingLink, email).thenRegister()
+            signInClient.completeEmailLink(pendingLink, email).thenAwaitName()
         } else {
             signInClient.sendEmailLink(email).fold(
                 onSuccess = {
@@ -191,6 +217,28 @@ class AccountViewModel @Inject constructor(
         _claimAnswers.value += 1
     }
 
+    /**
+     * Registers under the name the user confirmed.
+     *
+     * The same validation the button uses, applied again, because a disabled button is a UI
+     * state and not a guarantee — and because an invalid name must say so rather than surface
+     * later as a failed registration that looks like a server problem.
+     */
+    fun submitName(raw: String) = withBusy {
+        if (!DisplayName.isValid(raw)) {
+            _message.value = context.getString(R.string.registration_name_invalid)
+            return@withBusy
+        }
+        when (val outcome = accountRegistrar.registerAndRefresh(DisplayName.normalize(raw))) {
+            is RefreshOutcome.NoNetwork ->
+                _message.value = context.getString(R.string.registration_check_offline)
+            is RefreshOutcome.Failed ->
+                _message.value = context.getString(R.string.registration_check_failed)
+            is RefreshOutcome.NoAccount, is RefreshOutcome.Confirmed, RefreshOutcome.Throttled ->
+                Unit
+        }
+    }
+
     fun signOut() = withBusy {
         authGateway.signOut()
     }
@@ -200,6 +248,17 @@ class AccountViewModel @Inject constructor(
     }
 
     private fun run(block: suspend () -> Unit) = withBusy(block)
+
+    /**
+     * A successful sign-in registers nothing by itself.
+     *
+     * Registration now waits for a name the user has confirmed, so the state machine takes
+     * over here: signing in makes the decision `NOT_REGISTERED`, which is the name screen.
+     */
+    private suspend fun Result<Unit>.thenAwaitName() = fold(
+        onSuccess = { },
+        onFailure = { _message.value = it.message }
+    )
 
     private fun withBusy(block: suspend () -> Unit) {
         viewModelScope.launch {
@@ -212,8 +271,4 @@ class AccountViewModel @Inject constructor(
         }
     }
 
-    private suspend fun Result<Unit>.thenRegister() = fold(
-        onSuccess = { accountRegistrar.registerAndRefresh(displayName = null) },
-        onFailure = { _message.value = it.message }
-    )
 }

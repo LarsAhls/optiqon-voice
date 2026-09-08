@@ -21,6 +21,11 @@
     <string name="registration_email_confirm">Bekräfta adressen och logga in</string>
     <string name="registration_pending_title">Väntar på godkännande</string>
     <string name="registration_pending_body">Din registrering är mottagen. Diktering låses upp när kontot har godkänts.</string>
+    <string name="registration_name_title">Vad ska vi kalla dig?</string>
+    <string name="registration_name_body">Namnet är det som visas för den som godkänner ditt konto. Det sparas med kontot och ingenting annat.</string>
+    <string name="registration_name_label">Namn</string>
+    <string name="registration_name_submit">Registrera</string>
+    <string name="registration_name_invalid">Ange ett namn på minst 2 tecken.</string>
     <string name="registration_check_again">Kontrollera igen</string>
     <string name="registration_sign_out">Logga ut</string>
 
@@ -32,7 +37,7 @@
     <string name="registration_grace_expired_body">Enheten har inte kunnat nå servern på ett tag, så diktering är pausad tills kontot kan bekräftas igen.</string>
 
     <string name="support_contact_title">Kontakta support</string>
-    <string name="support_contact_body">Kontakta den som bjöd in dig till OPTIQON Voice. Appen skickar ingenting åt dig.</string>
+    <string name="support_contact_body">Skriv till supporten, eller till den som bjöd in dig till OPTIQON Voice. Knappen öppnar din egen e-postapp — appen skickar ingenting åt dig.</string>
     <string name="support_contact_action">Skriv till support</string>
 
     <string name="registration_not_configured">Den här versionen saknar Firebase-konfiguration, så inloggning är inte tillgänglig.</string>

@@ -116,6 +116,21 @@ The access layer now rests on one invariant: the only writer of an `AccessSnapsh
 *server* read for the *active* identity. `SoleWriterInvariantTest` fails if a second calling
 file appears. Everything below is what that invariant does not reach.
 
+### Ordering, and where the verdict is actually decided
+
+- **The identity and sequence checks happen inside the write, not before it.** Checking and then
+  suspending to write leaves a window in which two answers both pass their checks and the older
+  one lands last. `AccessStateStore.recordIfAccepted` re-evaluates the predicate against the
+  bytes being replaced, inside DataStore's own serialised transaction, so an older `approved`
+  cannot overwrite a newer `revoked` however the two are interleaved.
+- **The predicate is re-run on conflict, by design.** DataStore may replay a transform, so it
+  must be a pure function of the snapshot it is handed. A predicate that closed over a decision
+  made outside would reintroduce exactly the race it is there to close.
+- **What this does not prove.** `AccessRecordAtomicityTest` forces the interleaving with gated
+  writes on a single process's DataStore. It says nothing about two processes writing the same
+  file, which the app does not do today and which would need a different mechanism if it ever
+  did.
+
 ### Local data and storage roots
 
 - **Isolation is at the storage handle, not per row.** A root names a database file, two
@@ -135,6 +150,23 @@ file appears. Everything below is what that invariant does not reach.
 - **The claim question is asked once, before the app opens.** Neither answer copies, moves,
   deletes or uploads anything, and declining leaves the `default` root on disk, unclaimed and
   untouched. What is not built is a later "actually, adopt it after all" flow.
+- **The persisted active uid is a note, not a credential.** `StorageOwnership` reconciles it
+  against the identity actually signed in — inside the provider that hands out the root, so no
+  handle can be opened before the check — and corrects the note rather than obeying it. A start
+  under a different account therefore opens neither the remembered account's files nor the
+  device's, and `StorageOwnershipTest` proves the absent account's bytes are unchanged. Reverting
+  the reconciliation fails three of its eight tests, so the guard is load-bearing rather than
+  decorative.
+- **An unreadable identity is treated as an unknown one.** A signed-out process, and one whose
+  auth SDK is missing or throwing, both resolve to the `signedout` root once anyone owns the
+  device's data — and to `default` while nobody does, which is the single-user install this app
+  has always been, unchanged. `signedout` is a name, not a deletion: the owner's files stay
+  exactly where they are and are simply not opened.
+- **A root retired mid-switch is not written to.** `StorageOwnership.seal()` runs before the
+  restart is requested, so start-up migrations and profile defaults that have not run yet find
+  the door shut if the restart is interrupted. What this does *not* cover is anything already
+  inside a `DataStore.edit` block at that instant; the process ending remains the real
+  guarantee, and the seal is what holds while it does.
 
 ### The gate at the effect boundary
 
@@ -178,15 +210,30 @@ file appears. Everything below is what that invariant does not reach.
   there and not while that identity is blocked. Nothing is deleted because a session changed,
   and no new permanent audio storage is introduced for users who turned retention off.
 
+### The name on a registration
+
+- **The user confirms it; the app never assumes it.** A Google profile name pre-fills the field
+  as a suggestion, and the request is only sent once the user has seen and accepted or edited it.
+  The previous `email.substringBefore('@')` fallback is gone: it produced a name the person never
+  chose, on a record somebody else has to make an approval decision from.
+- **Client and rules agree on the same definition.** `DisplayName.normalize` trims and collapses
+  whitespace, `isValid` bounds the result at 2–80 characters, and `firestore.rules` requires
+  exactly that shape — so a client that skips normalisation is rejected rather than accepted with
+  an unreadable name. Two rules tests cover the whitespace-only and over-long cases.
+- **What this is not.** There is no profile- or account-editing feature. A name is confirmed once,
+  at registration; changing it afterwards is not built.
+
 ### Support contact
 
 - **The revoked screen sends nothing.** `OutboxSender` is still a placeholder that refuses
   permanently, so the private feedback backend is not used here and no receipt is shown. The
   screen shows contact information and, at most, opens a user-initiated mail intent on an
   explicit tap.
-- **`support_contact_email` is deliberately empty.** Until Lars decides the address, the screen
-  shows the text with no button — which is why `SupportContactTest` asserts there is no send
-  affordance at all. Deciding the address is an open item.
+- **`support_contact_email` is `support@optiqon.se`.** The screen therefore shows the address and
+  an explicit tap target that opens the device's own mail composer. `SupportContactTest` asserts
+  what is still the contract — that the app itself transmits nothing and shows no receipt — not
+  that the affordance is absent. Whether that mailbox is monitored is Lars's to decide; the app
+  makes no promise about a reply.
 
 ### Still unproven by any of this
 

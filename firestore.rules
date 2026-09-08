@@ -33,6 +33,17 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(uid())).data;
     }
 
+    // A name, not merely a non-empty string. " " passed the old check, and an account whose
+    // displayName is a space is one the person approving it cannot identify. The bounds match
+    // DisplayName.kt on the client; requiring the trimmed form keeps the two comparable without
+    // asking the rules to normalise anything.
+    function validName(n) {
+      return n is string
+        && n.trim() == n
+        && n.size() >= 2
+        && n.size() <= 80;
+    }
+
     // A missing users/ document makes .data error out, and an errored condition denies —
     // the outcome we want for anyone who has not registered.
     function isApproved() {
@@ -91,15 +102,16 @@ service cloud.firestore {
         && request.resource.data.uid == userId
         && request.resource.data.email == request.auth.token.email
         && request.resource.data.status == 'pending'
-        && request.resource.data.displayName is string
-        && request.resource.data.displayName.size() > 0
+        && validName(request.resource.data.displayName)
         && request.resource.data.createdAt == request.time;
 
-      // The owner keeps their profile, not their privileges.
+      // The owner keeps their profile, not their privileges — and cannot rename themselves
+      // into something the create rule would have refused.
       allow update: if signedIn()
         && userId == uid()
         && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['displayName', 'phone']);
+             .hasOnly(['displayName', 'phone'])
+        && validName(request.resource.data.displayName);
 
       allow update: if isWriter()
         && request.resource.data.diff(resource.data).affectedKeys()

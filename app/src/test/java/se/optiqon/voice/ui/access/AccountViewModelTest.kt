@@ -23,7 +23,7 @@ import se.optiqon.voice.R
 import se.optiqon.voice.data.access.PendingEmailStore
 import se.optiqon.voice.data.storage.DeviceDataOwner
 import se.optiqon.voice.data.storage.ProcessRestarter
-import se.optiqon.voice.data.storage.StorageRoot
+import se.optiqon.voice.data.storage.StorageOwnership
 import se.optiqon.voice.domain.access.AccessSession
 import se.optiqon.voice.domain.access.AccountRegistrar
 import se.optiqon.voice.domain.access.AccountStatus
@@ -95,13 +95,15 @@ class AccountViewModelTest {
         override fun isEmailLink(link: String): Boolean = link.startsWith("https://")
     }
 
+    /** Records the name it was handed; that name is the assertion in half of these tests. */
     private class RecordingRegistrar : AccountRegistrar {
-        var calls = 0
-            private set
+        val names = mutableListOf<String>()
+        val calls get() = names.size
+        var outcome: RefreshOutcome = RefreshOutcome.Confirmed(AccountStatus.PENDING)
 
-        override suspend fun registerAndRefresh(displayName: String?): RefreshOutcome {
-            calls++
-            return RefreshOutcome.Confirmed(AccountStatus.PENDING)
+        override suspend fun registerAndRefresh(displayName: String): RefreshOutcome {
+            names += displayName
+            return outcome
         }
     }
 
@@ -120,15 +122,16 @@ class AccountViewModelTest {
 
     private fun TestScope.harness(configured: Boolean = true): Harness {
         val access = AccessFixture(context, backgroundScope)
+        val owner = DeviceDataOwner(context)
         val session = AccessSession(
             authGateway = access.auth,
             accessRepository = access.repository,
             refresher = access.refresher,
             activeIdentity = access.activeIdentity,
             networkMonitor = NetworkMonitor(context),
-            deviceDataOwner = DeviceDataOwner(context),
+            deviceDataOwner = owner,
             processRestarter = NoopRestarter(),
-            storageRoot = StorageRoot.DEFAULT,
+            storageOwnership = StorageOwnership(owner) { null },
             scope = backgroundScope
         )
         val signIn = FakeSignInClient().apply { isConfigured = configured }
@@ -180,11 +183,96 @@ class AccountViewModelTest {
     }
 
     @Test
-    fun `pending, rejected and revoked are four different screens, not one`() = runTest {
+    fun `pending, rejected and revoked are three different screens, not one`() = runTest {
         assertEquals(BlockReason.AWAITING_APPROVAL, blockedAs(harness(), AccountStatus.PENDING))
         assertEquals(BlockReason.REJECTED, blockedAs(harness(), AccountStatus.REJECTED))
         assertEquals(BlockReason.REVOKED, blockedAs(harness(), AccountStatus.REVOKED))
-        assertEquals(BlockReason.NOT_REGISTERED, blockedAs(harness(), AccountStatus.NEW))
+    }
+
+    /**
+     * An account the server has never heard of is the fourth state, and it is not a waiting
+     * screen: there is nothing to wait for until the user has said what to register as.
+     */
+    @Test
+    fun `an account with no registration is asked what to call itself`() = runTest {
+        val h = harness()
+        h.access.auth.currentDisplayName = "  Ada   Lovelace "
+        h.access.signIn("uid-a", email = "ada@example.test")
+        h.access.recordServerVerdict(AccountStatus.NEW)
+        settle()
+
+        val state = h.viewModel.state.value
+        assertTrue("expected NeedsName, was $state", state is AccountUiState.NeedsName)
+        state as AccountUiState.NeedsName
+        assertEquals("ada@example.test", state.email)
+        // Offered, and offered tidily — but only offered.
+        assertEquals("Ada Lovelace", state.suggestion)
+        assertEquals("signing in registers nothing by itself", 0, h.registrar.calls)
+    }
+
+    /** A provider that supplies no name leaves the field empty rather than inventing one. */
+    @Test
+    fun `no provider name means no suggestion, and never the email address`() = runTest {
+        val h = harness()
+        h.access.signIn("uid-a", email = "ada.lovelace@example.test")
+        settle()
+
+        val state = h.viewModel.state.value as AccountUiState.NeedsName
+        assertEquals("", state.suggestion)
+    }
+
+    @Test
+    fun `registering uses the name the user confirmed, normalised`() = runTest {
+        val h = harness()
+        h.access.auth.currentDisplayName = "Ada Lovelace"
+        h.access.signIn("uid-a")
+        settle()
+
+        h.viewModel.submitName("  Ada   L  ")
+        settle()
+
+        assertEquals(listOf("Ada L"), h.registrar.names)
+        assertNull(h.viewModel.message.value)
+    }
+
+    /**
+     * The button is disabled for these, which is a UI state and not a guarantee: the view model
+     * is what stands between an unusable name and a document nobody can identify afterwards.
+     */
+    @Test
+    fun `an empty, whitespace, too short or too long name registers nothing`() = runTest {
+        val h = harness()
+        h.access.signIn("uid-a")
+        settle()
+
+        for (name in listOf("", "   ", "A", " A ", "N".repeat(81))) {
+            h.viewModel.submitName(name)
+            settle()
+            assertEquals("\"$name\" must not register", emptyList<String>(), h.registrar.names)
+            assertEquals(
+                context.getString(R.string.registration_name_invalid),
+                h.viewModel.message.value
+            )
+            h.viewModel.consumeMessage()
+        }
+    }
+
+    /** A registration that could not be sent says so, rather than looking like a rejection. */
+    @Test
+    fun `an offline registration reports the connection, not a verdict`() = runTest {
+        val h = harness()
+        h.access.signIn("uid-a")
+        h.registrar.outcome = RefreshOutcome.NoNetwork
+        settle()
+
+        h.viewModel.submitName("Ada Lovelace")
+        settle()
+
+        assertEquals(listOf("Ada Lovelace"), h.registrar.names)
+        assertEquals(
+            context.getString(R.string.registration_check_offline),
+            h.viewModel.message.value
+        )
     }
 
     @Test
@@ -287,7 +375,8 @@ class AccountViewModelTest {
         settle()
 
         assertEquals(listOf(link to "me@example.test"), h.signIn.completions)
-        assertEquals(1, h.registrar.calls)
+        // Signing in is not registering. The name step comes next, and it is the user's.
+        assertEquals(0, h.registrar.calls)
     }
 
     /** The control for the device that did ask: it completes without asking again. */
@@ -301,7 +390,7 @@ class AccountViewModelTest {
             settle()
 
             assertEquals(listOf(link to "me@example.test"), h.signIn.completions)
-            assertEquals(1, h.registrar.calls)
+            assertEquals(0, h.registrar.calls)
             assertNull(h.viewModel.message.value)
         }
 

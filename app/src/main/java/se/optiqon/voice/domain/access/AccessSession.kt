@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import se.optiqon.voice.data.storage.DeviceDataOwner
 import se.optiqon.voice.data.storage.ProcessRestarter
-import se.optiqon.voice.data.storage.StorageRoot
+import se.optiqon.voice.data.storage.StorageOwnership
 import se.optiqon.voice.domain.transcription.NetworkMonitor
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -36,7 +36,7 @@ class AccessSession @Inject constructor(
     private val networkMonitor: NetworkMonitor,
     private val deviceDataOwner: DeviceDataOwner,
     private val processRestarter: ProcessRestarter,
-    private val storageRoot: StorageRoot,
+    private val storageOwnership: StorageOwnership,
     private val scope: CoroutineScope
 ) {
 
@@ -102,7 +102,10 @@ class AccessSession @Inject constructor(
         if (claim) deviceDataOwner.claimDefault(uid) else deviceDataOwner.declineDefault(uid)
 
         val resolved = deviceDataOwner.setActiveUid(uid)
-        if (resolved != storageRoot) processRestarter.restart()
+        if (resolved != storageOwnership.root) {
+            storageOwnership.seal()
+            processRestarter.restart()
+        }
     }
 
     /** Wired to `ProcessLifecycleOwner`; also the natural moment to notice a revocation. */
@@ -122,7 +125,7 @@ class AccessSession @Inject constructor(
         _identityScope.value.cancel("identity changed")
         _identityScope.value = newIdentityScope()
 
-        if (uid != null && storageRoot.isDefault && deviceDataOwner.canClaimDefault(uid)) {
+        if (uid != null && storageOwnership.root.isDefault && deviceDataOwner.canClaimDefault(uid)) {
             // This account has not yet been asked whether the data already on the device is
             // theirs. Binding it either way now would be the guess this whole mechanism exists
             // to avoid, so the process stays where it is and the question is put to the user.
@@ -135,10 +138,16 @@ class AccessSession @Inject constructor(
         // Persisted before anything else, so that whatever happens next -- including the process
         // ending on the following line -- the next start opens the right files.
         val resolved = deviceDataOwner.setActiveUid(uid)
-        if (resolved != storageRoot) {
+        if (resolved != storageOwnership.root) {
             // The database, both preference stores and any queued work in this process are open
             // on the previous account's files. Ending the process is the only way to be sure
             // none of them is still holding one; the next start resolves the new root from disk.
+            //
+            // Sealed first, and not merely as tidiness: if the restart does not happen — a
+            // device that refuses to relaunch us, a test, a process that lingers — start-up work
+            // that has not run yet must find the root retired rather than write into files that
+            // have just stopped being this identity's.
+            storageOwnership.seal()
             processRestarter.restart()
             return
         }

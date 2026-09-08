@@ -49,7 +49,13 @@ open class DeviceDataOwner @Inject constructor(
 
     /** The root for [uid], allocating a fresh one the first time an account appears. */
     fun rootFor(uid: String?): StorageRoot {
-        if (uid == null) return StorageRoot.DEFAULT
+        // No identity. While the data on this device belongs to nobody, that is the ordinary
+        // single-user install this app has always been and the default root is the right answer.
+        // Once someone owns it, it is theirs: a signed-out process must not go on reading and
+        // writing their history merely because it is still running on the same phone.
+        if (uid == null) {
+            return if (defaultOwner() == null) StorageRoot.DEFAULT else StorageRoot.SIGNED_OUT
+        }
         prefs.getString(KEY_BINDING + uid, null)?.let { return StorageRoot(it) }
 
         // A new account gets its own empty root, not the data already on the device. Claiming

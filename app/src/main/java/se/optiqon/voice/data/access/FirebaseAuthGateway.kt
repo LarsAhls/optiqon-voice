@@ -19,6 +19,8 @@ class FirebaseAuthGateway @Inject constructor(
 
     override val currentEmail: String? get() = auth.currentUser?.email
 
+    override val currentDisplayName: String? get() = auth.currentUser?.displayName
+
     override val isEmailVerified: Boolean get() = auth.currentUser?.isEmailVerified == true
 
     override fun uidChanges(): Flow<String?> = callbackFlow {

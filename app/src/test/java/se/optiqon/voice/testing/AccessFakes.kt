@@ -106,6 +106,9 @@ class FakeAuthGateway : AuthGateway {
     private val uids = MutableStateFlow<String?>(null)
     override var currentEmail: String? = null
         private set
+
+    /** What the provider claims the person is called. Null unless a test says otherwise. */
+    override var currentDisplayName: String? = null
     override var isEmailVerified: Boolean = true
     var reloads: Int = 0
         private set

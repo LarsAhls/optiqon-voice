@@ -2,10 +2,14 @@ package se.optiqon.voice.ui.access
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -29,9 +33,10 @@ import se.optiqon.voice.ui.theme.OptiqonVoiceTheme
  * an answer to a message nobody received.
  *
  * So the contract is narrow and testable: the screen offers contact information, the app sends
- * nothing on its own, and no text claims otherwise. The support address is still undecided, and
- * while it is empty there is not even a button to press — which this pins, so that filling it in
- * later is a deliberate act rather than a silent one.
+ * nothing on its own, and no text claims otherwise. The address is now decided, so the button
+ * exists — and what it does is pinned here: exactly one ACTION_SENDTO to that address, only on a
+ * tap, carrying no body. Handing text to the user's own mail app is not sending it; the send
+ * button in that app belongs to the user.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -78,16 +83,34 @@ class SupportContactTest {
     }
 
     @Test
-    fun `there is no send button while the support address is undecided`() {
+    fun `the button is offered only because an address is actually configured`() {
+        // A button that opened an empty `mailto:` would be worse than no button: it looks like
+        // a working route and ends in a composer addressed to nobody. The screen keeps that
+        // fallback, so this asserts the shipped value rather than the branch.
+        val address = string(R.string.support_contact_email)
+        assertTrue("a support address must be configured: $address", address.contains("@"))
+
+        show(BlockReason.REVOKED)
+        composeRule.onNodeWithText(string(R.string.support_contact_action)).assertIsDisplayed()
+    }
+
+    @Test
+    fun `tapping it hands the address to the user's own mail app and nothing else`() {
         show(BlockReason.REVOKED)
 
-        // A button that opened an empty `mailto:` would be worse than no button: it looks like
-        // a working route and ends in a composer addressed to nobody.
-        assertTrue(
-            "the shipped address is deliberately empty; see strings.xml",
-            string(R.string.support_contact_email).isBlank()
-        )
-        composeRule.onNodeWithText(string(R.string.support_contact_action)).assertDoesNotExist()
+        composeRule.onNodeWithText(string(R.string.support_contact_action)).performClick()
+        composeRule.waitForIdle()
+
+        val shadow = shadowOf(ApplicationProvider.getApplicationContext<Application>())
+        val started = shadow.nextStartedActivity
+        assertNotNull("the tap must open a composer", started)
+        assertEquals(Intent.ACTION_SENDTO, started!!.action)
+        assertEquals("mailto:" + string(R.string.support_contact_email), started.data.toString())
+
+        // No pre-filled body, because a body is the beginning of a message the app would be
+        // authoring on the user's behalf. And exactly one intent: a tap is one act.
+        assertNull(started.getStringExtra(Intent.EXTRA_TEXT))
+        assertNull("one tap, one composer", shadow.nextStartedActivity)
     }
 
     @Test

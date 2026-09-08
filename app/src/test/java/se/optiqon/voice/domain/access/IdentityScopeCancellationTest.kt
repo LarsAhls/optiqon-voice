@@ -21,7 +21,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import se.optiqon.voice.data.storage.DeviceDataOwner
 import se.optiqon.voice.data.storage.ProcessRestarter
-import se.optiqon.voice.data.storage.StorageRoot
+import se.optiqon.voice.data.storage.StorageOwnership
 import se.optiqon.voice.domain.transcription.NetworkMonitor
 import se.optiqon.voice.testing.AccessFixture
 import java.util.concurrent.atomic.AtomicInteger
@@ -64,6 +64,7 @@ class IdentityScopeCancellationTest {
 
     private fun TestScope.harness(): Harness {
         val access = AccessFixture(context, backgroundScope)
+        val owner = DeviceDataOwner(context)
         val restarter = RecordingRestarter()
         val session = AccessSession(
             authGateway = access.auth,
@@ -71,9 +72,9 @@ class IdentityScopeCancellationTest {
             refresher = access.refresher,
             activeIdentity = access.activeIdentity,
             networkMonitor = NetworkMonitor(context),
-            deviceDataOwner = DeviceDataOwner(context),
+            deviceDataOwner = owner,
             processRestarter = restarter,
-            storageRoot = StorageRoot.DEFAULT,
+            storageOwnership = StorageOwnership(owner) { null },
             scope = backgroundScope
         )
         session.start()
