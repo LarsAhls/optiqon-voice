@@ -9,11 +9,29 @@ export { assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 
 export const PROJECT_ID = 'optiqon-voice-rules-test';
 
+/**
+ * The full F1 rule set, which is preserved but not deployed — see the header of
+ * `firestore.rules`. The suites that came with F1 exercise this file, because that is the
+ * file they were written about.
+ */
 export async function makeEnv() {
+  return envFor('firestore.future.rules');
+}
+
+/**
+ * The Mission 1 rule set: the one `firebase.json` names and the one that actually goes live.
+ * Kept a separate entry point rather than a parameter with a default so that a suite cannot
+ * silently end up testing the wrong file by omitting an argument.
+ */
+export async function makeM1Env() {
+  return envFor('firestore.rules');
+}
+
+function envFor(rulesFile) {
   return initializeTestEnvironment({
     projectId: PROJECT_ID,
     firestore: {
-      rules: readFileSync('firestore.rules', 'utf8'),
+      rules: readFileSync(rulesFile, 'utf8'),
       host: '127.0.0.1',
       port: 8080,
     },

@@ -46,15 +46,21 @@ describe('a private subtree still belongs to an approved account', () => {
     await assertFails(getDocs(collection(db, 'users/alice/reads')));
   });
 
-  test('an account can still read what it wrote after being revoked', async () => {
-    // Reading is left open deliberately: a revoked tester keeps access to their own record,
-    // and locking them out of it would delete nothing while helping nobody.
+  test('a revoked account cannot read back what it wrote while approved', async () => {
+    // This assertion used to run the other way, on the reasoning that "a revoked tester keeps
+    // access to their own record, and locking them out would delete nothing while helping
+    // nobody". That conflated two different things. The account's *record* is
+    // `users/alice` — the status document, which it must keep reading in order to find out it
+    // has been revoked at all. Its private subtree is product data, and a token that outlives
+    // the approval it was issued alongside must not still open it.
     await env.withSecurityRulesDisabled(async (ctx) => {
       await setDoc(doc(ctx.firestore(), 'users/alice/sync/state'), { cursor: 12 });
       await updateDoc(doc(ctx.firestore(), 'users/alice'), { status: 'revoked' });
     });
     const db = as(env, 'alice').firestore();
-    await assertSucceeds(getDoc(doc(db, 'users/alice/sync/state')));
+    await assertFails(getDoc(doc(db, 'users/alice/sync/state')));
+    // ...but the status document itself stays readable, which is the whole point.
+    await assertSucceeds(getDoc(doc(db, 'users/alice')));
   });
 });
 

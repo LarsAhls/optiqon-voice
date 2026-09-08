@@ -1,20 +1,23 @@
 rules_version = '2';
 
-// OPTIQON Voice V1.
+// OPTIQON Voice — Mission 1 ruleset. THIS is the file that gets deployed.
 //
-// Every cloud read and write is gated on an approved identity. The Worker in front of R2
-// calls Firestore REST with the caller's own ID token, so these rules are the only
-// enforcement point for it too. Two consequences are load-bearing:
+// Mission 1 proves exactly one chain: an account registers, waits, is approved by Lars,
+// dictates, and is revoked. Nothing else in the product exists yet — no cases, no events,
+// no attachments, no uploads, no per-user sync, no news, no invites, no feedback backend.
 //
-//   * admins/{uid} and config/limits must be readable by their own subject, otherwise the
-//     Worker cannot learn the caller's role or the current upload switch. Rules-internal
-//     get()/exists() run inside rule evaluation only and grant the Worker no read access.
-//   * Rules do not filter queries. A list that would return one denied document is
-//     rejected in full, which is what stops an unconstrained collection read from leaking
-//     other testers' cases.
+// So none of those paths are open here. The full F1 rule set that governs them is preserved
+// verbatim in `firestore.future.rules`, complete with its own emulator suite, and is
+// deployed only when the feature it guards and that feature's security contract have both
+// been verified. A rule that is live before its feature is a promise nobody has tested.
 //
-// Cross-document invariants (status <-> event, reservation <-> quota) are enforced with
-// getAfter(), so neither half of a pair can land alone, even through the raw API.
+// The split is deliberate: `firebase.json` names `firestore.rules` and nothing else, so an
+// ordinary `firebase deploy --only firestore:rules` cannot reach for the future file by
+// accident. Opening a future path is an edit to this file, which is a reviewable event.
+//
+// One boundary is unchanged from F1 and worth restating: these rules are the security
+// boundary. The device-side access gate is a product boundary with a grace period; this has
+// none. A revoked account loses cloud access at the next request, not at the next check-in.
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -33,10 +36,9 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(uid())).data;
     }
 
-    // A name, not merely a non-empty string. " " passed the old check, and an account whose
-    // displayName is a space is one the person approving it cannot identify. The bounds match
-    // DisplayName.kt on the client; requiring the trimmed form keeps the two comparable without
-    // asking the rules to normalise anything.
+    // A name, not merely a non-empty string. The bounds match DisplayName.kt on the client;
+    // requiring the trimmed form keeps the two comparable without asking the rules to
+    // normalise anything.
     function validName(n) {
       return n is string
         && n.trim() == n
@@ -71,23 +73,50 @@ service cloud.firestore {
       return isReader() && adminData().role == 'writer';
     }
 
-    function isCaseOwner(caseId) {
-      return signedIn()
-        && get(/databases/$(database)/documents/cases/$(caseId)).data.ownerUid == uid();
+    // ------------------------------------------------------------ seat counter
+
+    function counters() {
+      return /databases/$(database)/documents/config/counters;
+    }
+
+    function limits() {
+      return /databases/$(database)/documents/config/limits;
+    }
+
+    // Approval consumes one of a fixed number of seats, bumped in the same commit.
+    function seatTaken() {
+      return getAfter(counters()).data.approvedUsers == get(counters()).data.approvedUsers + 1
+        && getAfter(counters()).data.approvedUsers <= get(limits()).data.maxApprovedUsers;
+    }
+
+    // Losing approval returns the seat in the same commit.
+    //
+    // Without this the counter is a high-water mark of approvals ever granted rather than a
+    // count of accounts currently approved, and the ceiling it is compared against means
+    // progressively less every time somebody is revoked. Binding both directions is what
+    // lets the smoke's closing check — counter equals the number of approved accounts — be
+    // a real assertion instead of a restatement of what was seeded.
+    function seatReleased() {
+      return getAfter(counters()).data.approvedUsers == get(counters()).data.approvedUsers - 1
+        && getAfter(counters()).data.approvedUsers >= 0;
+    }
+
+    /** A transition that neither takes nor returns a seat must leave the counter alone. */
+    function seatUnchanged() {
+      return getAfter(counters()).data.approvedUsers == get(counters()).data.approvedUsers;
     }
 
     // ------------------------------------------------------------------- users
 
-    // Approval consumes one of a fixed number of seats, bumped in the same commit.
-    function seatTaken() {
-      return getAfter(/databases/$(database)/documents/config/counters).data.approvedUsers
-               == get(/databases/$(database)/documents/config/counters).data.approvedUsers + 1
-        && getAfter(/databases/$(database)/documents/config/counters).data.approvedUsers
-               <= get(/databases/$(database)/documents/config/limits).data.maxApprovedUsers;
-    }
-
     match /users/{userId} {
+      // Kept deliberately at signedIn(), and the only read here that is not gated on
+      // approval: an account must be able to read its own record to learn that it is
+      // pending, rejected or revoked. Without it the app could never display a revocation.
+      // It exposes nothing but the reader's own document.
       allow get: if signedIn() && userId == uid();
+
+      // An admin has to be able to see who is waiting in order to decide, and the closing
+      // counter check has to be able to count what is actually approved.
       allow get, list: if isReader();
 
       // Registration is a claim, never a grant: the client may only write 'pending', and
@@ -105,13 +134,9 @@ service cloud.firestore {
         && validName(request.resource.data.displayName)
         && request.resource.data.createdAt == request.time;
 
-      // The owner keeps their profile, not their privileges — and cannot rename themselves
-      // into something the create rule would have refused.
-      allow update: if signedIn()
-        && userId == uid()
-        && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['displayName', 'phone'])
-        && validName(request.resource.data.displayName);
+      // No self-update path in Mission 1. The name is confirmed once, at registration, and
+      // no profile-editing feature exists — so the rule that would permit one is not live.
+      // Reinstating it is the F1 file's business, once there is a screen behind it.
 
       allow update: if isWriter()
         && request.resource.data.diff(resource.data).affectedKeys()
@@ -124,281 +149,92 @@ service cloud.firestore {
                && seatTaken())
              ||
              (request.resource.data.status in ['rejected', 'revoked']
-               && resource.data.status != request.resource.data.status)
+               && resource.data.status != request.resource.data.status
+               && (resource.data.status == 'approved' ? seatReleased() : seatUnchanged()))
            );
 
       allow delete: if false;
     }
 
-    // ------------------------------------------------------------------ admins
-
-    // Self-read only. The Worker needs the caller's own role; nobody needs the roster.
-    match /admins/{userId} {
-      allow get: if signedIn() && userId == uid();
-      allow list: if false;
-      allow write: if false;
-    }
-
-    // ----------------------------------------------------------------- invites
-
-    match /invites/{email} {
-      allow get: if isReader() || (signedIn() && email == request.auth.token.email);
-      allow list: if isReader();
-      allow create, update: if isWriter();
-      allow delete: if false;
-    }
-
     // ------------------------------------------------------------------ config
 
-    // Limits are not secret — the Worker reads them with the caller's token. The counter
-    // moves by exactly one seat at a time and never past the ceiling.
+    // Read is admin-only here. The Worker that needed `signedIn()` in F1 does not exist in
+    // Mission 1, and an ordinary account has no reason to learn how many seats are taken.
     match /config/{docId} {
-      allow get: if signedIn();
+      allow get: if isReader();
       allow list: if false;
       allow create, delete: if false;
 
-      allow update: if isWriter() && docId == 'limits';
-
+      // `limits` is seeded once, out of band, and is not editable from a client in M1.
       allow update: if isWriter()
         && docId == 'counters'
         && request.resource.data.approvedUsers is int
         && (request.resource.data.approvedUsers == resource.data.approvedUsers + 1
             || request.resource.data.approvedUsers == resource.data.approvedUsers - 1)
         && request.resource.data.approvedUsers >= 0
-        && request.resource.data.approvedUsers
-             <= get(/databases/$(database)/documents/config/limits).data.maxApprovedUsers;
+        && request.resource.data.approvedUsers <= get(limits()).data.maxApprovedUsers;
     }
 
-    // ------------------------------------------------------------------- cases
+    // ------------------------------------------------------------------ admins
 
-    function allowedTransition(from, to) {
-      return (from == 'Mottaget' && to in ['Under granskning', 'Parkerat', 'Inte planerat'])
-        || (from == 'Under granskning' && to in ['Planerat', 'Parkerat', 'Inte planerat'])
-        || (from == 'Planerat' && to in ['Pågår', 'Parkerat', 'Inte planerat'])
-        || (from == 'Pågår' && to in ['Levererat', 'Parkerat'])
-        || (from == 'Parkerat' && to in ['Under granskning', 'Planerat', 'Inte planerat'])
-        || (from == 'Inte planerat' && to in ['Under granskning']);
+    // Closed entirely. The roster is consulted by isReader()/isWriter() through rules-internal
+    // get(), which needs no read permission, and nothing in Mission 1 reads it as a client.
+    // Writes were already impossible: an admin is created out of band, deliberately.
+    match /admins/{userId} {
+      allow read, write: if false;
     }
 
-    // Rules can bind who claimed delivery and when. They cannot judge whether the claim is
-    // true — the writing tool checks App Distribution first. See
-    // docs/BACKEND_OPEN_CONTRACTS.md.
-    function deliveryEvidence(e) {
-      return e.evidence.keys().hasAll(
-               ['releaseTag', 'versionCode', 'distributedAt', 'verifiedBy'])
-        && e.evidence.verifiedBy == uid()
-        && e.evidence.distributedAt <= request.time
-        && e.evidence.versionCode is int
-        && e.evidence.releaseTag is string
-        && e.evidence.releaseTag.size() > 0;
-    }
-
-    function statusEventMatches(caseId, eventId, from, to) {
-      let e = getAfter(
-        /databases/$(database)/documents/cases/$(caseId)/events/$(eventId)).data;
-      return e.type == 'status_change'
-        && e.fromStatus == from
-        && e.toStatus == to
-        && e.actorUid == uid()
-        && e.createdAt == request.time
-        && (to != 'Levererat' || deliveryEvidence(e));
-    }
+    // ------------------------------------------------- not yet in the product
+    //
+    // Every path below belongs to a feature Mission 1 does not ship. They are written out
+    // rather than left to the implicit default so that the closure is visible in review and
+    // provable in the emulator suite — `m1.test.mjs` asserts each one denies an approved
+    // admin, which is the strongest caller there is.
+    //
+    // `deletionRequests` is closed too, and that is safe rather than a gap: in Mission 1 the
+    // revoked screen carries support@optiqon.se and opens the device's own mail composer.
+    // The app transmits nothing itself, so a revoked account's route to request deletion or
+    // reach support is email, which no Firestore rule can take away. Opening a write path
+    // here would add an obligation nobody is on the other end of yet.
 
     match /cases/{caseId} {
-      allow get: if (signedIn() && resource.data.ownerUid == uid()) || isReader();
-      allow list: if isReader() || (signedIn() && resource.data.ownerUid == uid());
-
-      allow create: if isApproved()
-        && request.resource.data.keys().hasOnly(
-             ['ownerUid', 'title', 'body', 'statusCache', 'lastStatusEventId',
-              'attachmentCount', 'createdAt', 'updatedAt'])
-        && request.resource.data.ownerUid == uid()
-        && request.resource.data.statusCache == 'Mottaget'
-        && request.resource.data.lastStatusEventId == null
-        && request.resource.data.attachmentCount == 0
-        && request.resource.data.title is string
-        && request.resource.data.title.size() > 0
-        && request.resource.data.title.size() <= 200
-        && request.resource.data.body is string
-        && request.resource.data.body.size() <= 20000
-        && request.resource.data.createdAt == request.time
-        && request.resource.data.updatedAt == request.time;
-
-      // The owner may claim one more attachment slot, and nothing else.
-      allow update: if isApproved()
-        && resource.data.ownerUid == uid()
-        && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['attachmentCount'])
-        && request.resource.data.attachmentCount == resource.data.attachmentCount + 1
-        && request.resource.data.attachmentCount <= 3;
-
-      // A status change is only ever half of a commit; the other half is its event.
-      allow update: if isWriter()
-        && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['statusCache', 'lastStatusEventId', 'updatedAt'])
-        && request.resource.data.updatedAt == request.time
-        && allowedTransition(resource.data.statusCache, request.resource.data.statusCache)
-        && statusEventMatches(caseId, request.resource.data.lastStatusEventId,
-                              resource.data.statusCache, request.resource.data.statusCache);
-
-      allow delete: if false;
-    }
-
-    // ------------------------------------------------------------------ events
-
-    function caseAfterMatches(caseId, eventId, e) {
-      let c = getAfter(/databases/$(database)/documents/cases/$(caseId)).data;
-      return c.lastStatusEventId == eventId
-        && c.statusCache == e.toStatus
-        && c.updatedAt == request.time;
+      allow read, write: if false;
     }
 
     match /cases/{caseId}/events/{eventId} {
-      // Internal notes and draft personal replies stay invisible to the case owner. An
-      // unconstrained query would return a denied document and is rejected in full.
-      allow get, list: if isReader()
-        || (isCaseOwner(caseId) && resource.data.visibility == 'public');
-
-      allow create: if isWriter()
-        && request.resource.data.actorUid == uid()
-        && request.resource.data.createdAt == request.time
-        && request.resource.data.visibility in ['public', 'internal']
-        && (request.resource.data.type != 'status_change'
-            || caseAfterMatches(caseId, eventId, request.resource.data));
-
-      // Append-only, including for the writer account.
-      allow update, delete: if false;
-    }
-
-    // ------------------------------------------------------------- attachments
-
-    function reservationCreated(userId, aid, caseId) {
-      let r = getAfter(
-        /databases/$(database)/documents/users/$(userId)/uploads/$(aid)).data;
-      return r.createdAt == request.time && r.caseId == caseId;
+      allow read, write: if false;
     }
 
     match /cases/{caseId}/attachments/{aid} {
-      allow get, list: if isReader() || isCaseOwner(caseId);
-
-      // No objectKey and no client-declared storage state: the Worker derives the key and
-      // R2 verifies the bytes.
-      allow create: if isApproved()
-        && request.resource.data.keys().hasOnly(
-             ['ownerUid', 'caseId', 'sha256', 'createdAt'])
-        && request.resource.data.ownerUid == uid()
-        && request.resource.data.caseId == caseId
-        && request.resource.data.createdAt == request.time
-        && reservationCreated(uid(), aid, caseId);
-
-      // Delete intent is a one-way flag, set by the owner or by a writer.
-      allow update: if (resource.data.ownerUid == uid() ? isApproved() : isWriter())
-        && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['deleteRequestedAt'])
-        && !('deleteRequestedAt' in resource.data)
-        && request.resource.data.deleteRequestedAt == request.time;
-
-      allow delete: if false;
+      allow read, write: if false;
     }
 
-    // -------------------------------------------------- reservations and quota
-
-    function quotaBound(userId, aid) {
-      let q = /databases/$(database)/documents/users/$(userId)/quota/attachments;
-      return getAfter(q).data.lastUploadId == aid
-        && getAfter(q).data.count == get(q).data.count + 1;
-    }
-
-    // Immutable, create-only, one per logical upload. Never deleted, so a consumed
-    // attachmentId is permanently spent — including after the attachment is removed.
     match /users/{userId}/uploads/{aid} {
-      allow get: if (signedIn() && userId == uid()) || isReader();
-      allow list: if isReader();
-
-      allow create: if isApproved()
-        && userId == uid()
-        && request.resource.data.keys().hasOnly(
-             ['caseId', 'maxBytes', 'sha256', 'createdAt'])
-        && request.resource.data.createdAt == request.time
-        && request.resource.data.maxBytes is int
-        && request.resource.data.maxBytes > 0
-        && request.resource.data.maxBytes <= 2097152
-        && request.resource.data.sha256 is string
-        && request.resource.data.sha256.matches('^[a-f0-9]{64}$')
-        && quotaBound(userId, aid);
-
-      allow update, delete: if false;
+      allow read, write: if false;
     }
 
-    function windowOk() {
-      return (request.resource.data.windowStart == resource.data.windowStart
-               && request.resource.data.windowCount == resource.data.windowCount + 1
-               && request.resource.data.windowCount <= 20)
-        || (resource.data.windowStart < request.time - duration.value(1, 'h')
-               && request.resource.data.windowStart == request.time
-               && request.resource.data.windowCount == 1);
+    match /users/{userId}/quota/{docId} {
+      allow read, write: if false;
     }
 
-    function quotaDelta(userId, reservationId) {
-      let r = getAfter(
-        /databases/$(database)/documents/users/$(userId)/uploads/$(reservationId)).data;
-      return request.resource.data.count == resource.data.count + 1
-        && request.resource.data.count <= 50
-        && request.resource.data.bytes == resource.data.bytes + r.maxBytes
-        && request.resource.data.bytes <= 104857600
-        && r.createdAt == request.time
-        && windowOk();
-    }
-
-    match /users/{userId}/quota/attachments {
-      allow get: if (signedIn() && userId == uid()) || isReader();
-      allow create, delete: if false;
-
-      allow update: if isApproved()
-        && userId == uid()
-        && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['count', 'bytes', 'windowStart', 'windowCount', 'lastUploadId'])
-        && quotaDelta(userId, request.resource.data.lastUploadId);
-
-      // An administrative reset genuinely lifts the lifetime cap for that user. It is
-      // audited, not prevented — see docs/BACKEND_OPEN_CONTRACTS.md.
-      allow update: if isWriter()
-        && request.resource.data.resetBy == uid()
-        && request.resource.data.resetAt == request.time;
-    }
-
-    // -------------------------------------------------- per-user sync and reads
-
-    // Private to one account, but still storage somebody has to pay for: a pending, rejected
-    // or revoked account may not write here either. Being signed in is not the same as having
-    // been let in.
     match /users/{userId}/sync/{docId} {
-      allow read: if signedIn() && userId == uid();
-      allow write: if isApproved() && userId == uid();
+      allow read, write: if false;
     }
 
     match /users/{userId}/reads/{itemId} {
-      allow read: if signedIn() && userId == uid();
-      allow write: if isApproved() && userId == uid();
+      allow read, write: if false;
     }
-
-    // -------------------------------------------------------------------- news
 
     match /news/{newsId} {
-      allow get, list: if isApproved();
-      allow write: if isWriter();
+      allow read, write: if false;
     }
 
-    // -------------------------------------------------------- deletion requests
+    match /invites/{email} {
+      allow read, write: if false;
+    }
 
     match /deletionRequests/{userId} {
-      allow get: if (signedIn() && userId == uid()) || isReader();
-      allow list: if isReader();
-      allow create: if isApproved()
-        && userId == uid()
-        && request.resource.data.requestedAt == request.time;
-      allow update: if isWriter();
-      allow delete: if false;
+      allow read, write: if false;
     }
   }
 }

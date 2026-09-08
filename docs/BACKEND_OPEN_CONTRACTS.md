@@ -56,13 +56,68 @@ The Firestore rules tests in F1 prove none of the above.
   configuration, not in code.
 - Monotonic quota without refund: proposed for V1.
 
+## Two rule sets: what is deployed, and what is merely written
+
+`firestore.rules` is the **Mission 1** set and the only file `firebase.json` names, so an
+ordinary `firebase deploy --only firestore:rules` cannot pick up anything else. It opens
+exactly what the Mission 1 chain needs — registration, an account reading its own status,
+an admin approving and revoking — and shuts every path belonging to a feature that does not
+ship yet: `cases`, their events and attachments, `uploads`, `quota`, the private `sync` and
+`reads` subtrees, `news`, `invites` and `deletionRequests`. A rule that is live before the
+feature it guards is a promise nobody has tested.
+
+`firestore.future.rules` is the full F1 set, preserved verbatim with its original suite. It
+is not deployed. Opening one of those paths means moving it into `firestore.rules`, which is
+a reviewable edit rather than a silent inheritance.
+
+`deletionRequests` being shut is not a gap in the deployed set. In Mission 1 the revoked
+screen shows `support@optiqon.se` and opens the device's own mail composer; the app transmits
+nothing itself. A revoked account's route to support and to requesting deletion is therefore
+email, which no Firestore rule can withdraw.
+
+## A correction: revocation used to stop at the screen
+
+An earlier version of this document stated that "a pending or revoked account can still read
+its own record but cannot spend storage on the project", and described that as deliberate.
+The second half was true; the first was a security hole wearing a rationale.
+
+Every **write** path in F1 required `isApproved()`. The **read** paths did not: `cases` and
+its events and attachments, `uploads`, `quota`, `sync`, `reads`, `config` and the admin
+roster were all reachable with nothing but `signedIn()`. Revoking a status does not
+invalidate an already-issued ID token, and the token is what the Firestore API
+authenticates — so a revoked tester kept read access to everything they had ever created,
+`cases.body` included, up to 20 000 characters of dictated text each. The device-side gate
+closed the app; the cloud stayed open to anyone willing to skip the app.
+
+Both sets now require `isApproved()` on those paths. Three read exceptions remain, and only
+these three:
+
+- `users/{uid}` self-`get` — an account must be able to read its own record to learn that it
+  is pending, rejected or revoked. Without it a revocation could never be *displayed*.
+- `invites/{email}` self-`get` (future set only) — an invite is read before approval by
+  definition.
+- `deletionRequests/{uid}` self-`get` (future set only) — a data-subject right that has to
+  survive revocation.
+
+`tests/rules/revocation.test.mjs` pins this with a previously-approved account that is then
+revoked, rejected and pushed back to pending, holding a still-valid token and talking to the
+API with no client in between. Nineteen of its twenty-five assertions fail against the
+pre-correction rules, so the guard is load-bearing rather than decorative.
+
+The seat counter is bound in both directions now. Approval takes a seat and losing approval
+returns it, each in the same commit as the status change; a transition that never held a seat
+must leave the counter alone. Before this only the increment was bound, which made
+`approvedUsers` a high-water mark of approvals ever granted rather than a count of accounts
+currently approved — and the ceiling it is compared against meant progressively less with
+every revocation. What this still does not prevent is a writer moving the counter on its own,
+in a commit that changes no status: that remains an audited admin action, not a blocked one.
+
 ## What the F1 rules suite does and does not prove
 
 The suite in `tests/rules/` runs against the Firestore emulator and covers negative
 tests 1-13, plus the quieter collections in `private.test.mjs`: an account's own
-`sync` and `reads` subtrees, `invites`, `news` and `deletionRequests`. Writing to a
-private subtree requires an *approved* account, not merely a signed-in one — a pending or
-revoked account can still read its own record but cannot spend storage on the project.
+`sync` and `reads` subtrees, `invites`, `news` and `deletionRequests`. Both writing to and
+reading from a private subtree require an *approved* account, not merely a signed-in one.
 
 What a green run does not earn, stated plainly:
 
