@@ -9,8 +9,8 @@ import org.junit.rules.TemporaryFolder
 import java.io.File
 
 /**
- * The negative tests §3.18, §3.20 and the file half of §3.23: an account switch must not expose
- * the previous account's images, and files that predate accounts must stay where they are.
+ * The negative tests §3.18 and §3.20: an account switch must not expose the previous account's
+ * images. Data that predates accounts is covered by the storage-root tests instead.
  */
 class UserScopedStorageTest {
 
@@ -73,21 +73,5 @@ class UserScopedStorageTest {
             val threw = runCatching { storage.attachmentsDir(bad) }.exceptionOrNull()
             assertTrue("uid '$bad' should have been refused", threw is IllegalArgumentException)
         }
-    }
-
-    // §3.23 — files from before Voice had accounts.
-
-    @Test
-    fun `legacy files are not attributed to whoever signs in first`() {
-        val legacy = File(storage.legacyDir().apply { mkdirs() }, "gammal-inspelning.m4a")
-        legacy.writeText("ljud")
-
-        storage.attachmentsDir("uid-a")
-
-        assertTrue(legacy.exists())
-        assertTrue(storage.attachmentsDir("uid-a").listFiles().orEmpty().isEmpty())
-        // Not readable *as* an account's own file either: adopting it is a separate decision,
-        // and the upload path only ever touches files that pass this check.
-        assertFalse(storage.isReadableBy(legacy, "uid-a"))
     }
 }

@@ -17,7 +17,14 @@ import se.optiqon.voice.domain.provider.ProviderVerifier
 import se.optiqon.voice.domain.provider.VerificationResult
 import javax.inject.Inject
 
-enum class OnboardingStep { LANGUAGE, CONNECT, PERMISSIONS }
+/**
+ * Rev. 11 order: language, then the account, then the speech service, then permissions.
+ *
+ * The account comes before `CONNECT` for a structural reason, not a cosmetic one: `CONNECT`
+ * makes a real call to a speech provider, and doing that before anyone has been admitted to
+ * the app means an unapproved install can drive a paid endpoint.
+ */
+enum class OnboardingStep { LANGUAGE, ACCOUNT, CONNECT, PERMISSIONS }
 
 /** What the Connect step is currently able to say about the endpoint it was given. */
 sealed interface ConnectionState {
@@ -138,7 +145,8 @@ class OnboardingViewModel @Inject constructor(
         state.copy(
             step = when (state.step) {
                 OnboardingStep.LANGUAGE -> OnboardingStep.LANGUAGE
-                OnboardingStep.CONNECT -> OnboardingStep.LANGUAGE
+                OnboardingStep.ACCOUNT -> OnboardingStep.LANGUAGE
+                OnboardingStep.CONNECT -> OnboardingStep.ACCOUNT
                 OnboardingStep.PERMISSIONS -> OnboardingStep.CONNECT
             }
         )
@@ -153,8 +161,11 @@ class OnboardingViewModel @Inject constructor(
                     preferencesDataStore.updateActiveLanguage(state.language)
                     profileRepository.applyLanguageToActiveProfile(state.language)
                 }
-                _uiState.update { it.copy(step = OnboardingStep.CONNECT) }
+                _uiState.update { it.copy(step = OnboardingStep.ACCOUNT) }
             }
+            // Whether the account may leave this step is the gate's answer, not this
+            // view model's: it is asked where the approved state is observed.
+            OnboardingStep.ACCOUNT -> _uiState.update { it.copy(step = OnboardingStep.CONNECT) }
             OnboardingStep.CONNECT ->
                 if (state.canLeaveConnectStep) _uiState.update { it.copy(step = OnboardingStep.PERMISSIONS) }
             OnboardingStep.PERMISSIONS -> finish()

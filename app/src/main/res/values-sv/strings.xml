@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Swedish for the account and session screens only, per rev. 11.
+
+    English stays the default in values/, so on a Swedish device the app is mixed-language: the
+    screens below are Swedish, the rest is not. That is a deliberate, accepted state for this
+    Mission rather than a half-finished translation - these are the screens whose exact wording
+    carries a promise about access, data and sending, and getting that wording right in the
+    tester's own language matters more than a uniform language everywhere.
+-->
+<resources>
+    <string name="access_blocked_not_registered">Logga in med ditt inbjudna konto för att diktera.</string>
+    <string name="access_blocked_pending">Ditt konto väntar på godkännande.</string>
+    <string name="access_blocked_rejected">Ditt konto fick inte åtkomst.</string>
+    <string name="access_blocked_revoked">Din åtkomst har återkallats.</string>
+    <string name="access_blocked_grace_expired">Anslut och logga in igen för att fortsätta diktera.</string>
+
+    <string name="registration_title">Registrera dig för OPTIQON Voice</string>
+    <string name="registration_google">Fortsätt med Google</string>
+    <string name="registration_email">Mejla mig en inloggningslänk</string>
+    <string name="registration_email_confirm">Bekräfta adressen och logga in</string>
+    <string name="registration_pending_title">Väntar på godkännande</string>
+    <string name="registration_pending_body">Din registrering är mottagen. Diktering låses upp när kontot har godkänts.</string>
+    <string name="registration_check_again">Kontrollera igen</string>
+    <string name="registration_sign_out">Logga ut</string>
+
+    <string name="registration_rejected_title">Ingen åtkomst till OPTIQON Voice</string>
+    <string name="registration_rejected_body">Kontot fick inte åtkomst. Ingenting på den här enheten har raderats.</string>
+    <string name="registration_revoked_title">Åtkomsten har återkallats</string>
+    <string name="registration_revoked_body">Diktering är avstängd för det här kontot. Dina dikteringar, profiler och inställningar finns kvar på enheten och laddas inte upp någonstans.</string>
+    <string name="registration_grace_expired_title">Logga in igen för att fortsätta diktera</string>
+    <string name="registration_grace_expired_body">Enheten har inte kunnat nå servern på ett tag, så diktering är pausad tills kontot kan bekräftas igen.</string>
+
+    <string name="support_contact_title">Kontakta support</string>
+    <string name="support_contact_body">Kontakta den som bjöd in dig till OPTIQON Voice. Appen skickar ingenting åt dig.</string>
+    <string name="support_contact_action">Skriv till support</string>
+
+    <string name="registration_not_configured">Den här versionen saknar Firebase-konfiguration, så inloggning är inte tillgänglig.</string>
+    <string name="registration_email_label">E-post</string>
+    <string name="registration_email_needed">Ange adressen som länken skickades till.</string>
+    <string name="registration_email_sent">Inloggningslänk skickad till %1$s</string>
+    <string name="registration_check_offline">Ingen anslutning, så kontot kunde inte kontrolleras. Ingenting har ändrats.</string>
+    <string name="registration_check_failed">Servern kunde inte nås. Ingenting har ändrats — försök igen om en stund.</string>
+    <string name="action_ok">OK</string>
+
+    <string name="claim_title">Data som redan finns på enheten</string>
+    <string name="claim_body">Enheten innehåller dikteringshistorik, profiler, prompter och inställningar som sparades innan det fanns konton. Ingenting har flyttats, kopierats, laddats upp eller raderats.</string>
+    <string name="claim_link">Det här är mitt — öppna det under mitt konto</string>
+    <string name="claim_empty">Börja tomt</string>
+    <string name="claim_empty_note">Att börja tomt lämnar den befintliga datan kvar på enheten, orörd och oläst, och den går att göra anspråk på senare.</string>
+
+    <string name="session_verification_failed_title">Kunde inte verifiera ditt konto</string>
+    <string name="session_verification_failed_body">Diktering fungerar fortfarande. Appen fortsätter försöka i bakgrunden.</string>
+    <string name="session_try_again">Försök igen</string>
+    <string name="session_offline_title">Ingen anslutning — ingenting skickades</string>
+    <string name="session_offline_body">Taligenkänningen körs i molnet, så diktering kräver anslutning. Ingenting köas eller skickas senare.</string>
+
+    <string name="account_section_title">Konto</string>
+    <string name="account_status_verifying">Kontrollerar mot servern…</string>
+    <string name="account_status_signed_out">Utloggad.</string>
+    <string name="account_status_active">Godkänt och bekräftat av servern.</string>
+    <string name="account_status_verification_failed">Godkänt, men den senaste kontrollen mot servern misslyckades. Diktering fungerar tills vidare.</string>
+    <string name="account_status_offline">Godkänt. Enheten är offline, så taligenkänning är otillgänglig tills den återansluter.</string>
+    <string name="account_status_pending">Väntar på godkännande.</string>
+    <string name="account_status_rejected">Kontot fick inte åtkomst.</string>
+    <string name="account_status_revoked">Åtkomsten har återkallats för det här kontot.</string>
+    <string name="account_status_grace_expired">Servern har varit onåbar så länge att diktering är pausad.</string>
+</resources>

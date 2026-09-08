@@ -115,7 +115,7 @@ class OnboardingViewModelTest {
         viewModel.selectLanguage("en")
         viewModel.next()
 
-        assertEquals(OnboardingStep.CONNECT, viewModel.uiState.value.step)
+        assertEquals(OnboardingStep.ACCOUNT, viewModel.uiState.value.step)
         awaitPreferences { it.preferredLanguages == listOf("en") }
         awaitValue("the active profile speaks English") {
             database.profileDao().getActiveProfile()?.language == "en"

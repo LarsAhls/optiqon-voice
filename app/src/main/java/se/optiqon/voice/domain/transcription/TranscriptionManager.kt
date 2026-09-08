@@ -9,6 +9,11 @@ import se.optiqon.voice.data.preferences.PreferencesDataStore
 import se.optiqon.voice.data.repository.ProfileRepository
 import se.optiqon.voice.domain.model.AppContext
 import se.optiqon.voice.domain.model.DictationStatus
+import se.optiqon.voice.data.storage.StorageRoot
+import se.optiqon.voice.domain.access.AccessGrant
+import se.optiqon.voice.domain.access.AccessGuard
+import se.optiqon.voice.domain.access.AccessLease
+import se.optiqon.voice.domain.access.AccessRevokedException
 import se.optiqon.voice.domain.model.Profile
 import se.optiqon.voice.domain.processing.TextProcessor
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -26,19 +31,28 @@ class TranscriptionManager @Inject constructor(
     private val dictationDao: DictationDao,
     private val lifetimeStatsDao: LifetimeStatsDao,
     private val preferencesDataStore: PreferencesDataStore,
-    private val profileRepository: ProfileRepository
+    private val profileRepository: ProfileRepository,
+    private val accessGuard: AccessGuard,
+    private val storageRoot: StorageRoot = StorageRoot.DEFAULT
 ) {
     companion object {
         private const val TAG = "TranscriptionManager"
-        private const val RETAINED_AUDIO_DIR = "retained_audio"
     }
 
+    /**
+     * @param lease the authorisation this dictation was started under. Omitting it makes this
+     * class obtain its own, which is what closes the history-retry hole: before, the gate lived
+     * in the caller, and one of the four callers simply did not have one. A gate that a caller
+     * can forget is not a gate.
+     */
     suspend fun transcribe(
         audioFile: File,
         durationMs: Long,
         appContext: AppContext?,
+        lease: AccessLease? = null,
         onPostProcessing: (() -> Unit)? = null
     ): Result<String> {
+        val granted = leaseOrFailure(lease).getOrElse { return Result.failure(it) }
         val profile = profileRepository.getActiveProfile()
         return transcribeWithProfile(
             audioFile,
@@ -46,11 +60,13 @@ class TranscriptionManager @Inject constructor(
             appContext,
             profile,
             retryEntryId = null,
+            lease = granted,
             onPostProcessing = onPostProcessing
         )
     }
 
-    suspend fun retry(dictationId: Long): Result<String> {
+    suspend fun retry(dictationId: Long, lease: AccessLease? = null): Result<String> {
+        val granted = leaseOrFailure(lease).getOrElse { return Result.failure(it) }
         val entry = dictationDao.getById(dictationId)
             ?: return Result.failure(IllegalArgumentException("History entry not found."))
         val audioPath = entry.audioPath
@@ -62,7 +78,14 @@ class TranscriptionManager @Inject constructor(
 
         val profile = entry.profileId?.let { profileRepository.getProfile(it) }
             ?: profileRepository.getActiveProfile()
-        return transcribeWithProfile(audioFile, entry.durationMs, entry.toAppContext(), profile, retryEntryId = entry.id)
+        return transcribeWithProfile(
+            audioFile,
+            entry.durationMs,
+            entry.toAppContext(),
+            profile,
+            retryEntryId = entry.id,
+            lease = granted
+        )
     }
 
     suspend fun latestRetriableFailureId(): Long? = dictationDao.getLatestRetriableFailureId()
@@ -73,6 +96,7 @@ class TranscriptionManager @Inject constructor(
         appContext: AppContext?,
         profile: Profile,
         retryEntryId: Long?,
+        lease: AccessLease,
         onPostProcessing: (() -> Unit)? = null
     ): Result<String> {
         val prefs = preferencesDataStore.preferences.first()
@@ -88,6 +112,10 @@ class TranscriptionManager @Inject constructor(
             return Result.failure(error)
         }
 
+        // The last moment before the audio leaves the device. Everything above this line was
+        // local; everything below is visible to a third party and cannot be taken back.
+        lease.requireValid()
+
         Log.d(TAG, "Sending ${audioFile.length()} bytes to Whisper API (model=${profile.asrModel})")
         val rawResult = whisperEngine.transcribe(audioFile, profile.asrModel, profile.language)
         val rawText = rawResult.getOrElse { error ->
@@ -100,6 +128,10 @@ class TranscriptionManager @Inject constructor(
             persistSuccess("", "", durationMs, appContext, profile, prefs.historyEnabled, prefs.keepStatsWithoutHistory, audioFile, retryEntryId)
             return Result.success("")
         }
+
+        // A second outgoing call, and a second boundary. The ASR round trip above can take
+        // seconds, which is long enough for an approval to be withdrawn between the two.
+        lease.requireValid()
 
         val processedText = textProcessor.process(rawText, profile, appContext, onPostProcessing)
         recordLifetimeStats(processedText, durationMs)
@@ -115,6 +147,52 @@ class TranscriptionManager @Inject constructor(
             retryEntryId = retryEntryId
         )
         return Result.success(processedText)
+    }
+
+    /**
+     * Keeps a dictation that was stopped part-way, on exactly the terms the user already chose.
+     *
+     * Cancelling a dictation because the session ended is not a reason to destroy what was
+     * recorded. It is also not a reason to start keeping audio for someone who turned that off,
+     * so this reuses the ordinary failure path: history off means nothing is written and
+     * nothing is retained, which is the user's own standing instruction rather than a new
+     * decision taken on their behalf.
+     *
+     * The row is not auto-retried. It is retriable only by its owner, and only through the
+     * guard, which refuses while that owner is blocked.
+     */
+    suspend fun preserveInterrupted(
+        audioFile: File,
+        durationMs: Long,
+        appContext: AppContext?,
+        cause: Throwable
+    ) {
+        if (!audioFile.exists() || audioFile.length() == 0L) return
+        val prefs = preferencesDataStore.preferences.first()
+        val profile = profileRepository.getActiveProfile()
+        persistFailure(
+            audioFile = audioFile,
+            durationMs = durationMs,
+            appContext = appContext,
+            profile = profile,
+            historyEnabled = prefs.historyEnabled,
+            error = cause,
+            retryEntryId = null
+        )
+    }
+
+    /**
+     * Resolves the authorisation for this dictation, without writing a history row when there
+     * is none. A refusal on account grounds is not a transcription failure: recording it as one
+     * would leave a blocked user a list of failed dictations they could not have avoided, and a
+     * retriable entry for work that must not be retried.
+     */
+    private suspend fun leaseOrFailure(lease: AccessLease?): Result<AccessLease> {
+        if (lease != null) return Result.success(lease)
+        return when (val grant = accessGuard.authorize()) {
+            is AccessGrant.Granted -> Result.success(grant.lease)
+            is AccessGrant.Denied -> Result.failure(AccessRevokedException(grant.reason))
+        }
     }
 
     private suspend fun persistSuccess(
@@ -255,11 +333,11 @@ class TranscriptionManager @Inject constructor(
     }
 
     private fun retainAudio(audioFile: File, retryEntryId: Long?): String? {
-        if (retryEntryId != null && audioFile.exists() && audioFile.parentFile?.name == RETAINED_AUDIO_DIR) {
+        if (retryEntryId != null && audioFile.exists() && audioFile.parentFile == storageRoot.retainedAudioDir(context.filesDir)) {
             return audioFile.absolutePath
         }
         return runCatching {
-            val dir = File(context.filesDir, RETAINED_AUDIO_DIR).apply { mkdirs() }
+            val dir = storageRoot.retainedAudioDir(context.filesDir).apply { mkdirs() }
             val retained = File(dir, "dictation_${System.currentTimeMillis()}.wav")
             audioFile.copyTo(retained, overwrite = true)
             retained.absolutePath

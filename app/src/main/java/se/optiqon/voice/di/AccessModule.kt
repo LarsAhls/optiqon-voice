@@ -17,8 +17,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import se.optiqon.voice.data.access.FirebaseAuthGateway
 import se.optiqon.voice.data.access.FirebaseSignInClient
+import se.optiqon.voice.data.access.RegistrationRepository
+import se.optiqon.voice.domain.access.AccountRegistrar
 import se.optiqon.voice.data.storage.UserScopedStorage
 import se.optiqon.voice.domain.access.AccessConfig
+import se.optiqon.voice.domain.access.AccessRefresher
 import se.optiqon.voice.domain.access.AuthGateway
 import se.optiqon.voice.domain.access.Clock
 import se.optiqon.voice.domain.access.SignInClient
@@ -82,4 +85,20 @@ abstract class AccessBindingsModule {
     @Binds
     @Singleton
     abstract fun bindSignInClient(impl: FirebaseSignInClient): SignInClient
+
+    /**
+     * The refresher is deliberately given the narrow reader interface rather than the
+     * repository: it decides *when* to ask, and nothing about it should be able to reach
+     * registration, sign-in or Firestore directly.
+     */
+    @Binds
+    @Singleton
+    abstract fun bindRegistrationReader(
+        impl: RegistrationRepository
+    ): AccessRefresher.RegistrationReader
+
+    /** The same object seen through the one method the account screen is allowed to call. */
+    @Binds
+    @Singleton
+    abstract fun bindAccountRegistrar(impl: RegistrationRepository): AccountRegistrar
 }

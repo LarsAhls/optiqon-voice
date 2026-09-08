@@ -1,6 +1,7 @@
 package se.optiqon.voice.ui.onboarding
 
 import android.content.Context
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
@@ -79,18 +80,35 @@ class OnboardingScreenTest {
         Dispatchers.resetMain()
     }
 
-    private fun showConnectStep() {
-        composeRule.setContent {
-            OptiqonVoiceTheme { OnboardingScreen(onFinished = {}, viewModel = viewModel) }
+    /**
+     * The account step is drawn as nothing and reported approved.
+     *
+     * This is a substitution in the test, not a hole in the gate: the production default reads
+     * the server verdict, and the slot exists because the real account screen needs the whole
+     * access graph, which a Robolectric `ComponentActivity` has no Hilt component for.
+     */
+    @Composable
+    private fun Onboarding() {
+        OptiqonVoiceTheme {
+            OnboardingScreen(
+                onFinished = {},
+                viewModel = viewModel,
+                accountStep = {},
+                accountApproved = { true }
+            )
         }
+    }
+
+    /** Two steps along now: language, then the account question, then the speech service. */
+    private fun showConnectStep() {
+        composeRule.setContent { Onboarding() }
+        composeRule.onNodeWithText("Continue").performClick()
         composeRule.onNodeWithText("Continue").performClick()
     }
 
     @Test
     fun `the first step asks for a language, in that language`() {
-        composeRule.setContent {
-            OptiqonVoiceTheme { OnboardingScreen(onFinished = {}, viewModel = viewModel) }
-        }
+        composeRule.setContent { Onboarding() }
 
         // Existence, not visibility: the step scrolls, and on a short screen the choices sit
         // below the heading that explains them.

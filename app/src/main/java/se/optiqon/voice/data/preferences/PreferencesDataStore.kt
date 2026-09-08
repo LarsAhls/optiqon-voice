@@ -9,9 +9,12 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.stringPreferencesKey
-import androidx.datastore.preferences.preferencesDataStore
+import androidx.datastore.preferences.preferencesDataStoreFile
 import dagger.hilt.android.qualifiers.ApplicationContext
+import se.optiqon.voice.data.storage.StorageRoot
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -19,22 +22,46 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.SupervisorJob
 import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
-private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
+/**
+ * One [DataStore] per file name, for the lifetime of the process.
+ *
+ * DataStore refuses to have two instances open on the same file, so the instance cannot simply
+ * be created where it is needed. The property delegate this replaces enforced the same rule but
+ * could only ever name one file, which is exactly what a per-account root cannot live with.
+ */
+private object PreferenceStores {
+    private val instances = ConcurrentHashMap<String, DataStore<Preferences>>()
+
+    fun of(context: Context, name: String): DataStore<Preferences> = instances.getOrPut(name) {
+        PreferenceDataStoreFactory.create(
+            scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        ) {
+            context.preferencesDataStoreFile(name)
+        }
+    }
+}
 
 @Singleton
 open class PreferencesDataStore @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val securePreferencesStore: SecurePreferencesStore
+    private val securePreferencesStore: SecurePreferencesStore,
+    private val storageRoot: StorageRoot = StorageRoot.DEFAULT
 ) {
     /**
-     * Open only so tests can point at a file of their own: the delegate above is one
-     * instance per process, so every test would otherwise share one store, and its contents.
+     * Open only so tests can point at a file of their own: one instance per file name per
+     * process, so every test would otherwise share one store, and its contents.
+     *
+     * The default root keeps the file name this app has always used, so an upgrade opens the
+     * settings that are already there rather than a new empty file.
      */
-    protected open val store: DataStore<Preferences> get() = context.dataStore
+    protected open val store: DataStore<Preferences>
+        get() = PreferenceStores.of(context, storageRoot.preferencesName)
 
     private object Keys {
         val ASR_BASE_URL = stringPreferencesKey("asr_base_url")

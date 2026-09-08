@@ -62,6 +62,7 @@ import se.optiqon.voice.data.db.entity.DictationSummary
 import se.optiqon.voice.domain.model.DictationStatus
 import se.optiqon.voice.domain.model.Profile
 import se.optiqon.voice.service.BubbleService
+import se.optiqon.voice.ui.access.SessionBanner
 import se.optiqon.voice.ui.common.GhostButton
 import se.optiqon.voice.ui.common.HairlineDivider
 import se.optiqon.voice.ui.common.OptiqonMark
@@ -92,7 +93,11 @@ import java.util.Locale
 fun HomeScreen(
     outerPadding: PaddingValues,
     viewModel: HomeViewModel = hiltViewModel(),
-    historyViewModel: HistoryViewModel = hiltViewModel()
+    historyViewModel: HistoryViewModel = hiltViewModel(),
+    // A slot rather than a call, so that rendering the home screen does not require the whole
+    // access graph. The default is the real banner; only tests pass anything else, and what
+    // they pass cannot grant access — the banner reports session state, it does not decide it.
+    sessionBanner: @Composable () -> Unit = { SessionBanner() }
 ) {
     val context = LocalContext.current
     val todayStats by viewModel.todayStats.collectAsStateWithLifecycle()
@@ -117,6 +122,11 @@ fun HomeScreen(
         item("header") {
             HomeHeader(profile = activeProfile, providerName = providerName)
         }
+
+        // Above everything, because it changes what the rest of the screen means: an offline
+        // banner turns the dictate button into something that will not work yet. It renders
+        // nothing at all when the session is healthy.
+        item("session") { sessionBanner() }
 
         item("hero") {
             BubbleHero(

@@ -16,6 +16,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.github.takahirom.roborazzi.captureRoboImage
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
@@ -45,6 +46,7 @@ import se.optiqon.voice.domain.provider.ProviderVerifier
 import se.optiqon.voice.domain.transcription.NetworkMonitor
 import se.optiqon.voice.domain.transcription.TranscriptionManager
 import se.optiqon.voice.domain.transcription.WhisperEngine
+import se.optiqon.voice.testing.AccessFixture
 import se.optiqon.voice.testing.TlsMockServer
 import se.optiqon.voice.ui.history.HistoryViewModel
 import se.optiqon.voice.ui.home.HomeScreen
@@ -78,11 +80,13 @@ class ScreenshotTest {
     private lateinit var tls: TlsMockServer
     private lateinit var preferences: PreferencesDataStore
     private lateinit var database: OptiqonVoiceDatabase
+    private lateinit var accessScope: CoroutineScope
     private val viewModels = mutableListOf<androidx.lifecycle.ViewModel>()
 
     @Before
     fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
+        accessScope = CoroutineScope(UnconfinedTestDispatcher())
         tls = TlsMockServer()
         preferences = testPreferencesDataStore(context)
         database = Room.inMemoryDatabaseBuilder(context, OptiqonVoiceDatabase::class.java)
@@ -96,6 +100,7 @@ class ScreenshotTest {
         // The in-memory database is left open on purpose: cancelling is cooperative, and
         // seeding already handed to Room would otherwise fail after the close.
         tls.shutdown()
+        accessScope.cancel()
         Dispatchers.resetMain()
     }
 
@@ -108,6 +113,23 @@ class ScreenshotTest {
     private fun <T : androidx.lifecycle.ViewModel> remember(viewModel: T): T {
         viewModels += viewModel
         return viewModel
+    }
+
+    /**
+     * The first run with its account step drawn as nothing and reported approved.
+     *
+     * A baseline image of the account screen would be a baseline of the access graph, which a
+     * Robolectric `ComponentActivity` has no Hilt component for; the account screens have their
+     * own tests. Approving here decides nothing — the production default reads the server.
+     */
+    @Composable
+    private fun onboarding(viewModel: OnboardingViewModel) {
+        OnboardingScreen(
+            onFinished = {},
+            viewModel = viewModel,
+            accountStep = {},
+            accountApproved = { true }
+        )
     }
 
     /** One capture, on the app's own background so the shot is not transparent behind. */
@@ -136,7 +158,14 @@ class ScreenshotTest {
         )
         val history = remember(HistoryViewModel(historyRepository()))
         capture("home") {
-            HomeScreen(outerPadding = PaddingValues(), viewModel = home, historyViewModel = history)
+            HomeScreen(
+                outerPadding = PaddingValues(),
+                viewModel = home,
+                historyViewModel = history,
+                // Drawn as nothing: the banner needs the access graph, and a baseline of a
+                // healthy session shows no banner anyway.
+                sessionBanner = {}
+            )
         }
     }
 
@@ -163,20 +192,27 @@ class ScreenshotTest {
                 ProviderVerifier(ApiClientFactory(tls.client))
             )
         )
-        capture("settings") { SettingsScreen(outerPadding = PaddingValues(), viewModel = settings) }
+        capture("settings") {
+            SettingsScreen(
+                outerPadding = PaddingValues(),
+                viewModel = settings,
+                accountSection = {}
+            )
+        }
     }
 
     @Test
     fun `onboarding language step`() {
         capture("onboarding_1_language") {
-            OnboardingScreen(onFinished = {}, viewModel = onboardingViewModel())
+            onboarding(onboardingViewModel())
         }
     }
 
     @Test
     fun `onboarding connect step`() {
         val viewModel = onboardingViewModel()
-        capture("onboarding_2_connect") { OnboardingScreen(onFinished = {}, viewModel = viewModel) }
+        capture("onboarding_2_connect") { onboarding(viewModel) }
+        composeRule.onNodeWithText("Continue").performClick()
         composeRule.onNodeWithText("Continue").performClick()
         composeRule.onRoot().captureRoboImage("build/outputs/roborazzi/onboarding_2_connect.png")
     }
@@ -184,9 +220,8 @@ class ScreenshotTest {
     @Test
     fun `onboarding permissions step`() {
         val viewModel = onboardingViewModel()
-        capture("onboarding_3_permissions") {
-            OnboardingScreen(onFinished = {}, viewModel = viewModel)
-        }
+        capture("onboarding_3_permissions") { onboarding(viewModel) }
+        composeRule.onNodeWithText("Continue").performClick()
         composeRule.onNodeWithText("Continue").performClick()
 
         // The third step is only reachable once an endpoint has actually transcribed
@@ -218,7 +253,11 @@ class ScreenshotTest {
             database.dictationDao(),
             database.lifetimeStatsDao(),
             preferences,
-            profileRepository()
+            profileRepository(),
+            // Never exercised: no screenshot below starts a dictation or a retry. It is here
+            // because the gate is a constructor argument, which is the point — a new call site
+            // cannot forget it.
+            AccessFixture(context, accessScope).guard
         )
         return HistoryRepository(context, database.dictationDao(), transcriptionManager)
     }

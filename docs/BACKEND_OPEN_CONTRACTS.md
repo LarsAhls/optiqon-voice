@@ -104,6 +104,92 @@ storage (`UserScopedStorageTest`), the outbox ownership and failure rules
 - **"Process death" is a closed and reopened database**, which is what the durability claim
   actually rests on. It is not a killed Android process, and WorkManager's own scheduling
   is not exercised.
-- **Legacy adoption is untested because it does not exist.** Pre-account files stay in
-  `files/legacy` and are unreadable through `isReadableBy`; migrating them is a separate
-  decision, and there is no code to test until it is made.
+- **There was never a legacy directory.** `UserScopedStorage.legacyDir()` had no writer and
+  no reader anywhere in the app, so no data was ever in it and nothing had to be adopted out
+  of it. It is gone. The real question — what happens to the data already on the device when
+  accounts arrive — is answered by storage roots below, not by a file migration.
+
+## What the Mission 1 closeout adds, and what it still does not prove
+
+The access layer now rests on one invariant: the only writer of an `AccessSnapshot` is
+`AccessRepository.record()`, and it is called only after a successful, current, non-cached
+*server* read for the *active* identity. `SoleWriterInvariantTest` fails if a second calling
+file appears. Everything below is what that invariant does not reach.
+
+### Local data and storage roots
+
+- **Isolation is at the storage handle, not per row.** A root names a database file, two
+  preference files and a retained-audio directory; the data already on this device keeps the
+  current, unrenamed names as the `default` root. `StorageRootIsolationTest` and
+  `StorageRootRecoveryTest` prove a second root writes none of the first owner's bytes and
+  that the owner reopens exactly its own files after sign-out, restart and a compatible Room
+  upgrade. Both run on synthetic data; **no real local data was read, moved or deleted.**
+- **Switching roots ends the process.** Re-scoping Room, DataStore, EncryptedSharedPreferences
+  and WorkManager mid-process is where a stale handle would leak silently, so the app persists
+  the new active identity, cancels the identity scope and restarts instead. The restart itself
+  is a `ProcessRestarter` seam in tests; the real `Process.killProcess` path has not been run
+  on a device.
+- **A root is a product boundary, not a security boundary.** Two roots are as separate as two
+  installs to the app's own code. A rooted device reads both, exactly as it reads app-private
+  storage today.
+- **The claim question is asked once, before the app opens.** Neither answer copies, moves,
+  deletes or uploads anything, and declining leaves the `default` root on disk, unclaimed and
+  untouched. What is not built is a later "actually, adopt it after all" flow.
+
+### The gate at the effect boundary
+
+- **Authorisation is a lease, re-validated immediately before each outgoing effect** — before
+  the ASR request, before the LLM request, and inside the injection bridge immediately before
+  the commit call. `EffectBoundaryTest` and `InjectionRefusalTest` pin all three.
+- **Text already committed to another app's input connection cannot be recalled.** That is the
+  one accepted race, bounded by a single call. It is not a licence to finish an injection that
+  has not happened yet, and the tests assert the difference.
+- **Late, out-of-order and foreign-identity answers write nothing** (`AccessOrderingTest`,
+  `GraceRenewalTest`). A known revocation is not undone by an older approved answer, and a
+  cache-served read records nothing at all, so repeated offline refreshes cannot advance grace.
+- **`PERMISSION_DENIED` is not read as revocation.** Rules deny for reasons unrelated to
+  status; the partner of "a token is not approval" is "a denied read is not proof of
+  revocation".
+
+### Time, Doze and latency
+
+- **`decision` re-emits on a computed deadline, not a tick** — zero steady-state wakeups. But
+  `delay` does not run in Doze, so a grace expiry falling while the phone sleeps is observed
+  late. This is tolerable only because the consumers needing time-correctness are the UI
+  (invisible while asleep) and idle service state, and because every effect boundary
+  re-validates against live clocks. `currentDecision()` remains the authority. If a displayed
+  state must be correct across deep sleep, that needs `AlarmManager.setAndAllowWhileIdle` —
+  **noted, not built.**
+- **`check()` waits at most ~3 s on a stale-and-online refresh**, and a timeout classifies as
+  `Failed`, so a user still inside grace proceeds. That is a deliberate trade of freshness for
+  not blocking dictation, and it is the reason revocation is discovered at the next check-in
+  rather than instantly.
+
+### Offline, and what no string may claim
+
+- **There is no offline audio queue in Mission 1.** Real network absence means cloud speech
+  recognition is unreachable, full stop. This is an accepted scope boundary, not a decision
+  that anything is queued: no UI string says a recording is waiting or will be sent later,
+  because nothing would send it. A temporary Firebase or auth fault *with* a working network
+  still allows dictation inside valid grace — that case is `Degraded`, and it is a banner, not
+  a gate.
+- **An interrupted recording is preserved or discarded strictly by the user's standing history
+  and audio-retention settings**, into its own identity's root, visible and retriable only
+  there and not while that identity is blocked. Nothing is deleted because a session changed,
+  and no new permanent audio storage is introduced for users who turned retention off.
+
+### Support contact
+
+- **The revoked screen sends nothing.** `OutboxSender` is still a placeholder that refuses
+  permanently, so the private feedback backend is not used here and no receipt is shown. The
+  screen shows contact information and, at most, opens a user-initiated mail intent on an
+  explicit tap.
+- **`support_contact_email` is deliberately empty.** Until Lars decides the address, the screen
+  shows the text with no button — which is why `SupportContactTest` asserts there is no send
+  affordance at all. Deciding the address is an open item.
+
+### Still unproven by any of this
+
+Nothing in Mission 1 exercises Firebase. No sign-in happened, no ruleset was deployed, no real
+registration was created. The first proof that a live account goes new to pending to approved,
+and that revocation reaches a device, is the next Gate's physical smoke run.

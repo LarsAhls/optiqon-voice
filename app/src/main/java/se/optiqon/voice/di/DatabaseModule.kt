@@ -11,6 +11,7 @@ import se.optiqon.voice.data.db.dao.OutboxDao
 import se.optiqon.voice.data.db.dao.PostProcessingPromptDao
 import se.optiqon.voice.data.db.dao.ProfileDao
 import se.optiqon.voice.data.db.dao.TextReplacementRuleDao
+import se.optiqon.voice.data.storage.StorageRoot
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -180,11 +181,14 @@ object DatabaseModule {
 
     @Provides
     @Singleton
-    fun provideDatabase(@ApplicationContext context: Context): OptiqonVoiceDatabase {
+    fun provideDatabase(
+        @ApplicationContext context: Context,
+        storageRoot: StorageRoot
+    ): OptiqonVoiceDatabase {
         return Room.databaseBuilder(
             context,
             OptiqonVoiceDatabase::class.java,
-            "optiqon_voice.db"
+            storageRoot.databaseName
         ).addMigrations(*ALL_MIGRATIONS)
             .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
             .build()

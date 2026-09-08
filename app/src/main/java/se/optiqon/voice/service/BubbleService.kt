@@ -21,10 +21,13 @@ import android.view.WindowManager
 import android.widget.Toast
 import se.optiqon.voice.BuildConfig
 import se.optiqon.voice.R
-import se.optiqon.voice.data.access.RegistrationRepository
 import se.optiqon.voice.data.preferences.PreferencesDataStore
 import se.optiqon.voice.data.repository.ProfileRepository
 import se.optiqon.voice.domain.access.AccessDecision
+import se.optiqon.voice.domain.access.AccessGrant
+import se.optiqon.voice.domain.access.AccessRevokedException
+import se.optiqon.voice.domain.access.AccessGuard
+import se.optiqon.voice.domain.access.AccessLease
 import se.optiqon.voice.domain.access.AccessRepository
 import se.optiqon.voice.domain.access.BlockReason
 import se.optiqon.voice.domain.model.AppContext
@@ -35,6 +38,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -79,7 +83,7 @@ class BubbleService : Service() {
     @Inject lateinit var preferencesDataStore: PreferencesDataStore
     @Inject lateinit var profileRepository: ProfileRepository
     @Inject lateinit var accessRepository: AccessRepository
-    @Inject lateinit var registrationRepository: RegistrationRepository
+    @Inject lateinit var accessGuard: AccessGuard
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var windowManager: WindowManager? = null
@@ -101,6 +105,17 @@ class BubbleService : Service() {
     private var audioFocusRequest: AudioFocusRequest? = null
     private var collapsedBubbleX: Int? = null
     private var collapsedBubbleY: Int? = null
+
+    /**
+     * Set immediately before a processing job is cancelled because access ended, and read by
+     * that job's cancellation handler.
+     *
+     * A flag rather than a custom [CancellationException], because the reason a job is
+     * cancelled has to survive the hop through [Job.cancel] intact. Losing it would make an
+     * access cancellation indistinguishable from the user's own, and the two owe the recording
+     * opposite things: the user asked for it to go, the server did not.
+     */
+    @Volatile private var processingStoppedBy: BlockReason? = null
 
     private var state: ServiceState = ServiceState.Idle
     private var recordingStartTime: Long = 0
@@ -146,7 +161,96 @@ class BubbleService : Service() {
             }
         }
 
+        // Fail-closed twin of the check in BootReceiver, for every other way this service can
+        // be started. Disk only: currentDecision() reads the stored verdict and never the
+        // network, so it answers even on a cold boot with no connectivity.
+        scope.launch {
+            if (accessRepository.currentDecision() is AccessDecision.Blocked) {
+                Log.i(TAG, "Bubble not available: account is blocked")
+                stopSelf()
+                return@launch
+            }
+            observeAccess()
+        }
+
         registerReceiver(stopReceiver, IntentFilter(NotificationHelper.ACTION_STOP), RECEIVER_NOT_EXPORTED)
+    }
+
+    /**
+     * Ends dictation the moment the account stops being allowed to do it.
+     *
+     * The service outlives every screen, so this is the only place a revocation can be noticed
+     * while the app itself is closed. It stops effects; it does not tidy up after the user.
+     * What was already recorded is kept or discarded strictly by their own retention setting.
+     *
+     * The bubble is left on screen rather than removed, so the reason is visible. Refusing to
+     * *start* while blocked is a different question, answered above.
+     */
+    private suspend fun observeAccess() {
+        accessRepository.decision.collect { decision ->
+            if (decision !is AccessDecision.Blocked) return@collect
+            onAccessLost(decision.reason)
+        }
+    }
+
+    private fun onAccessLost(reason: BlockReason) {
+        // The lease is already invalid; dropping it stops a later stage from finding one at all.
+        currentLease = null
+        when (state) {
+            is ServiceState.Recording -> stopRecordingAndPreserve(reason)
+            is ServiceState.Transcribing, is ServiceState.PostProcessing -> {
+                processingStoppedBy = reason
+                transcriptionJob?.cancel()
+            }
+            else -> Unit
+        }
+    }
+
+    /**
+     * Stops a recording that lost its authorisation part-way, keeping the audio on the user's
+     * own terms.
+     *
+     * Deliberately not routed through [stopRecordingAndTranscribe]: transcription would be
+     * refused at the first effect boundary anyway, and asking for it would only mean a failed
+     * request in the log and a retriable entry for work that must not be retried.
+     */
+    private fun stopRecordingAndPreserve(reason: BlockReason) {
+        audioRecorder?.stop()
+        demoteToIdleService()
+        silenceCheckJob?.cancel()
+        levelJob?.cancel()
+        timerJob?.cancel()
+        fanMenuController?.dismiss()
+
+        val durationMs = recordedDurationMs()
+        val appContext = recordingAppContext
+        updateState(ServiceState.Error(getString(blockedMessage(reason)), null))
+
+        scope.launch {
+            var wavFile: File? = null
+            val pcm = try {
+                recordingJob?.join()
+                pcmFile
+            } catch (e: Exception) {
+                Log.w(TAG, "Recording cleanup interrupted", e)
+                null
+            }
+            try {
+                if (pcm != null && pcm.exists() && pcm.length() > 0L) {
+                    wavFile = File(cacheDir, "interrupted_${System.currentTimeMillis()}.wav")
+                    withContext(Dispatchers.IO) { AudioConverter.pcmToWav(pcm, wavFile) }
+                    preserveInterrupted(wavFile, durationMs, appContext, AccessRevokedException(reason))
+                }
+            } finally {
+                abandonRecordingAudioFocus()
+                pcm?.delete()
+                wavFile?.delete()
+                recordingJob = null
+                pcmFile = null
+                audioRecorder = null
+                silenceDetector = null
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -396,7 +500,7 @@ class BubbleService : Service() {
             is ServiceState.Injecting -> {}
             is ServiceState.Error -> {
                 val retryEntryId = (state as ServiceState.Error).retryEntryId
-                if (retryEntryId != null) ifAllowed { retrySavedFailure(retryEntryId) }
+                if (retryEntryId != null) ifAllowed { lease -> retrySavedFailure(retryEntryId, lease) }
                 else updateState(ServiceState.Idle)
             }
         }
@@ -455,24 +559,34 @@ class BubbleService : Service() {
     private fun startRecordingIfAllowed() = ifAllowed { startRecording() }
 
     /**
+     * The lease the dictation now in flight was authorised under.
+     *
+     * Held rather than re-derived because the point of a lease is to remember *which* identity
+     * said yes. Re-asking the guard later would happily authorise the account that happens to be
+     * signed in by then, which is the substitution the lease exists to make impossible.
+     */
+    private var currentLease: AccessLease? = null
+
+    /**
      * Runs [action] only for an account the server has approved.
      *
      * Every route that turns speech into text goes through here, not just the first one: a
      * retry re-runs transcription and injects the result, so gating the initial tap alone
      * would leave a revoked account one saved failure away from dictating anyway.
      *
-     * A check-in is kicked off but never waited for. Blocking the tap on a network round trip
-     * would cost every dictation to catch a rare revocation; letting it land in the background
-     * means the revocation applies from the next tap, which is what the grace period already
-     * promises.
+     * The guard refreshes a stale verdict first, with a short cap, and hands back a lease
+     * rather than a boolean. The boolean was the bug: it answered a question about this instant
+     * and was then relied on seconds later, across a recording, an upload and a language model.
      */
-    private fun ifAllowed(action: () -> Unit) {
+    private fun ifAllowed(action: (AccessLease) -> Unit) {
         scope.launch {
-            launch { runCatching { registrationRepository.refreshIfStale() } }
-            when (val decision = accessRepository.currentDecision()) {
-                is AccessDecision.Allowed -> action()
-                is AccessDecision.Blocked -> updateState(
-                    ServiceState.Error(getString(blockedMessage(decision.reason)), null)
+            when (val grant = accessGuard.authorize()) {
+                is AccessGrant.Granted -> {
+                    currentLease = grant.lease
+                    action(grant.lease)
+                }
+                is AccessGrant.Denied -> updateState(
+                    ServiceState.Error(getString(blockedMessage(grant.reason)), null)
                 )
             }
         }
@@ -615,8 +729,17 @@ class BubbleService : Service() {
 
                 val appContext = recordingAppContext
 
+                // The lease taken when recording started, not a fresh one. Re-authorising here
+                // would ask whether *somebody* may dictate; the question that matters is
+                // whether the person who spoke these words still may.
+                val lease = currentLease
+                if (lease == null) {
+                    updateState(ServiceState.Error(getString(R.string.access_blocked_not_registered), null))
+                    return@launch
+                }
+
                 val result = withContext(Dispatchers.IO) {
-                    transcriptionManager.transcribe(wavFile, durationMs, appContext) {
+                    transcriptionManager.transcribe(wavFile, durationMs, appContext, lease) {
                         scope.launch { updateState(ServiceState.PostProcessing) }
                     }
                 }
@@ -624,11 +747,16 @@ class BubbleService : Service() {
                 result.onSuccess { text ->
                     if (text.isNotBlank()) {
                         updateState(ServiceState.Injecting)
-                        textInjectionBridge.inject(text)
+                        textInjectionBridge.inject(text, lease)
                         hapticFeedback?.complete()
                     }
                     updateState(ServiceState.Idle)
                 }.onFailure { error ->
+                    if (error is AccessRevokedException) {
+                        preserveInterrupted(wavFile, durationMs, appContext, error)
+                        updateState(ServiceState.Error(getString(blockedMessage(error.reason)), null))
+                        return@onFailure
+                    }
                     Log.e(TAG, "Transcription failed", error)
                     val retryEntryId = withContext(Dispatchers.IO) {
                         transcriptionManager.latestRetriableFailureId()
@@ -636,7 +764,21 @@ class BubbleService : Service() {
                     showError("Transcription failed: ${error.message}", retryEntryId)
                 }
             } catch (e: CancellationException) {
-                // Cancelled by the user; cancelProcessing() owns the state transition.
+                val reason = processingStoppedBy
+                if (reason != null) {
+                    processingStoppedBy = null
+                    // NonCancellable because this coroutine is already cancelled: without it the
+                    // very first suspension inside preservation would throw and the recording
+                    // would be lost by the mechanism meant to stop the effects, not the data.
+                    withContext(NonCancellable) {
+                        val audio = wavFile
+                        if (audio != null) {
+                            preserveInterrupted(audio, durationMs, recordingAppContext, AccessRevokedException(reason))
+                        }
+                    }
+                    updateState(ServiceState.Error(getString(blockedMessage(reason)), null))
+                }
+                // Otherwise cancelled by the user; cancelProcessing() owns the state transition.
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Processing failed", e)
@@ -646,6 +788,9 @@ class BubbleService : Service() {
                 showError(e.message ?: "Unknown error", retryEntryId)
             } finally {
                 abandonRecordingAudioFocus()
+                // Temp files only: the WAV here is a working copy in cacheDir. Anything the
+                // user is entitled to keep has already been copied into their own storage by
+                // the transcription manager, under their own history and retention settings.
                 currentPcmFile?.delete()
                 wavFile?.delete()
                 recordingJob = null
@@ -717,21 +862,47 @@ class BubbleService : Service() {
         return (now - recordingStartTime - totalPausedMs - currentPauseMs).coerceAtLeast(0L)
     }
 
-    private fun retrySavedFailure(entryId: Long) {
+    /**
+     * Writes an interrupted dictation into its owner's history before the temp files go.
+     *
+     * Separated from stopping the work on purpose. Stopping is immediate and unconditional;
+     * keeping what was already recorded is a different question, answered by the settings the
+     * user had already chosen.
+     */
+    private suspend fun preserveInterrupted(
+        wavFile: File,
+        durationMs: Long,
+        appContext: AppContext?,
+        cause: Throwable
+    ) {
+        runCatching {
+            withContext(Dispatchers.IO) {
+                transcriptionManager.preserveInterrupted(wavFile, durationMs, appContext, cause)
+            }
+        }.onFailure { Log.e(TAG, "Could not preserve interrupted dictation", it) }
+    }
+
+    private fun retrySavedFailure(entryId: Long, lease: AccessLease) {
         updateState(ServiceState.Transcribing)
         scope.launch {
             val result = withContext(Dispatchers.IO) {
-                transcriptionManager.retry(entryId)
+                transcriptionManager.retry(entryId, lease)
             }
             result.onSuccess { text ->
                 if (text.isNotBlank()) {
                     updateState(ServiceState.Injecting)
-                    textInjectionBridge.inject(text)
+                    textInjectionBridge.inject(text, lease)
                     hapticFeedback?.complete()
                 }
                 updateState(ServiceState.Idle)
             }.onFailure { error ->
-                showError("Retry failed: ${error.message}", entryId)
+                if (error is AccessRevokedException) {
+                    // The saved failure stays exactly where it was. It is not retried, not
+                    // deleted, and not offered again until its owner is allowed to use it.
+                    updateState(ServiceState.Error(getString(blockedMessage(error.reason)), null))
+                } else {
+                    showError("Retry failed: ${error.message}", entryId)
+                }
             }
         }
     }
@@ -739,7 +910,7 @@ class BubbleService : Service() {
     private fun retryBubbleError() {
         val retryEntryId = (state as? ServiceState.Error)?.retryEntryId
         if (retryEntryId != null) {
-            ifAllowed { retrySavedFailure(retryEntryId) }
+            ifAllowed { lease -> retrySavedFailure(retryEntryId, lease) }
         } else {
             updateState(ServiceState.Idle)
         }

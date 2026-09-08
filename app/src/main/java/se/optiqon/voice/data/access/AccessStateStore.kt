@@ -37,6 +37,8 @@ open class AccessStateStore @Inject constructor(
     private fun statusKey(uid: String) = stringPreferencesKey("status_$uid")
     private fun wallKey(uid: String) = longPreferencesKey("verified_wall_$uid")
     private fun elapsedKey(uid: String) = longPreferencesKey("verified_elapsed_$uid")
+    private fun epochKey(uid: String) = longPreferencesKey("epoch_token_$uid")
+    private fun seqKey(uid: String) = longPreferencesKey("seq_$uid")
 
     fun snapshot(uid: String): Flow<AccessSnapshot?> = store.data
         .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
@@ -48,7 +50,9 @@ open class AccessStateStore @Inject constructor(
                 uid = uid,
                 status = status,
                 verifiedAtWallMs = prefs[wallKey(uid)] ?: 0L,
-                verifiedAtElapsedMs = prefs[elapsedKey(uid)] ?: 0L
+                verifiedAtElapsedMs = prefs[elapsedKey(uid)] ?: 0L,
+                epochToken = prefs[epochKey(uid)] ?: 0L,
+                seq = prefs[seqKey(uid)] ?: 0L
             )
         }
 
@@ -57,6 +61,8 @@ open class AccessStateStore @Inject constructor(
             prefs[statusKey(snapshot.uid)] = snapshot.status.name
             prefs[wallKey(snapshot.uid)] = snapshot.verifiedAtWallMs
             prefs[elapsedKey(snapshot.uid)] = snapshot.verifiedAtElapsedMs
+            prefs[epochKey(snapshot.uid)] = snapshot.epochToken
+            prefs[seqKey(snapshot.uid)] = snapshot.seq
         }
     }
 }

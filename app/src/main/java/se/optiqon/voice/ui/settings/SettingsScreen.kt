@@ -61,6 +61,7 @@ import se.optiqon.voice.ui.common.HairlineDivider
 import se.optiqon.voice.ui.common.ListRow
 import se.optiqon.voice.ui.common.LogoTile
 import se.optiqon.voice.ui.common.SecondaryButton
+import se.optiqon.voice.ui.access.AccountSettingsSection
 import se.optiqon.voice.ui.common.SectionEyebrow
 import se.optiqon.voice.ui.common.SwitchRow
 import se.optiqon.voice.ui.common.SectionCard
@@ -78,7 +79,10 @@ private sealed interface SettingsMode {
 @Composable
 fun SettingsScreen(
     outerPadding: PaddingValues,
-    viewModel: SettingsViewModel = hiltViewModel()
+    viewModel: SettingsViewModel = hiltViewModel(),
+    // A slot rather than a call, for the same reason as HomeScreen: the section needs the
+    // access graph, and rendering the settings list should not. The default is the real one.
+    accountSection: @Composable () -> Unit = { AccountSettingsSection() }
 ) {
     val preferences by viewModel.preferences.collectAsStateWithLifecycle()
     val rules by viewModel.rules.collectAsStateWithLifecycle()
@@ -108,7 +112,8 @@ fun SettingsScreen(
             onPrompts = { mode = SettingsMode.Prompts },
             onAdvanced = { mode = SettingsMode.Advanced },
             onAbout = { mode = SettingsMode.About },
-            outerPadding = outerPadding
+            outerPadding = outerPadding,
+            accountSection = accountSection
         )
         SettingsMode.Advanced -> AdvancedProviderScreen(
             preferences = preferences,
@@ -203,7 +208,8 @@ private fun SettingsMainScreen(
     onPrompts: () -> Unit,
     onAdvanced: () -> Unit,
     onAbout: () -> Unit,
-    outerPadding: PaddingValues
+    outerPadding: PaddingValues,
+    accountSection: @Composable () -> Unit
 ) {
     val preset = ProviderPresets.byId(preferences.providerPresetId)
     val connected = preferences.asrBaseUrl.isNotBlank() && preferences.asrApiKey.isNotBlank()
@@ -223,6 +229,9 @@ private fun SettingsMainScreen(
                     LogoTile(size = 32.dp)
                 }
             }
+
+            item("account_eyebrow") { SettingsEyebrow("Account") }
+            item("account") { accountSection() }
 
             item("connection_eyebrow") { SettingsEyebrow("Connection") }
             item("connection") {

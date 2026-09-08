@@ -9,6 +9,7 @@ import android.util.Log
 import android.widget.Toast
 import se.optiqon.voice.R
 import se.optiqon.voice.data.preferences.PreferencesDataStore
+import se.optiqon.voice.domain.access.AccessLease
 import se.optiqon.voice.domain.model.AppContext
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -28,13 +29,27 @@ class TextInjectionBridge @Inject constructor(
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    suspend fun inject(text: String): Boolean {
+    /**
+     * Writes [text] into the focused app, or falls back to the clipboard.
+     *
+     * [lease] is re-validated as the very last thing before the write. It is required rather
+     * than optional because this is the point of no return: text handed to another app cannot
+     * be recalled, so an injection that has not yet happened is the last thing that can still
+     * be refused, and the caller must be able to say whose text it is.
+     */
+    suspend fun inject(text: String, lease: AccessLease): Boolean {
         val injector = TextInjectorService.instance
         if (injector != null) {
             // Every step of injection is a blocking call into the focused app, and
             // getSurroundingText is documented as slow, so it must not run on the main
             // dispatcher the bubble calls this from.
-            val injectionResult = withContext(Dispatchers.Default) { injector.injectText(text) }
+            val injectionResult = withContext(Dispatchers.Default) {
+                // Inside the dispatch, immediately before the call: nothing suspends between
+                // this line and the write. Checking at the top of the function instead would
+                // leave the preference read and the thread switch inside the window.
+                lease.requireValid()
+                injector.injectText(text)
+            }
             if (injectionResult is InjectionResult.Success) return true
 
             if (injectionResult is InjectionResult.BlockedSensitive) {
@@ -46,8 +61,10 @@ class TextInjectionBridge @Inject constructor(
             }
         }
 
+        // The clipboard is an effect too: it leaves the dictation where any app can read it.
         val autoClipboard = preferencesDataStore.preferences.first().autoClipboard
         if (autoClipboard) {
+            lease.requireValid()
             copyToClipboard(text)
         } else {
             mainHandler.post {

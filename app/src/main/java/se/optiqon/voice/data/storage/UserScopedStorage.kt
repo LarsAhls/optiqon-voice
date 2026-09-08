@@ -3,13 +3,18 @@ package se.optiqon.voice.data.storage
 import java.io.File
 
 /**
- * Gives every account its own directory under app-private storage, and keeps the pre-Voice
- * files where they are.
+ * Gives every account its own attachment directory under app-private storage.
  *
  * Isolation here is by path, not by encryption: another *account* on the same install cannot
  * reach a directory it does not know how to name, and the app never hands out a path for a uid
  * other than the one signed in. On a rooted device all of it is readable — that is a limit of
  * app-private storage, not something this class pretends to solve.
+ *
+ * Scope: attachments only, as preparation for the F3 upload path. Everything the app stores
+ * today — history, profiles, prompts, settings, keys, retained audio — is separated by
+ * [StorageRoot] instead, at the storage handle rather than by path. Data that predates accounts
+ * lives in the `default` root and is bound to an account only by an explicit answer to the
+ * claim question; there is no `files/legacy` directory, and nothing ever wrote one.
  */
 class UserScopedStorage(private val filesDir: File) {
 
@@ -20,14 +25,6 @@ class UserScopedStorage(private val filesDir: File) {
         }
         return File(File(filesDir, "users/$uid"), "attachments").apply { mkdirs() }
     }
-
-    /**
-     * Where files created before Voice had accounts live. They are never moved into a uid
-     * directory: attributing them to whoever signs in first would be a guess, and a wrong guess
-     * would attach one person's recordings to another person's account. Adopting them is a
-     * separate, explicit decision.
-     */
-    fun legacyDir(): File = File(filesDir, "legacy")
 
     /**
      * The check the upload path uses before touching a file: the file must sit inside the
