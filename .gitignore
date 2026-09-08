@@ -29,9 +29,18 @@ output/
 .env
 .env.*
 !.env.example
+# Scratch notes and handoff drafts land in the repo root and must not be committed;
+# the documentation that is meant to be versioned lives under docs/ or is named here.
 *.md
 !README.md
-!docs/OPTIQON_VOICE_IDENTITY.md
+!CLAUDE.md
+!BACKLOG.md
+!docs/**/*.md
+!fine-tuning/README.md
+
+# Firebase Android config: carries the project's API key and is fetched from the
+# Firebase console per machine, so it stays out of git like every other credential.
+google-services.json
 
 # Production release signing material — must never be committed
 *.keystore
