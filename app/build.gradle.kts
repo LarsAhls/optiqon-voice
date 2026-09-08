@@ -9,6 +9,20 @@ plugins {
     alias(libs.plugins.room)
 }
 
+// google-services.json is downloaded per machine and is deliberately gitignored, so the
+// plugin is applied only when the file is actually present. Without it the app still
+// builds and its non-Firebase tests still run; what disappears is the generated Firebase
+// configuration, which FirebaseInitializer reports as "not configured" at runtime.
+val googleServicesConfig = file("google-services.json")
+if (googleServicesConfig.exists()) {
+    apply(plugin = libs.plugins.google.services.get().pluginId)
+} else {
+    logger.lifecycle(
+        "google-services.json is missing: building without Firebase configuration. " +
+            "Download it from the Firebase console into app/ before signing in."
+    )
+}
+
 android {
     namespace = "se.optiqon.voice"
     compileSdk = 35
@@ -196,6 +210,18 @@ dependencies {
 
     // Coroutines
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.kotlinx.coroutines.play.services)
+
+    // Firebase
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.auth)
+    implementation(libs.firebase.firestore)
+
+    // Sign-in and the outbox worker
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play.services)
+    implementation(libs.googleid)
+    implementation(libs.androidx.work.runtime)
 
     // Test
     testImplementation(libs.junit)
@@ -213,4 +239,5 @@ dependencies {
     // The app refuses plain HTTP, so the verifier can only be exercised over TLS.
     testImplementation(libs.okhttp.tls)
     testImplementation(libs.room.testing)
+    testImplementation(libs.androidx.work.testing)
 }

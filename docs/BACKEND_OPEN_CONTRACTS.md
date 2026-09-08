@@ -65,3 +65,29 @@ confidence than it has earned:
   something the emulator suite exercises.
 - Nothing here says anything about R2, the Worker, or the upload lifecycle. See the F3
   hard stop above.
+
+## What the F2 app tests do and do not prove
+
+The unit and Robolectric tests cover negative tests 14-24: the access gate
+(`AccessGateTest`), the per-uid verdict cache (`AccessStateStoreTest`), per-account file
+storage (`UserScopedStorageTest`), the outbox ownership and failure rules
+(`OutboxPolicyTest`, `OutboxPersistenceTest`) and the version 7 to 8 upgrade
+(`OutboxMigrationTest`). What that leaves open:
+
+- **The gate is a product boundary, not a security boundary.** It runs on the device and
+  reads a DataStore value; a rooted phone can change it. Cloud access is guarded
+  independently by the rules, which have no grace period, so the local gap is limited to
+  local dictation.
+- **Nothing here exercises Firebase.** `FirebaseAuthGateway`, `FirebaseSignInClient` and
+  `RegistrationRepository` are covered by their types and by the build, not by a test —
+  the first proof that a real sign-in produces a `pending` user is a live smoke run, which
+  Mission 1 does not include.
+- **The outbox has no sender.** The queue, its ownership rule and its failure handling are
+  proven; `OutboxSender` is a placeholder that refuses permanently, and nothing enqueues a
+  row yet. Delivery is F3 and later.
+- **"Process death" is a closed and reopened database**, which is what the durability claim
+  actually rests on. It is not a killed Android process, and WorkManager's own scheduling
+  is not exercised.
+- **Legacy adoption is untested because it does not exist.** Pre-account files stay in
+  `files/legacy` and are unreadable through `isReadableBy`; migrating them is a separate
+  decision, and there is no code to test until it is made.

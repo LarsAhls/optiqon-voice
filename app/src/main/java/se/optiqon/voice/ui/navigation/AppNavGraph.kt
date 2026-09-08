@@ -27,6 +27,9 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import se.optiqon.voice.ui.access.AccountScreen
+import se.optiqon.voice.ui.access.AccountUiState
+import se.optiqon.voice.ui.access.AccountViewModel
 import se.optiqon.voice.ui.home.HomeScreen
 import se.optiqon.voice.ui.onboarding.OnboardingScreen
 import se.optiqon.voice.ui.profiles.ProfilesScreen
@@ -89,9 +92,26 @@ fun AppNavGraph(rootViewModel: RootViewModel = hiltViewModel()) {
             )
         }
         composable(Routes.MAIN) {
-            MainShell()
+            // Registration gates the whole app, not just dictation, so the shell is only
+            // composed for an approved account.
+            AccountGate { MainShell() }
         }
     }
+}
+
+/**
+ * Shows the account screen until the server has said this account is approved.
+ *
+ * The gate is drawn from [AccountViewModel.state], which is derived from the stored verdict
+ * rather than from the fact that somebody managed to sign in. A signed-in account with no
+ * decision yet sees the waiting screen, not the app.
+ */
+@Composable
+private fun AccountGate(content: @Composable () -> Unit) {
+    val viewModel: AccountViewModel = hiltViewModel()
+    val state by viewModel.state.collectAsStateWithLifecycle()
+
+    if (state is AccountUiState.Approved) content() else AccountScreen(viewModel)
 }
 
 @Composable

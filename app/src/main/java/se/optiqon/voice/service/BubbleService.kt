@@ -20,8 +20,12 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.Toast
 import se.optiqon.voice.BuildConfig
+import se.optiqon.voice.R
 import se.optiqon.voice.data.preferences.PreferencesDataStore
 import se.optiqon.voice.data.repository.ProfileRepository
+import se.optiqon.voice.domain.access.AccessDecision
+import se.optiqon.voice.domain.access.AccessRepository
+import se.optiqon.voice.domain.access.BlockReason
 import se.optiqon.voice.domain.model.AppContext
 import se.optiqon.voice.domain.transcription.AudioConverter
 import se.optiqon.voice.domain.transcription.TranscriptionManager
@@ -73,6 +77,7 @@ class BubbleService : Service() {
     @Inject lateinit var textInjectionBridge: TextInjectionBridge
     @Inject lateinit var preferencesDataStore: PreferencesDataStore
     @Inject lateinit var profileRepository: ProfileRepository
+    @Inject lateinit var accessRepository: AccessRepository
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var windowManager: WindowManager? = null
@@ -381,7 +386,7 @@ class BubbleService : Service() {
 
     private fun onBubbleTap() {
         when (state) {
-            is ServiceState.Idle -> startRecording()
+            is ServiceState.Idle -> startRecordingIfAllowed()
             is ServiceState.Recording -> stopRecordingAndTranscribe()
             is ServiceState.Transcribing -> cancelProcessing()
             is ServiceState.PostProcessing -> cancelProcessing()
@@ -434,6 +439,33 @@ class BubbleService : Service() {
         } catch (e: Exception) {
             Log.w(TAG, "Could not drop microphone foreground service type", e)
         }
+    }
+
+    /**
+     * The access gate. Dictation is the one thing an unapproved account must not be able to do,
+     * so the check happens here, at the single entry point, rather than by hiding the bubble:
+     * a hidden control is not a boundary.
+     *
+     * The decision is re-read on every tap instead of being taken from the cached flow, because
+     * offline grace expires with the passage of time and nothing emits when it does.
+     */
+    private fun startRecordingIfAllowed() {
+        scope.launch {
+            when (val decision = accessRepository.currentDecision()) {
+                is AccessDecision.Allowed -> startRecording()
+                is AccessDecision.Blocked -> updateState(
+                    ServiceState.Error(getString(blockedMessage(decision.reason)), null)
+                )
+            }
+        }
+    }
+
+    private fun blockedMessage(reason: BlockReason): Int = when (reason) {
+        BlockReason.NOT_REGISTERED -> R.string.access_blocked_not_registered
+        BlockReason.AWAITING_APPROVAL -> R.string.access_blocked_pending
+        BlockReason.REJECTED -> R.string.access_blocked_rejected
+        BlockReason.REVOKED -> R.string.access_blocked_revoked
+        BlockReason.GRACE_EXPIRED -> R.string.access_blocked_grace_expired
     }
 
     private fun startRecording() {

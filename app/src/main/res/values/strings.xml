@@ -8,4 +8,18 @@
     <string name="accessibility_service_description">OPTIQON Voice uses accessibility to insert dictated text into text fields in other apps. It can read the content of the focused field, which it uses to place the dictation at the cursor. Password fields and banking apps are blocked from injection.</string>
     <string name="clipboard_fallback_toast">Text copied to clipboard</string>
     <string name="no_accessibility_toast">Enable accessibility service for direct text insertion</string>
+    <!-- Access gate -->
+    <string name="access_blocked_not_registered">Sign in with your invited account to dictate.</string>
+    <string name="access_blocked_pending">Your account is waiting for approval.</string>
+    <string name="access_blocked_rejected">Your account was not granted access.</string>
+    <string name="access_blocked_revoked">Your access has been revoked.</string>
+    <string name="access_blocked_grace_expired">Go online and sign in again to keep dictating.</string>
+    <string name="registration_title">Register for OPTIQON Voice</string>
+    <string name="registration_google">Continue with Google</string>
+    <string name="registration_email">Email me a sign-in link</string>
+    <string name="registration_pending_title">Waiting for approval</string>
+    <string name="registration_pending_body">Your registration has been received. Dictation unlocks once the account is approved.</string>
+    <string name="registration_check_again">Check again</string>
+    <string name="registration_sign_out">Sign out</string>
+    <string name="outbox_waiting_for_owner">%1$d saved entries are waiting for you to sign in as %2$s.</string>
 </resources>
