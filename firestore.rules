@@ -357,12 +357,17 @@ service cloud.firestore {
 
     // -------------------------------------------------- per-user sync and reads
 
+    // Private to one account, but still storage somebody has to pay for: a pending, rejected
+    // or revoked account may not write here either. Being signed in is not the same as having
+    // been let in.
     match /users/{userId}/sync/{docId} {
-      allow read, write: if signedIn() && userId == uid();
+      allow read: if signedIn() && userId == uid();
+      allow write: if isApproved() && userId == uid();
     }
 
     match /users/{userId}/reads/{itemId} {
-      allow read, write: if signedIn() && userId == uid();
+      allow read: if signedIn() && userId == uid();
+      allow write: if isApproved() && userId == uid();
     }
 
     // -------------------------------------------------------------------- news

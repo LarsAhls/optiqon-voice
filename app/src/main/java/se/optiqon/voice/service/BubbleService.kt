@@ -21,6 +21,7 @@ import android.view.WindowManager
 import android.widget.Toast
 import se.optiqon.voice.BuildConfig
 import se.optiqon.voice.R
+import se.optiqon.voice.data.access.RegistrationRepository
 import se.optiqon.voice.data.preferences.PreferencesDataStore
 import se.optiqon.voice.data.repository.ProfileRepository
 import se.optiqon.voice.domain.access.AccessDecision
@@ -78,6 +79,7 @@ class BubbleService : Service() {
     @Inject lateinit var preferencesDataStore: PreferencesDataStore
     @Inject lateinit var profileRepository: ProfileRepository
     @Inject lateinit var accessRepository: AccessRepository
+    @Inject lateinit var registrationRepository: RegistrationRepository
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var windowManager: WindowManager? = null
@@ -394,7 +396,8 @@ class BubbleService : Service() {
             is ServiceState.Injecting -> {}
             is ServiceState.Error -> {
                 val retryEntryId = (state as ServiceState.Error).retryEntryId
-                if (retryEntryId != null) retrySavedFailure(retryEntryId) else updateState(ServiceState.Idle)
+                if (retryEntryId != null) ifAllowed { retrySavedFailure(retryEntryId) }
+                else updateState(ServiceState.Idle)
             }
         }
     }
@@ -449,10 +452,25 @@ class BubbleService : Service() {
      * The decision is re-read on every tap instead of being taken from the cached flow, because
      * offline grace expires with the passage of time and nothing emits when it does.
      */
-    private fun startRecordingIfAllowed() {
+    private fun startRecordingIfAllowed() = ifAllowed { startRecording() }
+
+    /**
+     * Runs [action] only for an account the server has approved.
+     *
+     * Every route that turns speech into text goes through here, not just the first one: a
+     * retry re-runs transcription and injects the result, so gating the initial tap alone
+     * would leave a revoked account one saved failure away from dictating anyway.
+     *
+     * A check-in is kicked off but never waited for. Blocking the tap on a network round trip
+     * would cost every dictation to catch a rare revocation; letting it land in the background
+     * means the revocation applies from the next tap, which is what the grace period already
+     * promises.
+     */
+    private fun ifAllowed(action: () -> Unit) {
         scope.launch {
+            launch { runCatching { registrationRepository.refreshIfStale() } }
             when (val decision = accessRepository.currentDecision()) {
-                is AccessDecision.Allowed -> startRecording()
+                is AccessDecision.Allowed -> action()
                 is AccessDecision.Blocked -> updateState(
                     ServiceState.Error(getString(blockedMessage(decision.reason)), null)
                 )
@@ -721,7 +739,7 @@ class BubbleService : Service() {
     private fun retryBubbleError() {
         val retryEntryId = (state as? ServiceState.Error)?.retryEntryId
         if (retryEntryId != null) {
-            retrySavedFailure(retryEntryId)
+            ifAllowed { retrySavedFailure(retryEntryId) }
         } else {
             updateState(ServiceState.Idle)
         }

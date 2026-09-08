@@ -48,9 +48,10 @@ fun AccountScreen(viewModel: AccountViewModel = hiltViewModel()) {
 
             is AccountUiState.SignedOut -> SignedOut(
                 configured = current.configured,
+                completingLink = current.completingLink,
                 busy = busy,
                 onGoogle = { activity?.let(viewModel::signInWithGoogle) },
-                onEmail = viewModel::sendEmailLink
+                onEmail = viewModel::submitEmail
             )
 
             is AccountUiState.Waiting -> Waiting(
@@ -72,6 +73,7 @@ fun AccountScreen(viewModel: AccountViewModel = hiltViewModel()) {
 @Composable
 private fun SignedOut(
     configured: Boolean,
+    completingLink: Boolean,
     busy: Boolean,
     onGoogle: () -> Unit,
     onEmail: (String) -> Unit
@@ -101,7 +103,12 @@ private fun SignedOut(
     )
 
     TextButton(onClick = { onEmail(email.trim()) }, enabled = !busy && email.contains('@')) {
-        Text(stringResource(R.string.registration_email))
+        Text(
+            stringResource(
+                if (completingLink) R.string.registration_email_confirm
+                else R.string.registration_email
+            )
+        )
     }
 }
 

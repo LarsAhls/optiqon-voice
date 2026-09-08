@@ -29,8 +29,15 @@ The Firestore rules tests in F1 prove none of the above.
 
 ## F5 — platform
 
-- Email-link sign-in needs SDK >= 23.2.0, a Hosting domain and an App Links intent
-  filter for `/__/auth/links`; Dynamic Links are gone. Not yet verified end to end.
+- Email-link sign-in is wired end to end in code: the app sends the link, the manifest
+  declares an `autoVerify` App Links filter for `https://voice.optiqon.se/signin`, and
+  `MainActivity` hands the incoming link to the account screen. What is missing is
+  outside the repo: the `assetlinks.json` at that domain and the Firebase console's
+  authorised-domain entry. Until both exist the link opens a browser instead of the app,
+  and the route is unproven. Publishing them is a Gate action.
+- The address used to complete a link is always the one stored on the device, or one the
+  tester types in. It is never read from the link, because a forwarded link would
+  otherwise sign the wrong person in.
 - The actual set of signed and installed builds has not been inventoried. Any SHA or
   signing-identity change is a separate approved action.
 - App Check is abuse protection, not authorisation.
@@ -52,8 +59,12 @@ The Firestore rules tests in F1 prove none of the above.
 ## What the F1 rules suite does and does not prove
 
 The suite in `tests/rules/` runs against the Firestore emulator and covers negative
-tests 1-13. Two limits are worth stating plainly, because a green run invites more
-confidence than it has earned:
+tests 1-13, plus the quieter collections in `private.test.mjs`: an account's own
+`sync` and `reads` subtrees, `invites`, `news` and `deletionRequests`. Writing to a
+private subtree requires an *approved* account, not merely a signed-in one — a pending or
+revoked account can still read its own record but cannot spend storage on the project.
+
+What a green run does not earn, stated plainly:
 
 - **`diff()` sees changed values, not written keys.** Rewriting a field with the value it
   already holds affects no keys, so `affectedKeys().hasOnly(...)` lets it through. The
@@ -74,6 +85,11 @@ storage (`UserScopedStorageTest`), the outbox ownership and failure rules
 (`OutboxPolicyTest`, `OutboxPersistenceTest`) and the version 7 to 8 upgrade
 (`OutboxMigrationTest`). What that leaves open:
 
+- **Revocation is discovered at the next check-in, not instantly.** Every consultation of
+  the gate kicks off a throttled background refresh (15 minutes), so a revoked account
+  loses access on its next attempt rather than during the current one. Dictation never
+  waits on the network; that is the trade. With no network the verdict stands until grace
+  runs out, as designed.
 - **The gate is a product boundary, not a security boundary.** It runs on the device and
   reads a DataStore value; a rooted phone can change it. Cloud access is guarded
   independently by the rules, which have no grace period, so the local gap is limited to

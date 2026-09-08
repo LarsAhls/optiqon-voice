@@ -17,6 +17,7 @@
     <string name="registration_title">Register for OPTIQON Voice</string>
     <string name="registration_google">Continue with Google</string>
     <string name="registration_email">Email me a sign-in link</string>
+    <string name="registration_email_confirm">Confirm this address and sign in</string>
     <string name="registration_pending_title">Waiting for approval</string>
     <string name="registration_pending_body">Your registration has been received. Dictation unlocks once the account is approved.</string>
     <string name="registration_check_again">Check again</string>
