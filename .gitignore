@@ -47,3 +47,10 @@ google-services.json
 *.jks
 !debug.keystore
 release-signing.properties
+
+# Node tooling for the Firestore rules test suite (see package.json).
+node_modules/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+.firebase/
