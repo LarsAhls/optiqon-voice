@@ -308,3 +308,25 @@ file appears. Everything below is what that invariant does not reach.
 Nothing in Mission 1 exercises Firebase. No sign-in happened, no ruleset was deployed, no real
 registration was created. The first proof that a live account goes new to pending to approved,
 and that revocation reaches a device, is the next Gate's physical smoke run.
+
+### Cloud-side refusal on revoke is UNPROVEN, and G3 cannot prove it
+
+Added 2026-09-09 while correcting the G3 smoke template (finding F1).
+
+`firestore.rules` grants `/users/{userId}` `allow get: if signedIn() && userId == uid();` —
+**deliberately not gated on approval**, so an account can read its own record to learn that it
+is pending, rejected or revoked. `tests/rules/m1.test.mjs` asserts that this read *succeeds*
+for a revoked account. Every other client-visible path is `if false` for a non-admin, and
+`isApproved()` is reachable only through `isReader()` / `isWriter()`.
+
+The consequence is a genuine gap in what can be observed: a tester's entire cloud surface is
+that one status-independent document, so **there is no request a revoked tester can make whose
+refusal would demonstrate that the cloud enforces revocation**. The G3 smoke run therefore
+proves the *device* boundary — the app revalidates its lease and shows the revoked screen —
+and not the cloud boundary. The `config/limits` probe in step 8 returns 403 both before and
+after the revoke and is recorded as a **non-discriminating control**.
+
+This stays UNPROVEN until a feature genuinely protected by `isApproved()` ships and a revoked
+account is observed being refused by the rules. An earlier draft of the template asserted 403
+on the tester's own document, which would have produced a false FAIL on the one step meant to
+prove the boundary; that criterion has been corrected rather than kept.
