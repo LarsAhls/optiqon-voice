@@ -161,3 +161,54 @@ that change was never compiled anywhere.
 
 Still ungranted, and unchanged: rules deploy, provider changes, SHA registration, installation,
 new credentials, data deletion, merge. Readback only until the Gate box is filled and approved.
+
+---
+
+## Update 2026-09-09 — preflight done, three of four inputs filled
+
+The previous section recorded the *old* project and the decision to abandon it. Lars has now
+created the replacement, and the same readback has been run against it on his machine. Results: [`gate-m1/PREFLIGHT.md`](gate-m1/PREFLIGHT.md).
+Rollback ruleset saved verbatim: [`gate-m1/rollback-ruleset-4937759b.rules`](gate-m1/rollback-ruleset-4937759b.rules).
+
+Of the four missing values, three are now known:
+
+1. **Project ID / number** — `optiqon-voice-47498` / `699805184613`.
+   Not `optiqon-voice`; that is only the display name. The old `optioqon-voice` (642507220744)
+   was read and left alone.
+2. **Database** — `(default)`, `FIRESTORE_NATIVE`, `europe-north2`. The named-database trap
+   does not apply.
+3. **Active ruleset** — `4937759b-d4a7-4e95-b59a-22d363dac881`, the console locked default
+   (`allow read, write: if false`), sha256 `ecf30f94…d84eb`. Only release ever created.
+4. **P4 signing certificate** — still unknown. `adb` is installed and this is the right
+   machine, but no device is attached.
+
+Everything else is unchanged: nothing was deployed, no provider touched, no SHA registered,
+nothing installed, nothing merged.
+
+### The remaining Gate box, exactly
+
+Ungranted until Lars approves, in this order:
+
+1. `adb devices` with the phone attached → `verify-apk-signer.sh` against the debug fingerprint.
+   Read-only, but needs the device. This is the last Gate *input*.
+2. Register the debug SHA-256 on app `1:699805184613:android:35a5860f14504f1e130c8c` — a write.
+3. `firebase deploy --only firestore:rules --project optiqon-voice-47498` — rollback target is
+   ruleset `4937759b-…`, which denies all reads and writes.
+4. Add the App Link `<intent-filter>` for host `optiqon-voice-47498.firebaseapp.com`, path
+   prefix `/__/auth/links`, host injected from `project_id` via `manifestPlaceholder`. Then
+   `./gradlew :app:testDebugUnitTest :app:assembleDebug`.
+5. Enable the email-link auth provider — a provider change.
+6. Verify `https://optiqon-voice-47498.firebaseapp.com/.well-known/assetlinks.json` names
+   `se.optiqon.voice` and the fingerprint under test. It cannot pass before step 2, and it
+   already 404s with "Site Not Found" on the new project exactly as it did on the old one, so
+   budget for an initial Hosting release as well — a separate approval.
+7. Install, then merge.
+
+### Manual actions for Lars
+
+- **Attach the phone** with USB debugging on, so P4 can run. Nothing else unblocks it.
+- **Decide where the config file lives.** `google-services (1).json` is in the repo root,
+  untracked, and *not* covered by `.gitignore:43` (which names `app/google-services.json`).
+  It carries the project API key. Moving it to `app/google-services.json` both puts it where
+  the Gradle plugin expects it and brings it under the existing ignore rule. Not done here:
+  it is a write on a file holding a secret.
