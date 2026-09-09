@@ -8,8 +8,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.tasks.await
+import se.optiqon.voice.data.storage.PendingPreferenceWrites
 import se.optiqon.voice.domain.access.AuthGateway
-import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -56,23 +56,15 @@ class FirebaseAuthGateway @Inject constructor(
      * result was a sign-out that appeared to do nothing: the next start read the user back and
      * signed straight in again.
      *
-     * The flush is an empty synchronous commit on Firebase's own preference files. Preference
-     * instances are shared per file within a process and their writes are serialised, so a
-     * commit cannot return until whatever was already queued for that file has been written.
-     * Nothing is added to or removed from the files here.
+     * [PendingPreferenceWrites.flushAll] covers the same ground on the way out of the process,
+     * and the two overlap on purpose: this one states the post-condition where the sign-out is
+     * written, so it holds even for a caller that does not restart.
      *
      * Best effort by design: if Firebase ever renames these files, no file matches, nothing is
      * flushed, and the behaviour is the one this app had before — never worse.
      */
     private fun flushAuthState() {
-        val sharedPrefsDir = File(context.applicationInfo.dataDir, "shared_prefs")
-        sharedPrefsDir.listFiles().orEmpty()
-            .map { it.name }
-            .filter { it.startsWith(FIREBASE_AUTH_PREFS_PREFIX) && it.endsWith(".xml") }
-            .forEach { fileName ->
-                val name = fileName.removeSuffix(".xml")
-                context.getSharedPreferences(name, Context.MODE_PRIVATE).edit().commit()
-            }
+        PendingPreferenceWrites.flush(context, FIREBASE_AUTH_PREFS_PREFIX)
     }
 
     private companion object {

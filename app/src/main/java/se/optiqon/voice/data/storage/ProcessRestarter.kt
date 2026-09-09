@@ -33,6 +33,12 @@ class AndroidProcessRestarter @Inject constructor(
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         }
         context.startActivity(intent)
+        // The restart is only correct if the next process can read what this one decided. An
+        // `apply()` that has not reached disk does not survive the line below, and the identity
+        // that triggered the restart is precisely the kind of thing written that way — by us
+        // and by Firebase. Flushed here rather than at each call site so that ending the process
+        // cannot silently lose a write again.
+        PendingPreferenceWrites.flushAll(context)
         exitProcess(0)
     }
 }
