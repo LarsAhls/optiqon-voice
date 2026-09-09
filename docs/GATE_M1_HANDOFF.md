@@ -31,14 +31,50 @@ Established by running the commands, not by assumption:
   the Android Gradle Plugin cannot resolve, which means the app build cannot even be
   *configured* there, let alone run. Any Gradle change made there would be unverifiable.
 
+## Readback, 2026-09-09 — and why it changed the plan
+
+Done from a local session authenticated as `lars@optiqon.se`. All four values came back.
+Two of them changed what happens next.
+
+| | |
+|---|---|
+| Project | `optioqon-voice`, number `642507220744`, GCP org `optiqon.se` |
+| Firestore | **`(default)`** — the named-database trap does not apply. Native mode, `europe-north2` (Stockholm). Created 2026-09-07, **empty** |
+| Active ruleset | Firestore's auto-generated **deny-all**. Nothing has ever been deployed |
+| Android app | `1:642507220744:android:78fc7b80e32b84262baebd`, package `se.optiqon.voice`, **no SHA registered** |
+| Hosting | default site `optioqon-voice` → `optioqon-voice.web.app`. assetlinks: **404 Site Not Found** |
+| P4 | **Not done.** That machine had neither `ANDROID_HOME` nor a connected device |
+
+**The project id carries a typo — `optioqon`, not `optiqon` — and a Firebase project id cannot
+be renamed.** It matters more than a cosmetic slip because it becomes the email sign-in link's
+domain: a login link pointing at `optioqon-voice.firebaseapp.com` reads as a misspelling of the
+company's own name, which is the exact shape people are taught to distrust in sign-in mail. The
+project name and public-facing name are spelt correctly; only the id, the one immutable part,
+is wrong.
+
+Decision: **a new project with the correct id.** Nothing is built on the old one yet — empty
+database, no rules, no SHA, no client config — so this is the cheapest it will ever be. Once
+the Gate runs, the id is baked into every installed client's `google-services.json`, and
+changing it then means re-registering the app and every user.
+
+**Correction to this document.** It previously said Hosting serves
+`/.well-known/assetlinks.json` for the default domain automatically, so nothing needs
+publishing by hand. That is not true of a project in this state: the path returns
+**404 Site Not Found**. Two causes are possible and both have to be cleared —
+no SHA is registered, so there are no fingerprints to generate the file from; and the Hosting
+site may never have had a release, in which case the whole domain 404s. Which one it is can
+only be settled by registering the SHA and testing again. If it still 404s, an initial Hosting
+release is required, and that is a live action needing its own approval. Until it serves,
+email-link sign-in cannot reach the app at all.
+
+The same missing SHA also blocks **Google sign-in**: Credential Manager requires a registered
+SHA-1.
+
 ## What is still missing
 
-Four values, and nothing else, block filling in the Gate box:
-
-1. Project ID and project number
-2. Firestore database name, region, and mode
-3. The currently active ruleset (the rollback target)
-4. P4: the signing certificate of the installed build
+1. The new project: id, number, Firestore `(default)` in `europe-north2`, Android app
+2. assetlinks status once a SHA is registered
+3. P4: the signing certificate of the installed build
 
 ## Read-only readback
 
@@ -99,9 +135,9 @@ Firebase Hosting domain — `<project-id>.firebaseapp.com` — not on the contin
 manifest today only has a filter for `voice.optiqon.se/signin`, which is the continue URL and
 never receives the link. So email-link sign-in cannot currently reach the app.
 
-Firebase Hosting serves `/.well-known/assetlinks.json` for that default domain itself, built
-from the SHA-256 fingerprints registered on the project's Android app, so nothing needs
-publishing by hand. Verify it before trusting it:
+Firebase Hosting is *supposed* to serve `/.well-known/assetlinks.json` for that default domain,
+built from the SHA-256 fingerprints registered on the project's Android app. On the old project
+it returned 404 — see the correction above. Verify, never assume:
 
 ```bash
 curl -s https://<project-id>.firebaseapp.com/.well-known/assetlinks.json
