@@ -19,6 +19,7 @@ import se.optiqon.voice.data.db.dao.TextReplacementRuleDao
 import se.optiqon.voice.data.preferences.PreferencesDataStore
 import se.optiqon.voice.data.storage.DeviceDataOwner
 import se.optiqon.voice.data.storage.StorageRoot
+import se.optiqon.voice.domain.access.AccountSignOut
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
@@ -55,6 +56,7 @@ class AccessDebugReceiver : BroadcastReceiver() {
     @Inject lateinit var preferences: PreferencesDataStore
     @Inject lateinit var deviceDataOwner: DeviceDataOwner
     @Inject lateinit var accessStateStore: AccessStateStore
+    @Inject lateinit var accountSignOut: AccountSignOut
 
     override fun onReceive(context: Context, intent: Intent) {
         val extras = intent.extras
@@ -69,6 +71,7 @@ class AccessDebugReceiver : BroadcastReceiver() {
             controls = controls,
             filesDir = appContext.filesDir,
             idToken = { currentIdToken(appContext) },
+            signOut = { accountSignOut.signOut() },
             synthetic = SyntheticState(
                 AndroidSyntheticSink(
                     appContext, storageRoot, profileDao, ruleDao, dictationDao,

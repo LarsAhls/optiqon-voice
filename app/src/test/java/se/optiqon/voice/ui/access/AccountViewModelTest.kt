@@ -22,11 +22,13 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import se.optiqon.voice.R
 import se.optiqon.voice.data.access.PendingEmailStore
+import se.optiqon.voice.data.preferences.testPreferencesDataStore
 import se.optiqon.voice.data.storage.DeviceDataOwner
 import se.optiqon.voice.data.storage.ProcessRestarter
 import se.optiqon.voice.data.storage.StorageOwnership
 import se.optiqon.voice.domain.access.AccessSession
 import se.optiqon.voice.domain.access.AccountRegistrar
+import se.optiqon.voice.domain.access.AccountSignOut
 import se.optiqon.voice.domain.access.AccountStatus
 import se.optiqon.voice.domain.access.BlockReason
 import se.optiqon.voice.domain.access.EmailLinkRelay
@@ -150,6 +152,7 @@ class AccountViewModelTest {
             context = context,
             accessRepository = access.repository,
             accountRegistrar = registrar,
+            accountSignOut = AccountSignOut(access.auth, testPreferencesDataStore(context), owner),
             accessSession = session,
             authGateway = access.auth,
             signInClient = signIn,

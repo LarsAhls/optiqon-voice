@@ -10,7 +10,8 @@ class AccessDebugCommands(
     private val controls: AccessDebugControls,
     private val filesDir: File,
     private val idToken: () -> String?,
-    private val synthetic: SyntheticState? = null
+    private val synthetic: SyntheticState? = null,
+    private val signOut: (suspend () -> Unit)? = null
 ) {
     data class Outcome(val ok: Boolean, val description: String)
 
@@ -39,6 +40,13 @@ class AccessDebugCommands(
                 Outcome(true, "id token written to files/debug/$TOKEN_FILE_NAME (${token.length} chars)")
             }
         }
+        // The app ends its own process on the way out of a sign-out, so this hook usually
+        // reports a dead broadcast rather than a result. That is the sign-out working, not
+        // failing; what it did is read back from disk.
+        ACTION_SIGN_OUT -> signOut?.let {
+            it()
+            Outcome(true, "signed out")
+        } ?: Outcome(false, "sign-out is not wired in this process")
         ACTION_SEED_SYNTHETIC -> synthetic?.seed()?.let { Outcome(it.ok, it.description) }
             ?: Outcome(false, "synthetic state is not wired in this process")
         ACTION_DUMP_STATE -> synthetic?.dump()?.let { Outcome(it.ok, it.description) }
@@ -50,6 +58,7 @@ class AccessDebugCommands(
         const val ACTION_FAIL_REFRESH = "se.optiqon.voice.debug.FAIL_REFRESH"
         const val ACTION_CLOCK_OFFSET = "se.optiqon.voice.debug.CLOCK_OFFSET"
         const val ACTION_EXPORT_ID_TOKEN = "se.optiqon.voice.debug.EXPORT_ID_TOKEN"
+        const val ACTION_SIGN_OUT = "se.optiqon.voice.debug.SIGN_OUT"
         const val ACTION_SEED_SYNTHETIC = "se.optiqon.voice.debug.SEED_SYNTHETIC"
         const val ACTION_DUMP_STATE = "se.optiqon.voice.debug.DUMP_STATE"
         const val EXTRA_ENABLED = "enabled"

@@ -20,6 +20,7 @@ import se.optiqon.voice.domain.access.AccessDecision
 import se.optiqon.voice.domain.access.AccessRepository
 import se.optiqon.voice.domain.access.AccessSession
 import se.optiqon.voice.domain.access.AccountRegistrar
+import se.optiqon.voice.domain.access.AccountSignOut
 import se.optiqon.voice.domain.access.AuthGateway
 import se.optiqon.voice.domain.access.BlockReason
 import se.optiqon.voice.domain.access.DisplayName
@@ -71,6 +72,7 @@ class AccountViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val accessRepository: AccessRepository,
     private val accountRegistrar: AccountRegistrar,
+    private val accountSignOut: AccountSignOut,
     private val accessSession: AccessSession,
     private val authGateway: AuthGateway,
     private val signInClient: SignInClient,
@@ -258,7 +260,7 @@ class AccountViewModel @Inject constructor(
     }
 
     fun signOut() = withBusy {
-        authGateway.signOut()
+        accountSignOut.signOut()
     }
 
     fun consumeMessage() {

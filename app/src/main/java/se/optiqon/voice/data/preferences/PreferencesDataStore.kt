@@ -179,6 +179,24 @@ open class PreferencesDataStore @Inject constructor(
         }
     }
 
+    /**
+     * The same answer, written into a root this process is not running on.
+     *
+     * Needed exactly once: signing out moves the next process to a different root, so the
+     * answer "you have not been set up here" has to be left where that process will look for
+     * it. Writing it only into the root being left would leave the next start reading a
+     * different file, and an existing endpoint in that file counts as onboarded.
+     *
+     * Safe because exactly one process opens these files and it opens one root at a time; the
+     * root being written to is by construction not the one anything here has open.
+     */
+    suspend fun setOnboardingComplete(complete: Boolean, root: StorageRoot) {
+        if (root == storageRoot) return setOnboardingComplete(complete)
+        PreferenceStores.of(context, root.preferencesName).edit { prefs ->
+            prefs[Keys.ONBOARDING_COMPLETE] = complete
+        }
+    }
+
     suspend fun updateActiveLanguage(language: String?) {
         store.edit { prefs ->
             if (language == null) {

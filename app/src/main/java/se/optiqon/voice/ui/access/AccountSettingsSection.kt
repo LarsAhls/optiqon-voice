@@ -23,6 +23,7 @@ import kotlinx.coroutines.launch
 import se.optiqon.voice.R
 import se.optiqon.voice.domain.access.AccessSession
 import se.optiqon.voice.domain.access.AccessSessionState
+import se.optiqon.voice.domain.access.AccountSignOut
 import se.optiqon.voice.domain.access.AuthGateway
 import se.optiqon.voice.domain.access.BlockReason
 import se.optiqon.voice.domain.access.DegradedKind
@@ -32,7 +33,8 @@ import javax.inject.Inject
 @HiltViewModel
 class AccountSettingsViewModel @Inject constructor(
     private val accessSession: AccessSession,
-    private val authGateway: AuthGateway
+    private val authGateway: AuthGateway,
+    private val accountSignOut: AccountSignOut
 ) : ViewModel() {
 
     val state: StateFlow<AccessSessionState> = accessSession.state
@@ -44,7 +46,7 @@ class AccountSettingsViewModel @Inject constructor(
 
     fun refresh() = withBusy { accessSession.refreshNow() }
 
-    fun signOut() = withBusy { authGateway.signOut() }
+    fun signOut() = withBusy { accountSignOut.signOut() }
 
     private fun withBusy(block: suspend () -> Unit) {
         viewModelScope.launch {
