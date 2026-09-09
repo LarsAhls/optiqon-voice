@@ -71,5 +71,17 @@
     <string name="session_try_again">Try again</string>
     <string name="session_offline_title">No connection — nothing was sent</string>
     <string name="session_offline_body">Speech recognition runs in the cloud, so dictation needs a connection. Nothing is queued or sent later.</string>
+    <!-- Feedback (built, not switched on: nothing is uploaded) -->
+    <string name="feedback_title">Report a problem</string>
+    <string name="feedback_body">Describe what happened. Nothing you have dictated and no audio is attached — only what you type here, the app version and the phone model. The message is saved on this device; sending it to Optiqon is not switched on yet.</string>
+    <string name="feedback_message_label">What happened</string>
+    <string name="feedback_message_hint">What you did, what you expected, what happened instead.</string>
+    <string name="feedback_contact_label">How to reach you (optional)</string>
+    <string name="feedback_contact_hint">Leave empty if you would rather not be contacted.</string>
+    <string name="feedback_save">Save on this device</string>
+    <string name="feedback_saved">Saved on this device. Nothing has been uploaded.</string>
+    <string name="feedback_empty">Write something first.</string>
+    <string name="feedback_too_long">That is longer than the box allows. Shorten it rather than let it be cut.</string>
+    <string name="feedback_signed_out">Sign in first, so the message is saved under your own account.</string>
     <string name="claim_empty_note">Starting empty leaves the existing data on the device, untouched and unread, and it can still be claimed later.</string>
 </resources>
