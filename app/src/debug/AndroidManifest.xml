@@ -20,6 +20,8 @@
                 <action android:name="se.optiqon.voice.debug.FAIL_REFRESH" />
                 <action android:name="se.optiqon.voice.debug.CLOCK_OFFSET" />
                 <action android:name="se.optiqon.voice.debug.EXPORT_ID_TOKEN" />
+                <action android:name="se.optiqon.voice.debug.SEED_SYNTHETIC" />
+                <action android:name="se.optiqon.voice.debug.DUMP_STATE" />
             </intent-filter>
         </receiver>
     </application>

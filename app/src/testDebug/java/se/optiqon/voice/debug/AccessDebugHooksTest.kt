@@ -69,8 +69,8 @@ class AccessDebugHooksTest {
     }
 
     @Test
-    fun `broadcast commands flip the controls and reject malformed input`() {
-        val commands = AccessDebugCommands(controls, folder.root) { null }
+    fun `broadcast commands flip the controls and reject malformed input`() = runTest {
+        val commands = AccessDebugCommands(controls, folder.root, idToken = { null })
 
         assertTrue(commands.handle(AccessDebugCommands.ACTION_FAIL_REFRESH, mapOf("enabled" to true)).ok)
         assertTrue(controls.failRefresh)
@@ -87,9 +87,9 @@ class AccessDebugHooksTest {
     }
 
     @Test
-    fun `token export writes to the private debug file and never echoes the token`() {
+    fun `token export writes to the private debug file and never echoes the token`() = runTest {
         val secret = "header.payload.signature-not-a-real-token"
-        val commands = AccessDebugCommands(controls, folder.root) { secret }
+        val commands = AccessDebugCommands(controls, folder.root, idToken = { secret })
 
         val outcome = commands.handle(AccessDebugCommands.ACTION_EXPORT_ID_TOKEN, emptyMap())
 
@@ -99,8 +99,8 @@ class AccessDebugHooksTest {
     }
 
     @Test
-    fun `token export without a signed-in user writes nothing`() {
-        val commands = AccessDebugCommands(controls, folder.root) { null }
+    fun `token export without a signed-in user writes nothing`() = runTest {
+        val commands = AccessDebugCommands(controls, folder.root, idToken = { null })
 
         val outcome = commands.handle(AccessDebugCommands.ACTION_EXPORT_ID_TOKEN, emptyMap())
 
