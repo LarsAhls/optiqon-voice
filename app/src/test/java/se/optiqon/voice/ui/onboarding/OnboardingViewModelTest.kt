@@ -138,6 +138,7 @@ class OnboardingViewModelTest {
     @Test
     fun `a verified endpoint is saved, and only then`() = runTest {
         tls.server.enqueue(MockResponse().setResponseCode(200).setBody("{\"text\":\"\"}"))
+        tls.server.enqueue(MockResponse().setResponseCode(200).setBody(CHAT_OK))
         viewModel.selectPreset(localPreset())
         viewModel.updateApiKey("gsk_not-a-real-key")
 
@@ -154,6 +155,35 @@ class OnboardingViewModelTest {
         assertTrue(saved.llmEnabled)
         awaitValue("the active profile carries the verified provider") {
             database.profileDao().getActiveProfile()?.llmModel == ProviderPresets.GROQ.llmModel
+        }
+    }
+
+    /**
+     * The failure F17 was: the preset's text model had been decommissioned, transcription kept
+     * answering 200, and onboarding said "Connected" while every cleanup call 404'd in silence.
+     * The user still gets through — dictation works without cleanup — but is told, and cleanup
+     * is not left switched on pointing at a model the provider refuses.
+     */
+    @Test
+    fun `a dead cleanup model is surfaced, left off, and does not block the user`() = runTest {
+        tls.server.enqueue(MockResponse().setResponseCode(200).setBody("{\"text\":\"\"}"))
+        tls.server.enqueue(MockResponse().setResponseCode(404).setBody("{\"error\":\"decommissioned\"}"))
+        viewModel.selectPreset(localPreset())
+        viewModel.updateApiKey("gsk_not-a-real-key")
+
+        viewModel.verifyAndSave()
+
+        val state = awaitState { it.connection is ConnectionState.VerifiedWithoutCleanup }
+        assertTrue(
+            (state.connection as ConnectionState.VerifiedWithoutCleanup).message.contains("404")
+        )
+        // Transcription still works, so the run is not blocked on the cleanup model.
+        assertTrue(state.canLeaveConnectStep)
+        val saved = awaitPreferences { it.asrBaseUrl.isNotBlank() }
+        assertEquals(tls.baseUrl, saved.asrBaseUrl)
+        assertFalse(saved.llmEnabled)
+        awaitValue("the active profile has cleanup switched off") {
+            database.profileDao().getActiveProfile()?.llmEnabled == false
         }
     }
 
@@ -209,5 +239,9 @@ class OnboardingViewModelTest {
 
     private companion object {
         const val TIMEOUT_MS = 10_000L
+
+        /** A minimal OpenAI-compatible completion, enough for the cleanup probe to succeed. */
+        const val CHAT_OK =
+            "{\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"ok\"}}]}"
     }
 }

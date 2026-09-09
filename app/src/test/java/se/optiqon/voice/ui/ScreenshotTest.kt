@@ -225,8 +225,13 @@ class ScreenshotTest {
         composeRule.onNodeWithText("Continue").performClick()
 
         // The third step is only reachable once an endpoint has actually transcribed
-        // something, which is the whole point of the second one. The local server answers.
+        // something, which is the whole point of the second one. The local server answers
+        // twice: the transcription probe, then the cleanup-model probe behind it.
         tls.server.enqueue(MockResponse().setResponseCode(200).setBody("{\"text\":\"\"}"))
+        tls.server.enqueue(
+            MockResponse().setResponseCode(200)
+                .setBody("{\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"ok\"}}]}")
+        )
         viewModel.selectPreset(ProviderPresets.GROQ.copy(baseUrl = tls.baseUrl))
         viewModel.updateApiKey("gsk_not-a-real-key")
         viewModel.verifyAndSave()

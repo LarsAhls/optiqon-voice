@@ -41,6 +41,14 @@ sealed interface ConnectionState {
     data object Untested : ConnectionState
     data object Testing : ConnectionState
     data object Verified : ConnectionState
+
+    /**
+     * Transcription works, the text model does not. Onboarding continues — dictation is still
+     * usable and the raw transcript is still injected — but it is said out loud rather than
+     * degraded silently, and cleanup is left switched off instead of pointing at a model the
+     * provider refuses (smoke finding F17).
+     */
+    data class VerifiedWithoutCleanup(val message: String) : ConnectionState
     data class Failed(val message: String) : ConnectionState
 }
 
@@ -66,7 +74,9 @@ data class OnboardingUiState(
             asrModel.isNotBlank() &&
             connection != ConnectionState.Testing
 
-    val canLeaveConnectStep: Boolean get() = connection == ConnectionState.Verified
+    val canLeaveConnectStep: Boolean
+        get() = connection == ConnectionState.Verified ||
+            connection is ConnectionState.VerifiedWithoutCleanup
 
     companion object {
         const val DEFAULT_LANGUAGE = TranscriptionLanguages.DEFAULT_CODE
@@ -122,32 +132,55 @@ class OnboardingViewModel @Inject constructor(
                 apiKey = state.apiKey,
                 model = state.asrModel
             )
-            if (result is VerificationResult.Ok) {
-                preferencesDataStore.updateAsrConfig(
-                    baseUrl = state.effectiveBaseUrl,
+            if (result !is VerificationResult.Ok) {
+                _uiState.update { it.copy(connection = result.toConnectionState()) }
+                return@launch
+            }
+
+            preferencesDataStore.updateAsrConfig(
+                baseUrl = state.effectiveBaseUrl,
+                apiKey = state.apiKey,
+                model = state.asrModel
+            )
+
+            // A preset also carries a text model, and that model is the one that goes stale
+            // without anyone noticing — the ASR call above says nothing about it. Probe it,
+            // and only switch cleanup on if the provider actually served it.
+            val cleanup = if (state.isCustomPreset) {
+                null
+            } else {
+                providerVerifier.verifyCompletion(
+                    baseUrl = state.preset.baseUrl,
                     apiKey = state.apiKey,
-                    model = state.asrModel
-                )
-                if (!state.isCustomPreset) {
-                    // Filled in but left switched off, so turning cleanup on later is one tap
-                    // rather than another round of endpoint hunting.
-                    // Cleanup on by default: the design's Standard profile removes filler and
-                    // fixes slips, and it runs on the key and host just verified.
-                    preferencesDataStore.updateLlmConfig(
-                        baseUrl = state.preset.baseUrl,
-                        apiKey = state.apiKey,
-                        model = state.preset.llmModel,
-                        enabled = true
-                    )
-                }
-                preferencesDataStore.updateProviderPreset(state.preset.id)
-                profileRepository.applyProviderToActiveProfile(
-                    asrModel = state.asrModel,
-                    llmModel = state.preset.llmModel,
-                    llmEnabled = !state.isCustomPreset
+                    model = state.preset.llmModel
                 )
             }
-            _uiState.update { it.copy(connection = result.toConnectionState()) }
+            val cleanupWorks = cleanup is VerificationResult.Ok
+
+            if (!state.isCustomPreset) {
+                // Cleanup on by default when it works: the design's Standard profile removes
+                // filler and fixes slips, and it runs on the key and host just verified. When
+                // the probe failed the config is still filled in, so turning it on later is
+                // one tap rather than another round of endpoint hunting.
+                preferencesDataStore.updateLlmConfig(
+                    baseUrl = state.preset.baseUrl,
+                    apiKey = state.apiKey,
+                    model = state.preset.llmModel,
+                    enabled = cleanupWorks
+                )
+            }
+            preferencesDataStore.updateProviderPreset(state.preset.id)
+            profileRepository.applyProviderToActiveProfile(
+                asrModel = state.asrModel,
+                llmModel = state.preset.llmModel,
+                llmEnabled = cleanupWorks
+            )
+
+            val connection = when {
+                cleanup == null || cleanupWorks -> ConnectionState.Verified
+                else -> ConnectionState.VerifiedWithoutCleanup(cleanup.cleanupMessage())
+            }
+            _uiState.update { it.copy(connection = connection) }
         }
     }
 
@@ -203,4 +236,21 @@ private fun VerificationResult.toConnectionState(): ConnectionState = when (this
     )
     is VerificationResult.Unreachable -> ConnectionState.Failed("Could not reach the provider. $detail")
     is VerificationResult.Invalid -> ConnectionState.Failed(detail)
+}
+
+/**
+ * The same failures again, but this time they do not block: transcription already works, so
+ * the sentence has to say what is lost rather than what went wrong.
+ */
+private fun VerificationResult.cleanupMessage(): String = when (this) {
+    is VerificationResult.Ok -> ""
+    is VerificationResult.Rejected ->
+        "Transcription works, but the cleanup model answered $status. Dictation will insert " +
+            "the raw transcript. You can switch cleanup on in Settings once it is available."
+    is VerificationResult.Unreachable ->
+        "Transcription works, but the cleanup model could not be reached. Dictation will " +
+            "insert the raw transcript."
+    is VerificationResult.Invalid ->
+        "Transcription works, but the cleanup endpoint is not usable. Dictation will insert " +
+            "the raw transcript."
 }

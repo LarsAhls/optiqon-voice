@@ -241,6 +241,15 @@ private fun ConnectStep(state: OnboardingUiState, viewModel: OnboardingViewModel
                 Text("Sending a test clip…", style = MaterialTheme.typography.bodyMedium)
             }
             is ConnectionState.Verified -> InlineStatus("Connected. Transcription is working.")
+            is ConnectionState.VerifiedWithoutCleanup -> Column(
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                InlineStatus("Connected. Transcription is working.")
+                Text(
+                    text = connection.message,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
             is ConnectionState.Failed -> Text(
                 text = connection.message,
                 style = MaterialTheme.typography.bodyMedium,
