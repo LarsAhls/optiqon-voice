@@ -230,3 +230,108 @@ browser download actually gets — `google-services (1).json`. The pattern is no
 `google-services*.json`, verified to match at the root, in `app/`, and deeper, with and without
 the ` (n)` suffix. Nothing matching has ever been committed on any ref, and no `AIza…` key
 appears anywhere in history.
+
+## Update 2026-09-09 (later) — local work finished, one box left
+
+Both remaining local items are done, tested and committed. Nothing was deployed, no provider
+was touched, no SHA was registered, nothing was installed, nothing was merged.
+
+### The seat counter is now bound to the decision it counts
+
+Lars found that a writer could move `config/counters.approvedUsers` by ±1 with no account
+changing status. The counter is not bookkeeping — it is compared against
+`config/limits.maxApprovedUsers` to decide whether anybody else may be approved — so a
+standalone movement either manufactures headroom or burns seats nobody holds.
+
+Fix, in `firestore.rules` (commit `2ab7b5e`): the counters document carries `seatFor`, naming
+the account a movement is spent on. The `config/counters` update rule now requires that
+account's before/after status to match the direction (+1 needs `pending → approved`, −1 needs
+`approved → rejected|revoked`), and `seatTaken(userId)` / `seatReleased(userId)` additionally
+require `getAfter(counters).seatFor == userId`. That second half closes a hole the first does
+not reach: without it one batch could approve two accounts against a single +1, since each
+`users/` write reads the same before/after counter. Rules cannot count the documents in a
+commit, so naming the one account a seat belongs to is what makes "one decision per movement"
+expressible at all.
+
+The M1/F1 rule split is unchanged, every future path is still closed, and
+`firestore.future.rules` is untouched (sha256 still `1c7c12cd…16ab8`).
+
+- **New rules hash — this is the deploy target:**
+  `firestore.rules` sha256 `21f39fe57a29c8767ab1c64d6eb3feed8a763574cf0afb28ea48f4a4ca49553d`
+  (was `42f7fc81cd…1e1a101b`). Hash the **git blob**, not the working tree: the checkout is
+  CRLF and `sha256sum` on it will not reproduce this.
+- **RED proof:** 19 new tests in `tests/rules/seat.test.mjs`; **7 fail against the previous
+  rules** — the standalone raise and lower, the unnamed write, the write naming an account
+  that does not exist, a seat paid to a bystander while somebody else is approved, two
+  approvals sharing one seat, and lowering the counter to walk around the cap. The other 12
+  passed before and still pass, which is the point: the real transitions are untouched.
+- **GREEN:** `npm run test:rules` → **140 passing, 25 suites, 0 failures** (was 121 / 21).
+  The emulator needs a JDK on PATH; use `~/.jdks/jbr-21.0.11`.
+- No app code writes `config/counters`, so the contract change reaches only an out-of-band
+  admin writer, not the shipped app.
+
+### The App Link filter is implemented and built
+
+Commit `6194d73`. Second `<intent-filter>` on `MainActivity`, host injected from
+`project_info.project_id` in `app/google-services.json` via `manifestPlaceholders`, path prefix
+`/__/auth/links`, `autoVerify="true"`. A checkout without the config still builds; the host
+falls back to a `.invalid` name so the filter is valid and inert rather than aimed at a host
+the project does not own.
+
+Verified on the built debug APK (**not installed**):
+
+| Check | Result |
+| --- | --- |
+| Merged manifest host | `optiqon-voice-47498.firebaseapp.com`, prefix `/__/auth/links` |
+| versionCode | `2026090900` — above the installed `2026090600` |
+| Signer SHA-256 | `234e2833e3e74d721b316c0db5e87e112b3f74ed5f76d34e5d3208c504429eed` — same identity as installed |
+| Signer SHA-1 | `3326d33e30e035999b9a3c5c2fce404a06d3ccf4` |
+| Unit tests | 296 in 45 classes, 0 failures, 2 skipped |
+
+Build with `JAVA_HOME=C:\Users\ahlst\.jdks\jbr-21.0.11`. Android Studio's bundled `jbr` is now
+JDK 25, which Gradle 8.11.1 rejects.
+
+### The one Gate box, filled
+
+Everything below is a provider write against `optiqon-voice-47498` and needs Lars's approval.
+Once approved the four actions run as one sequence with readback — no further internal
+reporting barriers.
+
+1. **Register both fingerprints** on Android app `1:699805184613:android:35a5860f14504f1e130c8c`
+   (package `se.optiqon.voice`):
+   - SHA-1 `33:26:D3:3E:30:E0:35:99:9B:9A:3C:5C:2F:CE:40:4A:06:D3:CC:F4`
+   - SHA-256 `23:4E:28:33:E3:E7:4D:72:1B:31:6C:0D:B5:E8:7E:11:2B:3F:74:ED:5F:76:D3:4E:5D:32:08:C5:04:42:9E:ED`
+2. **Enable delete protection** on `projects/optiqon-voice-47498/databases/(default)`.
+3. **Deploy only the new M1 ruleset** to that same `(default)` database:
+   `firebase deploy --only firestore:rules --project optiqon-voice-47498`. `firebase.json` names
+   `firestore.rules` and has no `firestore.database` key, so `(default)` is the target and the
+   future file cannot be reached by accident.
+4. **Read back all three** — that the app carries exactly those two fingerprints, that delete
+   protection reads as enabled, and that the active ruleset's content hashes to
+   `21f39fe5…49553d`. Then fetch
+   `https://optiqon-voice-47498.firebaseapp.com/.well-known/assetlinks.json` and check it names
+   `se.optiqon.voice` with the SHA-256 above.
+
+**Rollback:** redeploy the saved deny-all ruleset
+[`gate-m1/rollback-ruleset-4937759b.rules`](gate-m1/rollback-ruleset-4937759b.rules)
+(ruleset `4937759b-d4a7-4e95-b59a-22d363dac881`, sha256 `ecf30f94…d84eb`).
+
+**Not in this box:** no Hosting deploy, no provider (auth) change, no bootstrap or seeding, no
+install, no merge, no data deletion, no cleanup. The old project `optioqon-voice`
+(642507220744) is never a fallback.
+
+**If assetlinks still 404s after step 4** — which is likely, since both
+`optiqon-voice-47498.firebaseapp.com` and `.web.app` currently return "Site Not Found", the
+response an un-released Hosting site gives for *every* path — the exact minimal next action is:
+
+```
+firebase deploy --only hosting --project optiqon-voice-47498
+```
+
+with a `hosting` block in `firebase.json` pointing at an otherwise empty public directory. That
+is the smallest thing that creates a first release; Firebase then serves
+`/.well-known/assetlinks.json` from the registered fingerprints automatically, and nothing has
+to be authored by hand. It is a Hosting deploy and belongs to the next Gate, not this one.
+
+Also still open and unbundled: enabling the **email-link auth provider**, and finally
+**install + merge**.
