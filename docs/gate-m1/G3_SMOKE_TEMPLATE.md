@@ -55,7 +55,7 @@ $ADB shell pm get-app-links $PKG
 | versionCode / versionName | |
 | firstInstallTime | |
 | signer SHA-256 (must be the debug key `234E2833…29EED`) | |
-| App Links state for `optiqon-voice-47498.web.app` | |
+| App Links state for `optiqon-voice-47498.firebaseapp.com` | |
 
 **versionCode gate (stop condition).** `versionCode = baseCode * 100 + patchCode`, and
 `baseCode` falls back to today's date as `YYYYMMDD` when no `-PversionTag` is given
@@ -97,15 +97,22 @@ authorised; stop and obtain Lars's separate explicit approval for any destructiv
 
 ## 2. Google sign-in and the e-mail link open the app
 
+**Corrected 2026-09-09 (finding F8).** This step used to name `optiqon-voice-47498.web.app`.
+The app's intent filter is built from `project_id` as `<projectId>.firebaseapp.com`
+(`app/build.gradle.kts`, placeholder `firebaseAuthHost`), and that is also the domain Firebase
+Auth puts its action links on. `web.app` is the *Hosting* domain and is not what the filter
+matches. The wiring was always correct; the template text was not.
+
+
 ```
-$ADB shell pm get-app-links $PKG            # want: optiqon-voice-47498.web.app  verified
+$ADB shell pm get-app-links $PKG   # want: optiqon-voice-47498.firebaseapp.com  verified
 $ADB shell pm verify-app-links --re-verify $PKG   # once, only if it says none/legacy
 ```
 
 - Google sign-in with the **admin** account succeeds (Account screen shows the address).
 - Sign out. Request an e-mail link for the tester address; open the mail on the phone; the
   link opens the **app**, not the browser. Record the link's host and path prefix as seen in
-  the mail (`https://optiqon-voice-47498.web.app/__/auth/links?…` expected); no query string.
+  the mail (`https://optiqon-voice-47498.firebaseapp.com/__/auth/links?…` expected); no query string.
 
 ## 3. New account is pending and cannot dictate
 
