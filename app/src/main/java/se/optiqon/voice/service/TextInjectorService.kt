@@ -65,6 +65,19 @@ internal fun isSensitiveInputType(inputType: Int): Boolean {
     }
 }
 
+/**
+ * Whether the bubble's owner has to be told about the keyboard, given what we last told it.
+ *
+ * A change is always worth reporting. So is an editable field taking focus while the keyboard
+ * is up, even though nothing changed: the cached flag is process-global and outlives the
+ * service, so it can say "keyboard visible" at a moment when no bubble is on screen — and then
+ * no edge ever arrives to correct it. Tapping into a text field is exactly when the user
+ * expects the bubble, so it is also the right moment to re-state the truth rather than trust
+ * the cache. Showing an already-shown bubble is a no-op, so re-stating it costs nothing.
+ */
+internal fun shouldReportKeyboard(imeVisible: Boolean, lastReported: Boolean, editableFocused: Boolean): Boolean =
+    imeVisible != lastReported || (editableFocused && imeVisible)
+
 sealed class InjectionResult {
     data object Success : InjectionResult()
     data object NoFocusedNode : InjectionResult()
@@ -114,6 +127,8 @@ class TextInjectorService : AccessibilityService() {
                     focusedAppPackage = packageName
                     if (event.source?.isEditable == true) {
                         lastFocusedEditablePackage = packageName
+                        // Not only on TYPE_WINDOW_STATE_CHANGED: see shouldReportKeyboard.
+                        checkKeyboardVisibility(editableFocused = true)
                     }
                 }
             }
@@ -123,13 +138,12 @@ class TextInjectorService : AccessibilityService() {
         }
     }
 
-    private fun checkKeyboardVisibility() {
+    private fun checkKeyboardVisibility(editableFocused: Boolean = false) {
         try {
             val hasIme = windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
-            if (hasIme != isKeyboardVisible) {
-                isKeyboardVisible = hasIme
-                keyboardListener?.onKeyboardVisibilityChanged(hasIme)
-            }
+            val report = shouldReportKeyboard(hasIme, isKeyboardVisible, editableFocused)
+            isKeyboardVisible = hasIme
+            if (report) keyboardListener?.onKeyboardVisibilityChanged(hasIme)
         } catch (e: Exception) {
             Log.e(TAG, "Error checking keyboard", e)
         }
