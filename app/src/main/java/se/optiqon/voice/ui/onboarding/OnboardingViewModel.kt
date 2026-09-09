@@ -6,6 +6,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import se.optiqon.voice.data.preferences.PreferencesDataStore
@@ -49,6 +50,17 @@ sealed interface ConnectionState {
      * provider refuses (smoke finding F17).
      */
     data class VerifiedWithoutCleanup(val message: String) : ConnectionState
+
+    /**
+     * A key this root verified on an earlier run, offered back rather than asked for again.
+     *
+     * Distinct from [Verified] because the claim is different: [Verified] means a provider
+     * answered a moment ago, this means one answered before and the key was kept. Saying
+     * "Connected. Transcription is working." on the strength of a past call would be a claim
+     * about now that nothing here has checked.
+     */
+    data object Restored : ConnectionState
+
     data class Failed(val message: String) : ConnectionState
 }
 
@@ -63,7 +75,7 @@ data class OnboardingUiState(
     val connection: ConnectionState = ConnectionState.Untested,
     val finished: Boolean = false
 ) {
-    val isCustomPreset: Boolean get() = preset.id == ProviderPresets.CUSTOM.id
+    val isCustomPreset: Boolean get() = preset.isCustom
 
     /** The URL actually sent: a preset supplies its own, a custom provider is typed in. */
     val effectiveBaseUrl: String get() = if (isCustomPreset) baseUrl else preset.baseUrl
@@ -76,6 +88,7 @@ data class OnboardingUiState(
 
     val canLeaveConnectStep: Boolean
         get() = connection == ConnectionState.Verified ||
+            connection == ConnectionState.Restored ||
             connection is ConnectionState.VerifiedWithoutCleanup
 
     companion object {
@@ -92,6 +105,50 @@ class OnboardingViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(OnboardingUiState())
     val uiState: StateFlow<OnboardingUiState> = _uiState.asStateFlow()
+
+    init {
+        restoreVerifiedEndpoint()
+    }
+
+    /**
+     * Offers back the endpoint this root has already verified (smoke finding F19).
+     *
+     * Onboarding runs again after a sign-out — the completion flag is cleared, the stored key
+     * is not — and until now the Connect step opened empty, which left the person unable to
+     * finish a step they had already completed unless they could produce the key a second
+     * time. Nothing had been lost; it simply was not offered back.
+     *
+     * A key only reaches storage through [verifyAndSave], which writes nothing unless the
+     * provider accepted it, so a stored key is by construction one that has worked. That is
+     * enough to leave the step, and it costs no further call to a paid endpoint.
+     */
+    private fun restoreVerifiedEndpoint() {
+        viewModelScope.launch {
+            val saved = preferencesDataStore.preferences.first()
+            if (saved.asrApiKey.isBlank() || saved.asrBaseUrl.isBlank()) return@launch
+
+            _uiState.update { state ->
+                // Anything answered since this screen opened is the newer answer, and a
+                // restore arriving late must not overwrite it.
+                if (state.apiKey.isNotBlank() || state.connection != ConnectionState.Untested) {
+                    return@update state
+                }
+                val preset = ProviderPresets.byId(saved.providerPresetId)
+                // The URL that was verified is the stored one, not whatever the preset names
+                // today. If they have drifted apart, the stored one is shown as a custom
+                // endpoint so that `effectiveBaseUrl` is the address that actually worked.
+                val presetStillMatches = !preset.isCustom &&
+                    saved.asrBaseUrl.trim() == preset.baseUrl.trim()
+                state.copy(
+                    preset = if (presetStillMatches) preset else ProviderPresets.CUSTOM,
+                    baseUrl = if (presetStillMatches) "" else saved.asrBaseUrl,
+                    apiKey = saved.asrApiKey,
+                    asrModel = saved.asrModel,
+                    connection = ConnectionState.Restored
+                )
+            }
+        }
+    }
 
     /** `null` is the deliberate "let the provider detect it" choice, not an absent answer. */
     fun selectLanguage(code: String?) = _uiState.update { it.copy(language = code) }

@@ -241,6 +241,17 @@ private fun ConnectStep(state: OnboardingUiState, viewModel: OnboardingViewModel
                 Text("Sending a test clip…", style = MaterialTheme.typography.bodyMedium)
             }
             is ConnectionState.Verified -> InlineStatus("Connected. Transcription is working.")
+            // Deliberately not "Transcription is working": nothing has been called this run.
+            // What is true is that this key worked here before and was kept (F19).
+            is ConnectionState.Restored -> Column(
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                InlineStatus("This device already has a key that worked here.")
+                Text(
+                    text = "Continue with it, or paste a different one to replace it.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
             is ConnectionState.VerifiedWithoutCleanup -> Column(
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {

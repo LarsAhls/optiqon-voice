@@ -19,7 +19,10 @@ data class ProviderPreset(
     /** Where the user goes to create a key. Opened in a browser, never called by the app. */
     val consoleUrl: String,
     val keyPrefixHint: String
-)
+) {
+    /** Custom is the one preset that supplies nothing: every field is the user's own. */
+    val isCustom: Boolean get() = id == ProviderPresets.CUSTOM.id
+}
 
 object ProviderPresets {
 
