@@ -115,7 +115,13 @@ class AndroidSyntheticSink(
                 "provider_preset_id" to prefs.providerPresetId
             )
             val owner = deviceDataOwner.defaultOwner()
-            val access = owner?.let { accessStateStore.snapshot(it).first()?.status?.name }
+            // Whose access status to report. The owner of the default root when there is one --
+            // that is the account the L1 rotation checks are about — and otherwise the account
+            // that is actually signed in. Reading only the owner made every dump on a real,
+            // signed-in device say `access_status=null`, which reads as "no access" when it in
+            // fact meant "nobody has claimed the old data", and the two are not the same fact.
+            val subject = owner ?: deviceDataOwner.activeUid()
+            val access = subject?.let { accessStateStore.snapshot(it).first()?.status?.name }
             return SyntheticState.DefaultRootState(
                 dumpedRoot = root.name,
                 processRoot = processRoot.name,
