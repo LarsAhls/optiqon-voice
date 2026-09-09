@@ -1,6 +1,7 @@
 package se.optiqon.voice.ui.theme
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 
@@ -40,7 +41,16 @@ fun OptiqonVoiceTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = DarkColorScheme,
         typography = Typography,
-        shapes = Shapes,
-        content = content
-    )
+        shapes = Shapes
+    ) {
+        // Everything is drawn inside one surface so that `LocalContentColor` is the scheme's
+        // `onBackground` everywhere. Without it Material3 hands unwrapped content its default
+        // black, which on this canvas is text you cannot read — which is exactly what the
+        // account screens were, being the one part of the app drawn outside a Scaffold.
+        Surface(
+            color = DarkColorScheme.background,
+            contentColor = DarkColorScheme.onBackground,
+            content = content
+        )
+    }
 }

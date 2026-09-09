@@ -5,30 +5,39 @@ import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextFieldColors
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import se.optiqon.voice.R
 import se.optiqon.voice.domain.access.BlockReason
 import se.optiqon.voice.domain.access.DisplayName
+import se.optiqon.voice.ui.common.GoogleSignInButton
+import se.optiqon.voice.ui.common.PrimaryButton
+import se.optiqon.voice.ui.common.SecondaryButton
+import se.optiqon.voice.ui.theme.TextPrimary
+import se.optiqon.voice.ui.theme.TextSecondary
 
 /**
  * The screen every unapproved account sees. Registration is required for the whole app, so
@@ -82,7 +91,7 @@ fun AccountScreenContent(
     onConsumeMessage: () -> Unit = {}
 ) {
     Column(
-        modifier = modifier.padding(24.dp),
+        modifier = modifier.padding(horizontal = 24.dp, vertical = 24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -123,13 +132,71 @@ fun AccountScreenContent(
         }
 
         message?.let {
-            Text(it, style = MaterialTheme.typography.bodyMedium)
+            Body(it)
             TextButton(onClick = onConsumeMessage) {
                 Text(stringResource(R.string.action_ok))
             }
         }
     }
 }
+
+/*
+ * The three text roles these screens use. They are spelled out rather than inherited so that
+ * the contrast is a property of the screen and not of whatever happens to be providing
+ * `LocalContentColor` at the time — which is how the headings ended up unreadable once.
+ */
+
+/** The one heading on the screen. Off-white, large, centred. */
+@Composable
+private fun Heading(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.headlineSmall,
+        color = TextPrimary,
+        textAlign = TextAlign.Center
+    )
+}
+
+/** Explanatory copy under a heading. Light grey, deliberately quieter than the heading. */
+@Composable
+private fun Body(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text = text,
+        modifier = modifier,
+        style = MaterialTheme.typography.bodyMedium,
+        color = TextSecondary,
+        textAlign = TextAlign.Center
+    )
+}
+
+/** The signed-in address. Quiet, but readable — it is how you catch the wrong account. */
+@Composable
+private fun AccountLine(email: String) {
+    Text(
+        text = email,
+        style = MaterialTheme.typography.titleSmall,
+        color = TextPrimary,
+        textAlign = TextAlign.Center
+    )
+}
+
+/**
+ * Fields on this screen carry their own colours for the same reason the text roles do: the
+ * defaults put the label, the placeholder and the resting border at alphas meant for a light
+ * scheme, which on this canvas leaves an empty field looking like an empty rectangle.
+ */
+@Composable
+private fun authFieldColors(): TextFieldColors = OutlinedTextFieldDefaults.colors(
+    focusedTextColor = TextPrimary,
+    unfocusedTextColor = TextPrimary,
+    focusedBorderColor = MaterialTheme.colorScheme.primary,
+    unfocusedBorderColor = TextSecondary.copy(alpha = 0.55f),
+    focusedLabelColor = MaterialTheme.colorScheme.primary,
+    unfocusedLabelColor = TextSecondary,
+    focusedPlaceholderColor = TextSecondary,
+    unfocusedPlaceholderColor = TextSecondary,
+    cursorColor = MaterialTheme.colorScheme.primary
+)
 
 /**
  * Google first, email link second, and each only when this build can actually do it. A route
@@ -147,21 +214,21 @@ private fun SignedOut(
 ) {
     var email by rememberSaveable { mutableStateOf("") }
 
-    Text(stringResource(R.string.registration_title), style = MaterialTheme.typography.headlineSmall)
+    Heading(stringResource(R.string.registration_title))
 
     if (!googleAvailable && !emailLinkAvailable) {
         // Being told the build cannot sign in beats a button that silently does nothing.
-        Text(
-            stringResource(R.string.registration_not_configured),
-            style = MaterialTheme.typography.bodyMedium
-        )
+        Body(stringResource(R.string.registration_not_configured))
         return
     }
 
     if (googleAvailable) {
-        Button(onClick = onGoogle, enabled = !busy) {
-            Text(stringResource(R.string.registration_google))
-        }
+        Spacer(Modifier.height(8.dp))
+        GoogleSignInButton(
+            text = stringResource(R.string.registration_google),
+            onClick = onGoogle,
+            enabled = !busy
+        )
     }
 
     // A link that is already open needs the address even when this build could not have
@@ -170,18 +237,22 @@ private fun SignedOut(
         OutlinedTextField(
             value = email,
             onValueChange = { email = it },
+            modifier = Modifier.fillMaxWidth(),
             singleLine = true,
+            shape = MaterialTheme.shapes.small,
+            colors = authFieldColors(),
             label = { Text(stringResource(R.string.registration_email_label)) }
         )
 
-        TextButton(onClick = { onEmail(email.trim()) }, enabled = !busy && email.contains('@')) {
-            Text(
-                stringResource(
-                    if (completingLink) R.string.registration_email_confirm
-                    else R.string.registration_email
-                )
-            )
-        }
+        // Lower emphasis than Google on purpose: the two routes are not equally recommended.
+        SecondaryButton(
+            text = stringResource(
+                if (completingLink) R.string.registration_email_confirm
+                else R.string.registration_email
+            ),
+            onClick = { onEmail(email.trim()) },
+            enabled = !busy && email.contains('@')
+        )
     }
 }
 
@@ -198,8 +269,12 @@ private fun SupportContact() {
     val context = LocalContext.current
     val address = stringResource(R.string.support_contact_email)
 
-    Text(stringResource(R.string.support_contact_title), style = MaterialTheme.typography.titleSmall)
-    Text(stringResource(R.string.support_contact_body), style = MaterialTheme.typography.bodySmall)
+    Text(
+        text = stringResource(R.string.support_contact_title),
+        style = MaterialTheme.typography.titleSmall,
+        color = TextPrimary
+    )
+    Body(stringResource(R.string.support_contact_body))
 
     if (address.isNotBlank()) {
         TextButton(onClick = {
@@ -234,25 +309,28 @@ private fun NeedsName(
 ) {
     var name by rememberSaveable(suggestion) { mutableStateOf(suggestion) }
 
-    Text(stringResource(R.string.registration_name_title), style = MaterialTheme.typography.headlineSmall)
-    email?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
-    Text(stringResource(R.string.registration_name_body), style = MaterialTheme.typography.bodyMedium)
+    Heading(stringResource(R.string.registration_name_title))
+    email?.let { AccountLine(it) }
+    Body(stringResource(R.string.registration_name_body))
 
     OutlinedTextField(
         value = name,
         onValueChange = { if (it.length <= DisplayName.MAX_LENGTH) name = it },
+        modifier = Modifier.fillMaxWidth(),
         singleLine = true,
+        shape = MaterialTheme.shapes.small,
+        colors = authFieldColors(),
         label = { Text(stringResource(R.string.registration_name_label)) }
     )
 
     // The same predicate the view model re-applies. A disabled button is a courtesy, not the
     // check: whitespace looks like a name in a text field and is not one.
-    Button(onClick = { onName(name) }, enabled = !busy && DisplayName.isValid(name)) {
-        Text(stringResource(R.string.registration_name_submit))
-    }
-    TextButton(onClick = onSignOut, enabled = !busy) {
-        Text(stringResource(R.string.registration_sign_out))
-    }
+    PrimaryButton(
+        text = stringResource(R.string.registration_name_submit),
+        onClick = { onName(name) },
+        enabled = !busy && DisplayName.isValid(name)
+    )
+    SignOutAction(busy = busy, onSignOut = onSignOut)
 }
 
 @Composable
@@ -262,17 +340,24 @@ private fun ClaimChoice(
     onClaim: () -> Unit,
     onStartEmpty: () -> Unit
 ) {
-    Text(stringResource(R.string.claim_title), style = MaterialTheme.typography.headlineSmall)
-    email?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
-    Text(stringResource(R.string.claim_body), style = MaterialTheme.typography.bodyMedium)
+    Heading(stringResource(R.string.claim_title))
+    email?.let { AccountLine(it) }
+    Body(stringResource(R.string.claim_body))
 
-    Button(onClick = onClaim, enabled = !busy) {
-        Text(stringResource(R.string.claim_link))
-    }
+    PrimaryButton(
+        text = stringResource(R.string.claim_link),
+        onClick = onClaim,
+        enabled = !busy
+    )
     TextButton(onClick = onStartEmpty, enabled = !busy) {
         Text(stringResource(R.string.claim_empty))
     }
-    Text(stringResource(R.string.claim_empty_note), style = MaterialTheme.typography.bodySmall)
+    Text(
+        text = stringResource(R.string.claim_empty_note),
+        style = MaterialTheme.typography.bodySmall,
+        color = TextSecondary,
+        textAlign = TextAlign.Center
+    )
 }
 
 /**
@@ -304,18 +389,32 @@ private fun Waiting(
         BlockReason.GRACE_EXPIRED -> R.string.registration_grace_expired_body
     }
 
-    Text(stringResource(title), style = MaterialTheme.typography.headlineSmall)
-    email?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
-    Text(stringResource(body), style = MaterialTheme.typography.bodyMedium)
+    Heading(stringResource(title))
+    email?.let { AccountLine(it) }
+    Body(stringResource(body))
 
-    Button(onClick = onRefresh, enabled = !busy) {
-        Text(stringResource(R.string.registration_check_again))
-    }
-    TextButton(onClick = onSignOut, enabled = !busy) {
-        Text(stringResource(R.string.registration_sign_out))
-    }
+    // Checking again is the only thing this screen can actually do for you, so it is the one
+    // filled button on it; signing out is an escape hatch and is drawn as one.
+    PrimaryButton(
+        text = stringResource(R.string.registration_check_again),
+        onClick = onRefresh,
+        enabled = !busy
+    )
+    SignOutAction(busy = busy, onSignOut = onSignOut)
 
     if (reason == BlockReason.REVOKED || reason == BlockReason.REJECTED) {
         SupportContact()
+    }
+}
+
+/** Always the lowest-emphasis action on a screen that has one: a bare label, never a slab. */
+@Composable
+private fun SignOutAction(busy: Boolean, onSignOut: () -> Unit) {
+    TextButton(onClick = onSignOut, enabled = !busy) {
+        Text(
+            text = stringResource(R.string.registration_sign_out),
+            style = MaterialTheme.typography.labelLarge,
+            color = TextSecondary
+        )
     }
 }
