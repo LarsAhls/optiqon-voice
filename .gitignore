@@ -40,7 +40,10 @@ output/
 
 # Firebase Android config: carries the project's API key and is fetched from the
 # Firebase console per machine, so it stays out of git like every other credential.
-google-services.json
+# The glob is deliberate: a browser saves a second download as
+# "google-services (1).json", which the bare name does not match, and that copy landed
+# in the repo root untracked and committable.
+google-services*.json
 
 # Production release signing material — must never be committed
 *.keystore
