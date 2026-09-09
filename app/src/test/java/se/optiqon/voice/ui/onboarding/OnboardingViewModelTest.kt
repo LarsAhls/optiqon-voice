@@ -105,17 +105,18 @@ class OnboardingViewModelTest {
         withContext(Dispatchers.Default) { withTimeout(TIMEOUT_MS) { preferences.preferences.first(predicate) } }
 
     @Test
-    fun `it starts on the language step, with Swedish already chosen`() {
-        assertEquals(OnboardingStep.LANGUAGE, viewModel.uiState.value.step)
+    fun `it starts on the account step, with Swedish already chosen`() {
+        assertEquals(OnboardingStep.ACCOUNT, viewModel.uiState.value.step)
         assertEquals(OnboardingUiState.DEFAULT_LANGUAGE, viewModel.uiState.value.language)
     }
 
     @Test
     fun `the chosen language reaches preferences and the active profile`() = runTest {
+        viewModel.next()
         viewModel.selectLanguage("en")
         viewModel.next()
 
-        assertEquals(OnboardingStep.ACCOUNT, viewModel.uiState.value.step)
+        assertEquals(OnboardingStep.CONNECT, viewModel.uiState.value.step)
         awaitPreferences { it.preferredLanguages == listOf("en") }
         awaitValue("the active profile speaks English") {
             database.profileDao().getActiveProfile()?.language == "en"
@@ -124,6 +125,7 @@ class OnboardingViewModelTest {
 
     @Test
     fun `Auto detect is carried through as no language at all`() = runTest {
+        viewModel.next()
         viewModel.selectLanguage(null)
         viewModel.next()
 

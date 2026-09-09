@@ -99,7 +99,7 @@ class OnboardingScreenTest {
         }
     }
 
-    /** Two steps along now: language, then the account question, then the speech service. */
+    /** Two steps along now: the account question, then language, then the speech service. */
     private fun showConnectStep() {
         composeRule.setContent { Onboarding() }
         composeRule.onNodeWithText("Continue").performClick()
@@ -107,8 +107,10 @@ class OnboardingScreenTest {
     }
 
     @Test
-    fun `the first step asks for a language, in that language`() {
+    fun `the language step asks for a language, in that language`() {
         composeRule.setContent { Onboarding() }
+        // The account question comes first now, so the language step is one Continue along.
+        composeRule.onNodeWithText("Continue").performClick()
 
         // Existence, not visibility: the step scrolls, and on a short screen the choices sit
         // below the heading that explains them.

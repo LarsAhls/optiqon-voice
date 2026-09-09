@@ -287,16 +287,16 @@ private fun StepActions(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         when (state.step) {
-            OnboardingStep.LANGUAGE -> PrimaryButton("Continue", onClick = viewModel::next)
+            // First step, so no Back: there is nothing behind it, and a button that does
+            // nothing is worse than an absent one.
+            OnboardingStep.ACCOUNT -> PrimaryButton(
+                text = "Continue",
+                enabled = accountApproved(),
+                onClick = viewModel::next
+            )
 
-            OnboardingStep.ACCOUNT -> {
-                // Enabled only on the server's answer. A pending account can go back and
-                // change the language, but it cannot walk past the gate into the app.
-                PrimaryButton(
-                    text = "Continue",
-                    enabled = accountApproved(),
-                    onClick = viewModel::next
-                )
+            OnboardingStep.LANGUAGE -> {
+                PrimaryButton("Continue", onClick = viewModel::next)
                 SecondaryButton("Back", onClick = viewModel::back)
             }
 

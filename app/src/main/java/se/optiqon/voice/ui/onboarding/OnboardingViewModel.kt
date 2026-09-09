@@ -24,7 +24,17 @@ import javax.inject.Inject
  * makes a real call to a speech provider, and doing that before anyone has been admitted to
  * the app means an unapproved install can drive a paid endpoint.
  */
-enum class OnboardingStep { LANGUAGE, ACCOUNT, CONNECT, PERMISSIONS }
+/**
+ * The order the first run asks its questions in.
+ *
+ * The account comes first because it is the only question whose answer can refuse the rest:
+ * an unapproved account cannot dictate, so choosing a language and a speech service before
+ * knowing that would be setting up an app the person may not be allowed to use. Everything
+ * after it is configuration of something already granted.
+ *
+ * The declaration order is the step order — `ordinal` drives the "N of 4" counter.
+ */
+enum class OnboardingStep { ACCOUNT, LANGUAGE, CONNECT, PERMISSIONS }
 
 /** What the Connect step is currently able to say about the endpoint it was given. */
 sealed interface ConnectionState {
@@ -35,7 +45,7 @@ sealed interface ConnectionState {
 }
 
 data class OnboardingUiState(
-    val step: OnboardingStep = OnboardingStep.LANGUAGE,
+    val step: OnboardingStep = OnboardingStep.ACCOUNT,
     val language: String? = DEFAULT_LANGUAGE,
     val preset: ProviderPreset = ProviderPresets.RECOMMENDED,
     val showAdvanced: Boolean = false,
@@ -144,9 +154,9 @@ class OnboardingViewModel @Inject constructor(
     fun back() = _uiState.update { state ->
         state.copy(
             step = when (state.step) {
-                OnboardingStep.LANGUAGE -> OnboardingStep.LANGUAGE
-                OnboardingStep.ACCOUNT -> OnboardingStep.LANGUAGE
-                OnboardingStep.CONNECT -> OnboardingStep.ACCOUNT
+                OnboardingStep.ACCOUNT -> OnboardingStep.ACCOUNT
+                OnboardingStep.LANGUAGE -> OnboardingStep.ACCOUNT
+                OnboardingStep.CONNECT -> OnboardingStep.LANGUAGE
                 OnboardingStep.PERMISSIONS -> OnboardingStep.CONNECT
             }
         )
@@ -155,17 +165,17 @@ class OnboardingViewModel @Inject constructor(
     fun next() {
         val state = _uiState.value
         when (state.step) {
+            // Whether the account may leave this step is the gate's answer, not this
+            // view model's: it is asked where the approved state is observed.
+            OnboardingStep.ACCOUNT -> _uiState.update { it.copy(step = OnboardingStep.LANGUAGE) }
             OnboardingStep.LANGUAGE -> {
                 viewModelScope.launch {
                     preferencesDataStore.updatePreferredLanguages(listOfNotNull(state.language))
                     preferencesDataStore.updateActiveLanguage(state.language)
                     profileRepository.applyLanguageToActiveProfile(state.language)
                 }
-                _uiState.update { it.copy(step = OnboardingStep.ACCOUNT) }
+                _uiState.update { it.copy(step = OnboardingStep.CONNECT) }
             }
-            // Whether the account may leave this step is the gate's answer, not this
-            // view model's: it is asked where the approved state is observed.
-            OnboardingStep.ACCOUNT -> _uiState.update { it.copy(step = OnboardingStep.CONNECT) }
             OnboardingStep.CONNECT ->
                 if (state.canLeaveConnectStep) _uiState.update { it.copy(step = OnboardingStep.PERMISSIONS) }
             OnboardingStep.PERMISSIONS -> finish()

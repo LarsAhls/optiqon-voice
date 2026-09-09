@@ -36,6 +36,10 @@ import se.optiqon.voice.ui.navigation.StartDestination
  * server has not approved — and sending an install that has already been onboarded back to the
  * start means an existing user is asked to redo work that is already done, which is exactly
  * what the upgrade path must not do.
+ *
+ * The account is now the first question of all, not the second. That is a stronger version of
+ * the same guarantee: nothing at all is configured, chosen or sent before the account the
+ * server may still refuse is known.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -80,10 +84,10 @@ class OnboardingOrderTest {
     private fun step() = viewModel.uiState.value.step
 
     @Test
-    fun `the account step comes between language and the speech service`() = runTest {
-        assertEquals(OnboardingStep.LANGUAGE, step())
-        viewModel.next()
+    fun `the account is the first step, before language and the speech service`() = runTest {
         assertEquals(OnboardingStep.ACCOUNT, step())
+        viewModel.next()
+        assertEquals(OnboardingStep.LANGUAGE, step())
         viewModel.next()
         assertEquals(OnboardingStep.CONNECT, step())
     }
@@ -95,21 +99,32 @@ class OnboardingOrderTest {
      */
     @Test
     fun `nothing is sent to a provider before the account step`() = runTest {
-        viewModel.next()
         assertEquals(OnboardingStep.ACCOUNT, step())
+        assertEquals(0, tls.server.requestCount)
+        viewModel.next()
+        viewModel.next()
+        assertEquals(OnboardingStep.CONNECT, step())
         assertEquals(0, tls.server.requestCount)
     }
 
     @Test
-    fun `going back from the speech service returns to the account step`() = runTest {
+    fun `going back from the speech service walks the order in reverse`() = runTest {
         viewModel.next()
         viewModel.next()
         assertEquals(OnboardingStep.CONNECT, step())
 
         viewModel.back()
+        assertEquals(OnboardingStep.LANGUAGE, step())
+        viewModel.back()
+        assertEquals(OnboardingStep.ACCOUNT, step())
+    }
+
+    /** The first step has nothing behind it, and Back must not fall off the front of the list. */
+    @Test
+    fun `back on the account step stays on the account step`() = runTest {
         assertEquals(OnboardingStep.ACCOUNT, step())
         viewModel.back()
-        assertEquals(OnboardingStep.LANGUAGE, step())
+        assertEquals(OnboardingStep.ACCOUNT, step())
     }
 
     /** An unverified endpoint still cannot be left behind; moving the account did not relax it. */
