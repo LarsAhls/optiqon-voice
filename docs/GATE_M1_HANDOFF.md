@@ -307,8 +307,11 @@ reporting barriers.
    `firestore.rules` and has no `firestore.database` key, so `(default)` is the target and the
    future file cannot be reached by accident.
 4. **Read back all three** — that the app carries exactly those two fingerprints, that delete
-   protection reads as enabled, and that the active ruleset's content hashes to
-   `21f39fe5…49553d`. Then fetch
+   protection reads as enabled, and that the active ruleset's content is the one just built.
+   Note what a readback actually returns: the CLI uploads the **working-tree** bytes, which are
+   CRLF here, so the released file hashes to `97ab0646…0a3f40` (12108 bytes), not to the git-blob
+   hash `21f39fe5…49553d` (11833 bytes). Same content, different line endings — see the
+   postflight below. Then fetch
    `https://optiqon-voice-47498.firebaseapp.com/.well-known/assetlinks.json` and check it names
    `se.optiqon.voice` with the SHA-256 above.
 
@@ -335,3 +338,78 @@ to be authored by hand. It is a Hosting deploy and belongs to the next Gate, not
 
 Also still open and unbundled: enabling the **email-link auth provider**, and finally
 **install + merge**.
+
+## Postflight 2026-09-09 — the box was approved and executed
+
+Lars approved the box ("Godkänd — kör boxens fyra åtgärder med readback"). All four actions ran
+as one sequence against `optiqon-voice-47498`. Nothing outside the box was touched: no Hosting
+deploy, no auth-provider change, no bootstrap or seeding, no install, no merge, no deletion. The
+old project `optioqon-voice` (642507220744) was never contacted.
+
+**Preflight, before any write**
+
+| Thing | State |
+| --- | --- |
+| SHA hashes on the Android app | none — "No SHA certificate hashes found" |
+| `(default)` database | `FIRESTORE_NATIVE`, `europe-north2`, `DELETE_PROTECTION_DISABLED`, PITR disabled |
+| `firebase.json` | names `firestore.rules`, no `firestore.database` key |
+
+**1 — Fingerprints registered.** Both `apps:android:sha:create` calls succeeded on
+`1:699805184613:android:35a5860f14504f1e130c8c`.
+
+**2 — Delete protection enabled.** "Successfully updated
+projects/optiqon-voice-47498/databases/(default)".
+
+**3 — Rules deployed.** `firebase deploy --only firestore:rules --project optiqon-voice-47498`:
+compiled successfully, "released rules firestore.rules to cloud.firestore", "Deploy complete!".
+
+**4 — Readback**
+
+- **Fingerprints:** exactly two, no extras — `3326d33e30e035999b9a3c5c2fce404a06d3ccf4` (SHA_1,
+  id `a737473cece802b7`) and
+  `234e2833e3e74d721b316c0db5e87e112b3f74ed5f76d34e5d3208c504429eed` (SHA_256, id
+  `93241816e3c34b0a`).
+- **Database:** `DELETE_PROTECTION_ENABLED`, still `FIRESTORE_NATIVE` / `europe-north2`.
+- **Active ruleset:** release `projects/optiqon-voice-47498/releases/cloud.firestore` →
+  ruleset `f5588727-03da-4205-8763-0c9891d959b1`, updated `2026-09-09T06:46:00.449842Z`.
+  File `firestore.rules`, 12108 bytes, sha256
+  `97ab0646bda54acefd1fcc8501ad20999df687d8946763f0b44705f1700a3f40`. Content assertions on the
+  live text: `seatFor`, `seatTaken(userId)`, `seatReleased(userId)` and `userStatusAfter` all
+  present. There is no public firebase-tools command for this; the readback goes through the
+  CLI's own `lib/gcp/rules.js` with the CLI's own credentials.
+
+**About the two hashes.** The released bytes hash to `97ab0646…0a3f40`, the committed git blob to
+`21f39fe5…49553d`. That is not a content difference: the CLI uploads the working tree, which is
+CRLF on this machine. Proven, not assumed — taking the git blob (11833 bytes,
+`21f39fe5…49553d`) and replacing every `\n` with `\r\n` gives 12108 bytes and exactly
+`97ab0646…0a3f40`, and the working-tree file with CRLF normalised back to LF is byte-identical to
+the blob. **A provider readback returns `97ab0646…0a3f40`.** The git-blob hash is what to compare
+a checkout against, not what to compare the cloud against.
+
+**assetlinks: still 404, and the documented next action needed a correction.**
+`https://optiqon-voice-47498.firebaseapp.com/.well-known/assetlinks.json` returns **404 "Site Not
+Found"**, and so do `https://…firebaseapp.com/` and `https://…web.app/` — every path, which is
+what an un-released Hosting site returns. `hosting:sites:list` shows the site `optiqon-voice-47498`
+does exist (`https://optiqon-voice-47498.web.app`) but has never had a release. Registering the
+fingerprints therefore changed nothing here, exactly as anticipated: the SHAs are stored on the
+app, but nothing is serving them.
+
+The command written down earlier is *not* sufficient on its own — `firebase.json` currently has no
+`hosting` key, so `firebase deploy --only hosting` fails before it reaches the network. The exact
+minimal next-Gate action is: add a `hosting` block naming an (otherwise empty) public directory,
+then
+
+```
+firebase deploy --only hosting --project optiqon-voice-47498
+```
+
+That first release makes Firebase serve `/.well-known/assetlinks.json` from the fingerprints now
+registered; the file is not authored by hand. It is a Hosting deploy and is **not** approved.
+
+**Rollback is unchanged:** redeploy `gate-m1/rollback-ruleset-4937759b.rules` (deny-all, ruleset
+`4937759b-d4a7-4e95-b59a-22d363dac881`, sha256 `ecf30f94…d84eb`). Note that delete protection is
+now on, which is deliberate and separately reversible via
+`firestore:databases:update "(default)" --delete-protection DISABLED`.
+
+**Still open, still unapproved:** Hosting deploy, enabling the email-link auth provider,
+install, merge.
