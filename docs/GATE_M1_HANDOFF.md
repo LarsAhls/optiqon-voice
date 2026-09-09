@@ -456,3 +456,30 @@ index redirect, query preserved) rather than 200 directly; the postflight script
 follow it. **Next box:** G3 (device smoke, [`gate-m1/G3_SMOKE_TEMPLATE.md`](gate-m1/G3_SMOKE_TEMPLATE.md)),
 which needs D6 decided first. Still not approved: G3, signing rotation (G4), distribution (D3/G5),
 merge of PR #3. The old project `optioqon-voice` was not opened.
+
+## Decision 2026-09-09 — D6 settled: 72 h offline grace as beta policy
+
+Lars decided **D6 = 72 h**, the proposed value. This is the last decision G3 was waiting on.
+
+**No code change follows.** The value was already the constant
+`AccessGate.PROPOSED_GRACE_MS` (`72L * 60L * 60L * 1000L`), reached through
+`AccessConfig.graceMs`, and every test that pins a grace value already pins this one. G3 can
+be built from the current head without touching app code. The KDoc in `AccessGate.kt` and
+`AccessRepository.kt` still calls 72 h "proposed" rather than "decided" — wording only, worth
+folding into the G3 box rather than spending a build on now.
+
+**What D6 governs and what it does not.** It governs how long an *already approved* device may
+keep dictating without reaching the server. It does not govern cloud access: `firestore.rules`
+has no grace, so a revoked account is refused at its next request regardless of this value.
+Online the device re-checks every 15 minutes (`AccessRefresher.CHECK_IN_INTERVAL_MS`), so the
+grace window only applies when Firestore is genuinely unreachable. A moved clock can only
+shorten the window (`AccessGate.isWithinGrace` takes the larger of the wall and elapsed ages and
+treats a negative age as spent). G3 step 9 exercises expiry through the debug clock offset, not
+by waiting, so the length of the window does not slow the smoke run.
+
+**Scope of the decision:** beta policy for ≤10 known testers, not a V1 policy. The residual risk
+accepted is that a revoked tester may keep dictating locally, with their own API keys and at
+their own cost, for up to 72 h while offline.
+
+**Still open:** D2 (method for the existing installation), D8 (Android floor), D3/D5/D2b/D7.
+**Still not approved:** G3, G4, distribution, merge of PR #3.
