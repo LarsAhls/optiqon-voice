@@ -483,3 +483,31 @@ their own cost, for up to 72 h while offline.
 
 **Still open:** D2 (method for the existing installation), D8 (Android floor), D3/D5/D2b/D7.
 **Still not approved:** G3, G4, distribution, merge of PR #3.
+
+## Fix 2026-09-09 — the bootstrap tool's live Firestore client (found in G3 preflight)
+
+`scripts/admin/m1-bootstrap.mjs status` failed on its first real run with
+`firestore/invalid-credential`. The cause is in `firebase-admin` itself: its Firestore factory
+accepts **only** a certificate credential or application default credentials, and rejects the
+Firebase CLI's OAuth refresh token outright (`firestore-internal.js`, `getFirestoreOptions`).
+`getAuth()` accepts the same credential without complaint, which is why the Auth half of the
+tool had always looked fine.
+
+The defect had never been caught because every one of the 22 bootstrap tests runs under
+`FIRESTORE_EMULATOR_HOST`, and that variable short-circuits the credential path entirely. The
+live branch had literally never executed.
+
+**Fix:** the live run now builds the Firestore client directly from `@google-cloud/firestore`
+with a `UserRefreshClient` carrying the CLI's existing refresh token (`liveFirestore()`). That
+is the same client class `firebase-admin` re-exports, from a single hoisted install, so
+`FieldValue` sentinels stay interchangeable and the transaction preconditions, seat counting,
+idempotency and audit semantics are untouched. **No new credential, service account, key file,
+`gcloud` install or changed permission model** — the credential, the project lock and the admin
+identity are exactly what they were.
+
+**Verified:** `npm run test:rules` 166/166 in 25 suites (162 as before, plus four new tests in
+`tests/admin/live-credential.test.mjs` that exercise the live branch with a fake token, no
+network and no writes — including a regression guard asserting that `getFirestore()` on a
+refresh-token app still throws). A live read-only probe returned the empty `users` collection,
+and `status` now reaches its real Auth lookup and aborts correctly with
+`ADMIN_NOT_IN_AUTH` — expected while the Auth user count is still 0.

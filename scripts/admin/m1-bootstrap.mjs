@@ -306,6 +306,31 @@ async function cliCredential() {
   return { email, refreshToken, clientId: api.clientId(), clientSecret: api.clientSecret() };
 }
 
+/**
+ * The Firestore client for a live run.
+ *
+ * `firebase-admin`'s Firestore accepts only a certificate credential or application default
+ * credentials; the OAuth refresh token above is rejected with `firestore/invalid-credential`.
+ * Every test passed anyway because `FIRESTORE_EMULATOR_HOST` short-circuits the credential
+ * path entirely, so this branch had never run. The client underneath is the same
+ * `@google-cloud/firestore` that firebase-admin re-exports (one hoisted instance, so
+ * `FieldValue` sentinels are interchangeable), so building it directly with the CLI's own
+ * refresh token keeps the credential, the project lock and the admin identity exactly as they
+ * were. Nothing new is created: no service account, no key file, no gcloud, no changed scope.
+ */
+export async function liveFirestore(cred, projectId) {
+  const { UserRefreshClient } = await import('google-auth-library');
+  const { Firestore } = await import('@google-cloud/firestore');
+  return new Firestore({
+    projectId,
+    authClient: new UserRefreshClient({
+      clientId: cred.clientId,
+      clientSecret: cred.clientSecret,
+      refreshToken: cred.refreshToken,
+    }),
+  });
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const admin = await import('firebase-admin/app');
@@ -314,13 +339,16 @@ async function main() {
 
   const emulated = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
   let identity;
+  let db;
   if (emulated) {
     // Local rehearsal against the emulator: no credential needed, identity comes from env.
     identity = { email: process.env.M1_BOOTSTRAP_IDENTITY_EMAIL ?? '' };
     admin.initializeApp({ projectId: args.project });
+    db = getFirestore();
   } else {
     const cred = await cliCredential();
     identity = { email: cred.email };
+    // Auth accepts the refresh-token credential; Firestore does not — see liveFirestore().
     admin.initializeApp({
       credential: admin.refreshToken({
         type: 'authorized_user',
@@ -330,9 +358,9 @@ async function main() {
       }),
       projectId: args.project,
     });
+    db = await liveFirestore(cred, args.project);
   }
 
-  const db = getFirestore();
   const auth = getAuth();
   const lookupUid = async (email) => {
     try {
