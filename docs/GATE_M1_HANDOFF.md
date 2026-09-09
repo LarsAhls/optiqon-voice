@@ -413,3 +413,29 @@ now on, which is deliberate and separately reversible via
 
 **Still open, still unapproved:** Hosting deploy, enabling the email-link auth provider,
 install, merge.
+
+## Update 2026-09-09 (L1 done) — next box is G1+G2, not yet run
+
+Mission L1 (plan rev. 4 §R4) is finished locally at `68ace89`; the details above that
+predate it are superseded on three points: `public/.well-known/assetlinks.json` and
+`public/signin/index.html` are now authored in the repo and `firebase.json` has the
+`hosting` block, so `firebase deploy --only hosting` is a valid command again; Google
+sign-in is the primary provider and the e-mail link the secondary one, so G1 enables
+both; and the continue-URL is `https://optiqon-voice-47498.web.app/signin` (D4 default,
+`voice.optiqon.se` filter removed).
+
+**State as verified 2026-09-09 (read-only):** branches
+`claude/firebase-activation-gate-m1-iy96xc` and `feat/m1-registration-access` both at
+`68ace89`, PR #3 draft on that head, 22 commits ahead of `main`; Authentication still not
+initialised, Hosting still 0 releases (`/.well-known/assetlinks.json` → 404, `/__/auth/links`
+→ 200), `app/google-services.json` still has 0 OAuth clients; active ruleset
+`f5588727-03da-4205-8763-0c9891d959b1`, rollback `4937759b…` (file above).
+
+**Next approved box:** G1+G2 per [`gate-m1/G1_G2_RUNBOOK.md`](gate-m1/G1_G2_RUNBOOK.md)
+(Authentication console steps + first Hosting release of `public/` only). **Not run.**
+**Not approved:** G3 (smoke on the device, [`gate-m1/G3_SMOKE_TEMPLATE.md`](gate-m1/G3_SMOKE_TEMPLATE.md)),
+signing rotation / real beta key (G4, after D2 and D8 —
+[`BETA_SIGNING_AND_DISTRIBUTION.md`](BETA_SIGNING_AND_DISTRIBUTION.md)), distribution (D3),
+merge of PR #3. Open decisions: D2 (method for the existing installation), D6 (grace value =
+code constant `PROPOSED_GRACE_MS`, needed before G3), D8 (Android floor), plus D3/D5/D2b/D7.
+What is still unproven is listed in [`BACKEND_OPEN_CONTRACTS.md`](BACKEND_OPEN_CONTRACTS.md) F5.
