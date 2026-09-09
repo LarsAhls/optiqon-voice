@@ -439,3 +439,20 @@ signing rotation / real beta key (G4, after D2 and D8 —
 merge of PR #3. Open decisions: D2 (method for the existing installation), D6 (grace value =
 code constant `PROPOSED_GRACE_MS`, needed before G3), D8 (Android floor), plus D3/D5/D2b/D7.
 What is still unproven is listed in [`BACKEND_OPEN_CONTRACTS.md`](BACKEND_OPEN_CONTRACTS.md) F5.
+
+## Update 2026-09-09 (G1+G2 run) — Authentication live, first Hosting release
+
+G1 and G2 were run on 2026-09-09 from `eeed194`, evidence in
+[`gate-m1/GATE_2_READBACK.md`](gate-m1/GATE_2_READBACK.md). Authentication is initialised in
+`optiqon-voice-47498` with Google (primary) and Email/Password + email link (secondary);
+authorized domains are the two default Hosting domains plus `localhost`; 0 users. The local
+`app/google-services.json` now carries 2 OAuth clients (1 web) and the build generates
+`default_web_client_id`. Hosting has exactly one release on `live` serving `public/`
+(assetlinks + `/signin` fallback); the Digital Asset Links API lists `se.optiqon.voice`.
+Active ruleset unchanged: `f5588727-03da-4205-8763-0c9891d959b1`.
+
+One deviation from the runbook text: `/signin` answers 301 → `/signin/` (Hosting's directory
+index redirect, query preserved) rather than 200 directly; the postflight script was adjusted to
+follow it. **Next box:** G3 (device smoke, [`gate-m1/G3_SMOKE_TEMPLATE.md`](gate-m1/G3_SMOKE_TEMPLATE.md)),
+which needs D6 decided first. Still not approved: G3, signing rotation (G4), distribution (D3/G5),
+merge of PR #3. The old project `optioqon-voice` was not opened.

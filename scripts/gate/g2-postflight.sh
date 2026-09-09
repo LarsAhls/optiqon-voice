@@ -21,8 +21,11 @@ for HOST in "$PROJECT.web.app" "$PROJECT.firebaseapp.com"; do
   check $? "$URL content equals repo public/.well-known/assetlinks.json"
   rm -f /tmp/assetlinks.$$
 
-  CODE="$(curl -s -o /dev/null -w '%{http_code}' "https://$HOST/signin")"
-  [ "$CODE" = 200 ]; check $? "https://$HOST/signin -> $CODE (want 200)"
+  # Hosting serves public/signin/index.html and 301-redirects /signin -> /signin/ (query preserved).
+  CODE="$(curl -sL -o /dev/null -w '%{http_code}' "https://$HOST/signin")"
+  [ "$CODE" = 200 ]; check $? "https://$HOST/signin -> $CODE after redirects (want 200)"
+  LOC="$(curl -sI "https://$HOST/signin?x=1" | tr -d '\r' | awk 'tolower($1)=="location:"{print $2}')"
+  [ -z "$LOC" ] || [ "$LOC" = "/signin/?x=1" ]; check $? "https://$HOST/signin redirect keeps path+query (location: ${LOC:-none})"
   CODE="$(curl -s -o /dev/null -w '%{http_code}' "https://$HOST/__/auth/links")"
   [ "$CODE" = 200 ] || [ "$CODE" = 400 ]; check $? "https://$HOST/__/auth/links -> $CODE (auth helper reachable)"
 done
@@ -33,6 +36,7 @@ curl -s "$DAL" | grep -q '"se.optiqon.voice"' ; check $? "Digital Asset Links AP
 
 echo
 [ $FAIL = 0 ] && echo "G2 postflight: PASS" || echo "G2 postflight: FAIL"
-echo "Reminder (manual, needs firebase login): confirm the active Firestore ruleset id is unchanged:"
-echo "  npx --no-install firebase firestore:rules:list --project $PROJECT   # or console > Firestore > Rules > history"
+echo "Reminder (manual, needs firebase login): confirm the active Firestore ruleset id is unchanged."
+echo "  firebase-tools 13.35.1 has no rules:list command; read it in the console (Firestore > Rules > history)"
+echo "  or via the CLI's own lib/gcp/rules.js listAllReleases with the signed-in account (see GATE_2_READBACK.md)."
 exit $FAIL
