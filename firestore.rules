@@ -83,10 +83,25 @@ service cloud.firestore {
       return /databases/$(database)/documents/config/limits;
     }
 
+    function userStatus(userId) {
+      return get(/databases/$(database)/documents/users/$(userId)).data.status;
+    }
+
+    function userStatusAfter(userId) {
+      return getAfter(/databases/$(database)/documents/users/$(userId)).data.status;
+    }
+
     // Approval consumes one of a fixed number of seats, bumped in the same commit.
-    function seatTaken() {
+    //
+    // `seatFor` names the account the movement is being spent on, and both halves of the
+    // commit check it. Without it a batch could approve two accounts against a single +1:
+    // each users/ write would look at the same before/after counter and each would be
+    // satisfied. Rules cannot count the documents in a commit, so naming the one account a
+    // seat belongs to is what makes "exactly one decision per movement" expressible.
+    function seatTaken(userId) {
       return getAfter(counters()).data.approvedUsers == get(counters()).data.approvedUsers + 1
-        && getAfter(counters()).data.approvedUsers <= get(limits()).data.maxApprovedUsers;
+        && getAfter(counters()).data.approvedUsers <= get(limits()).data.maxApprovedUsers
+        && getAfter(counters()).data.seatFor == userId;
     }
 
     // Losing approval returns the seat in the same commit.
@@ -96,9 +111,10 @@ service cloud.firestore {
     // progressively less every time somebody is revoked. Binding both directions is what
     // lets the smoke's closing check — counter equals the number of approved accounts — be
     // a real assertion instead of a restatement of what was seeded.
-    function seatReleased() {
+    function seatReleased(userId) {
       return getAfter(counters()).data.approvedUsers == get(counters()).data.approvedUsers - 1
-        && getAfter(counters()).data.approvedUsers >= 0;
+        && getAfter(counters()).data.approvedUsers >= 0
+        && getAfter(counters()).data.seatFor == userId;
     }
 
     /** A transition that neither takes nor returns a seat must leave the counter alone. */
@@ -146,11 +162,13 @@ service cloud.firestore {
         && (
              (request.resource.data.status == 'approved'
                && resource.data.status == 'pending'
-               && seatTaken())
+               && seatTaken(userId))
              ||
              (request.resource.data.status in ['rejected', 'revoked']
                && resource.data.status != request.resource.data.status
-               && (resource.data.status == 'approved' ? seatReleased() : seatUnchanged()))
+               && (resource.data.status == 'approved'
+                     ? seatReleased(userId)
+                     : seatUnchanged()))
            );
 
       allow delete: if false;
@@ -166,13 +184,30 @@ service cloud.firestore {
       allow create, delete: if false;
 
       // `limits` is seeded once, out of band, and is not editable from a client in M1.
+      //
+      // The counter is not bookkeeping: it is compared against maxApprovedUsers to decide
+      // whether anyone else may be approved. The users/ rule already refused an approval
+      // that did not move the counter — but the reverse was open, so a writer could walk
+      // the number down on its own and manufacture headroom, or walk it up and burn seats
+      // nobody holds. Both directions must therefore name the account they are spending on
+      // and be checked against that account's actual transition in the same commit.
       allow update: if isWriter()
         && docId == 'counters'
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['approvedUsers', 'seatFor'])
         && request.resource.data.approvedUsers is int
-        && (request.resource.data.approvedUsers == resource.data.approvedUsers + 1
-            || request.resource.data.approvedUsers == resource.data.approvedUsers - 1)
         && request.resource.data.approvedUsers >= 0
-        && request.resource.data.approvedUsers <= get(limits()).data.maxApprovedUsers;
+        && request.resource.data.approvedUsers <= get(limits()).data.maxApprovedUsers
+        && request.resource.data.seatFor is string
+        && (
+             (request.resource.data.approvedUsers == resource.data.approvedUsers + 1
+               && userStatus(request.resource.data.seatFor) == 'pending'
+               && userStatusAfter(request.resource.data.seatFor) == 'approved')
+             ||
+             (request.resource.data.approvedUsers == resource.data.approvedUsers - 1
+               && userStatus(request.resource.data.seatFor) == 'approved'
+               && userStatusAfter(request.resource.data.seatFor) in ['rejected', 'revoked'])
+           );
     }
 
     // ------------------------------------------------------------------ admins

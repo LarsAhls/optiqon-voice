@@ -63,7 +63,7 @@ describe('the Mission 1 chain works', () => {
     batch.update(doc(db, 'users/pat'), {
       status: 'approved', decidedBy: 'lars', decidedAt: serverTimestamp(),
     });
-    batch.update(doc(db, 'config/counters'), { approvedUsers: 5 });
+    batch.update(doc(db, 'config/counters'), { approvedUsers: 5, seatFor: 'pat' });
     await assertSucceeds(batch.commit());
   });
 
@@ -80,7 +80,7 @@ describe('the Mission 1 chain works', () => {
     batch.update(doc(db, 'users/alice'), {
       status: 'revoked', decidedBy: 'lars', decidedAt: serverTimestamp(),
     });
-    batch.update(doc(db, 'config/counters'), { approvedUsers: 3 });
+    batch.update(doc(db, 'config/counters'), { approvedUsers: 3, seatFor: 'alice' });
     await assertSucceeds(batch.commit());
   });
 
