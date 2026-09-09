@@ -9,6 +9,8 @@
     <string name="clipboard_fallback_toast">Text copied to clipboard</string>
     <string name="no_accessibility_toast">Enable accessibility service for direct text insertion</string>
     <!-- Access gate -->
+    <string name="unsupported_profile_title">Optiqon Voice cannot run in a work profile</string>
+    <string name="unsupported_profile_body">Android starts a dictation service only for the profile you are currently in, and a work profile never is. Anything you dictate here would be handled by the personal copy of Optiqon Voice instead — its microphone, its key, its history — without saying so. Use Optiqon Voice in your personal profile.</string>
     <string name="access_blocked_not_registered">Sign in with your invited account to dictate.</string>
     <string name="access_blocked_pending">Your account is waiting for approval.</string>
     <string name="access_blocked_rejected">Your account was not granted access.</string>

@@ -224,7 +224,7 @@ class BubbleService : Service() {
 
         val durationMs = recordedDurationMs()
         val appContext = recordingAppContext
-        updateState(ServiceState.Error(getString(blockedMessage(reason)), null))
+        showBlocked(reason)
 
         scope.launch {
             var wavFile: File? = null
@@ -585,19 +585,21 @@ class BubbleService : Service() {
                     currentLease = grant.lease
                     action(grant.lease)
                 }
-                is AccessGrant.Denied -> updateState(
-                    ServiceState.Error(getString(blockedMessage(grant.reason)), null)
-                )
+                is AccessGrant.Denied -> showBlocked(grant.reason)
             }
         }
     }
 
-    private fun blockedMessage(reason: BlockReason): Int = when (reason) {
-        BlockReason.NOT_REGISTERED -> R.string.access_blocked_not_registered
-        BlockReason.AWAITING_APPROVAL -> R.string.access_blocked_pending
-        BlockReason.REJECTED -> R.string.access_blocked_rejected
-        BlockReason.REVOKED -> R.string.access_blocked_revoked
-        BlockReason.GRACE_EXPIRED -> R.string.access_blocked_grace_expired
+    /**
+     * A refusal the person can act on (F14).
+     *
+     * [showError] was not reused: its message clears itself after a couple of seconds and
+     * offers a retry, and neither is true here. None of these blocks lift by tapping the
+     * bubble, so the red pill stays until something actually changes, and the words go out
+     * once through the surface that can carry words.
+     */
+    private fun showBlocked(reason: BlockReason) {
+        updateState(ServiceState.Error(announceBlock(this, reason), null))
     }
 
     private fun startRecording() {
@@ -754,7 +756,7 @@ class BubbleService : Service() {
                 }.onFailure { error ->
                     if (error is AccessRevokedException) {
                         preserveInterrupted(wavFile, durationMs, appContext, error)
-                        updateState(ServiceState.Error(getString(blockedMessage(error.reason)), null))
+                        showBlocked(error.reason)
                         return@onFailure
                     }
                     Log.e(TAG, "Transcription failed", error)
@@ -776,7 +778,7 @@ class BubbleService : Service() {
                             preserveInterrupted(audio, durationMs, recordingAppContext, AccessRevokedException(reason))
                         }
                     }
-                    updateState(ServiceState.Error(getString(blockedMessage(reason)), null))
+                    showBlocked(reason)
                 }
                 // Otherwise cancelled by the user; cancelProcessing() owns the state transition.
                 throw e
@@ -899,7 +901,7 @@ class BubbleService : Service() {
                 if (error is AccessRevokedException) {
                     // The saved failure stays exactly where it was. It is not retried, not
                     // deleted, and not offered again until its owner is allowed to use it.
-                    updateState(ServiceState.Error(getString(blockedMessage(error.reason)), null))
+                    showBlocked(error.reason)
                 } else {
                     showError("Retry failed: ${error.message}", entryId)
                 }
