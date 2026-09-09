@@ -29,6 +29,7 @@
     <string name="registration_sign_out">Sign out</string>
     <string name="registration_not_configured">This build has no Firebase configuration, so signing in is unavailable.</string>
     <string name="registration_email_label">Email</string>
+    <string name="registration_email_link_disabled">Sign-in links are not switched on for this project yet. Use Google, or ask support to enable them.</string>
     <string name="registration_email_needed">Enter the address this link was sent to.</string>
     <string name="registration_email_sent">Sign-in link sent to %1$s</string>
     <string name="registration_check_offline">No connection, so the account could not be checked. Nothing has changed.</string>

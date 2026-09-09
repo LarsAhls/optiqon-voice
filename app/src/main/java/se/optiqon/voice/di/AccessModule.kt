@@ -1,7 +1,6 @@
 package se.optiqon.voice.di
 
 import android.content.Context
-import android.os.SystemClock
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreSettings
@@ -21,15 +20,17 @@ import se.optiqon.voice.data.access.RegistrationRepository
 import se.optiqon.voice.domain.access.AccountRegistrar
 import se.optiqon.voice.data.storage.UserScopedStorage
 import se.optiqon.voice.domain.access.AccessConfig
-import se.optiqon.voice.domain.access.AccessRefresher
 import se.optiqon.voice.domain.access.AuthGateway
-import se.optiqon.voice.domain.access.Clock
 import se.optiqon.voice.domain.access.SignInClient
 import javax.inject.Singleton
 
 @Module
 @InstallIn(SingletonComponent::class)
 object AccessModule {
+
+    // Clock and AccessRefresher.RegistrationReader are provided by AccessRuntimeModule, which
+    // exists per build type (src/release, src/debug) so the debug-only test hooks are not
+    // compiled into release at all.
 
     @Provides
     @Singleton
@@ -49,13 +50,6 @@ object AccessModule {
         firestoreSettings = FirebaseFirestoreSettings.Builder()
             .setLocalCacheSettings(MemoryCacheSettings.newBuilder().build())
             .build()
-    }
-
-    @Provides
-    @Singleton
-    fun provideClock(): Clock = object : Clock {
-        override fun wallMs(): Long = System.currentTimeMillis()
-        override fun elapsedMs(): Long = SystemClock.elapsedRealtime()
     }
 
     /** The proposed 72 h test value; see [AccessConfig]. */
@@ -85,17 +79,6 @@ abstract class AccessBindingsModule {
     @Binds
     @Singleton
     abstract fun bindSignInClient(impl: FirebaseSignInClient): SignInClient
-
-    /**
-     * The refresher is deliberately given the narrow reader interface rather than the
-     * repository: it decides *when* to ask, and nothing about it should be able to reach
-     * registration, sign-in or Firestore directly.
-     */
-    @Binds
-    @Singleton
-    abstract fun bindRegistrationReader(
-        impl: RegistrationRepository
-    ): AccessRefresher.RegistrationReader
 
     /** The same object seen through the one method the account screen is allowed to call. */
     @Binds

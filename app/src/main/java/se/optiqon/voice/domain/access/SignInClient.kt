@@ -8,8 +8,23 @@ import android.app.Activity
  */
 interface SignInClient {
 
-    /** True when this build actually has Firebase configuration to sign in against. */
-    val isConfigured: Boolean
+    /**
+     * True when Google sign-in can be offered: the build carries a `default_web_client_id`,
+     * which only exists once the project has an OAuth web client and the matching
+     * google-services.json was present at build time.
+     */
+    val googleAvailable: Boolean
+
+    /**
+     * True when a sign-in link can be *requested*: Firebase is initialised and the build knows
+     * the project that hosts the link. Whether the project has the email-link provider switched
+     * on cannot be read offline; a request against a project without it fails with
+     * [EmailLinkNotEnabled], which the screen reports as such instead of hiding the field.
+     */
+    val emailLinkAvailable: Boolean
+
+    /** True when at least one way in exists. */
+    val isConfigured: Boolean get() = googleAvailable || emailLinkAvailable
 
     /** Google via Credential Manager. The Google account's email is verified by Google. */
     suspend fun signInWithGoogle(activity: Activity): Result<Unit>
@@ -25,4 +40,7 @@ interface SignInClient {
     suspend fun completeEmailLink(link: String, email: String): Result<Unit>
 
     fun isEmailLink(link: String): Boolean
+
+    /** The project has not enabled email-link sign-in (Firebase `OPERATION_NOT_ALLOWED`). */
+    class EmailLinkNotEnabled : Exception("Email-link sign-in is not enabled for this project")
 }

@@ -30,11 +30,15 @@ if (googleServicesConfig.exists()) {
 // filter for a host the project does not own is a filter that silently never fires.
 //
 // Only project_id is taken. Nothing else from the file is read, logged, or embedded here.
-val firebaseAuthHost: String = if (googleServicesConfig.exists()) {
-    val projectId = (
+val firebaseProjectId: String? = if (googleServicesConfig.exists()) {
+    (
         groovy.json.JsonSlurper().parse(googleServicesConfig) as Map<*, *>
     ).let { it["project_info"] as Map<*, *> }["project_id"] as String
-    "$projectId.firebaseapp.com"
+} else {
+    null
+}
+val firebaseAuthHost: String = if (firebaseProjectId != null) {
+    "$firebaseProjectId.firebaseapp.com"
 } else {
     // A build without Firebase configuration has no project to name. `.invalid` is reserved
     // by RFC 2606 and never resolves, so the filter stays syntactically valid and inert
@@ -68,6 +72,11 @@ android {
         versionName = if (tag.isNotBlank()) "v$tag" else "v$baseCode"
 
         manifestPlaceholders["firebaseAuthHost"] = firebaseAuthHost
+        // The same project id, for the email sign-in continue URL
+        // (https://<project_id>.web.app/signin). Empty when there is no configuration, which
+        // the sign-in client reports as "email link unavailable" rather than sending a link
+        // that continues to nowhere.
+        buildConfigField("String", "FIREBASE_PROJECT_ID", "\"${firebaseProjectId ?: ""}\"")
     }
 
     signingConfigs {
@@ -108,14 +117,36 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
         release {
-            // Uses the real release key once it is supplied (see signingConfigs above);
-            // otherwise falls back to the debug key, matching today's behavior so local/CI
-            // builds keep working with zero secrets configured.
+            // Three ways a release build can be signed, in order of preference:
+            //
+            //  1. The real release key, when all four RELEASE_* values are supplied.
+            //  2. No key at all, with -PunsignedRelease=true: the output is
+            //     app-release-unsigned.apk, meant for scripts/signing/sign-release.sh, which
+            //     signs offline and refuses to produce anything signed with the debug key.
+            //  3. The committed debug key, as before, so a plain `assembleRelease` with zero
+            //     secrets still builds. That APK is *not* distributable — the debug key is
+            //     public — so the build says so in two places a human will see: a warning in
+            //     the Gradle log and "-devsigned" appended to versionName.
+            //
+            // The suffix is a label, not a guard. The guards are the deny-lists in
+            // scripts/signing/sign-release.sh and .github/scripts/verify-apk-signer.sh.
             val releaseSigning = signingConfigs.getByName("release")
-            signingConfig = if (releaseSigning.storeFile != null) {
-                releaseSigning
-            } else {
-                signingConfigs.getByName("debug")
+            val unsignedRelease = findProperty("unsignedRelease")?.toString() == "true"
+            when {
+                releaseSigning.storeFile != null -> signingConfig = releaseSigning
+                unsignedRelease -> {
+                    signingConfig = null
+                    logger.lifecycle("release: building UNSIGNED (-PunsignedRelease=true).")
+                }
+                else -> {
+                    signingConfig = signingConfigs.getByName("debug")
+                    versionNameSuffix = "-devsigned"
+                    logger.warn(
+                        "WARNING: release is being signed with the committed DEBUG key " +
+                            "(no RELEASE_* configuration). versionName gets the suffix " +
+                            "\"-devsigned\". This APK must not be distributed."
+                    )
+                }
             }
             isMinifyEnabled = true
             isShrinkResources = true

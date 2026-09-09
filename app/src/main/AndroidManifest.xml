@@ -35,23 +35,7 @@
             </intent-filter>
 
             <!--
-                The return path for an email sign-in link. `autoVerify` only takes effect once
-                the matching assetlinks.json is served from the host with this build's signing
-                certificate; publishing it is a separate approved action, and until then the
-                link opens through the ordinary chooser rather than not at all.
-            -->
-            <intent-filter android:autoVerify="true">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data
-                    android:scheme="https"
-                    android:host="voice.optiqon.se"
-                    android:pathPrefix="/signin" />
-            </intent-filter>
-
-            <!--
-                The same link, one hop earlier. Firebase Auth wraps an email sign-in link so
+                The return path for an email sign-in link. Firebase Auth wraps the link so
                 that it lands on the project's own auth domain first and only then continues
                 to voice.optiqon.se. Without a filter for that hop the link leaves the app and
                 completes in a browser, which is where sign-in stops working.

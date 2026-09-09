@@ -42,6 +42,7 @@
 
     <string name="registration_not_configured">Den här versionen saknar Firebase-konfiguration, så inloggning är inte tillgänglig.</string>
     <string name="registration_email_label">E-post</string>
+    <string name="registration_email_link_disabled">Inloggningslänkar är inte påslagna för det här projektet ännu. Använd Google, eller be supporten slå på dem.</string>
     <string name="registration_email_needed">Ange adressen som länken skickades till.</string>
     <string name="registration_email_sent">Inloggningslänk skickad till %1$s</string>
     <string name="registration_check_offline">Ingen anslutning, så kontot kunde inte kontrolleras. Ingenting har ändrats.</string>

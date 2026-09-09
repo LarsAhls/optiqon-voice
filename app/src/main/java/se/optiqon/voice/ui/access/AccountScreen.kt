@@ -90,7 +90,8 @@ fun AccountScreenContent(
             is AccountUiState.Loading, is AccountUiState.Approved -> CircularProgressIndicator()
 
             is AccountUiState.SignedOut -> SignedOut(
-                configured = state.configured,
+                googleAvailable = state.googleAvailable,
+                emailLinkAvailable = state.emailLinkAvailable,
                 completingLink = state.completingLink,
                 busy = busy,
                 onGoogle = onGoogle,
@@ -130,9 +131,15 @@ fun AccountScreenContent(
     }
 }
 
+/**
+ * Google first, email link second, and each only when this build can actually do it. A route
+ * that is missing is not drawn: a button that fails on tap teaches the tester that the app is
+ * broken, when the truth is that the project is not finished being set up.
+ */
 @Composable
 private fun SignedOut(
-    configured: Boolean,
+    googleAvailable: Boolean,
+    emailLinkAvailable: Boolean,
     completingLink: Boolean,
     busy: Boolean,
     onGoogle: () -> Unit,
@@ -142,7 +149,7 @@ private fun SignedOut(
 
     Text(stringResource(R.string.registration_title), style = MaterialTheme.typography.headlineSmall)
 
-    if (!configured) {
+    if (!googleAvailable && !emailLinkAvailable) {
         // Being told the build cannot sign in beats a button that silently does nothing.
         Text(
             stringResource(R.string.registration_not_configured),
@@ -151,24 +158,30 @@ private fun SignedOut(
         return
     }
 
-    Button(onClick = onGoogle, enabled = !busy) {
-        Text(stringResource(R.string.registration_google))
+    if (googleAvailable) {
+        Button(onClick = onGoogle, enabled = !busy) {
+            Text(stringResource(R.string.registration_google))
+        }
     }
 
-    OutlinedTextField(
-        value = email,
-        onValueChange = { email = it },
-        singleLine = true,
-        label = { Text(stringResource(R.string.registration_email_label)) }
-    )
-
-    TextButton(onClick = { onEmail(email.trim()) }, enabled = !busy && email.contains('@')) {
-        Text(
-            stringResource(
-                if (completingLink) R.string.registration_email_confirm
-                else R.string.registration_email
-            )
+    // A link that is already open needs the address even when this build could not have
+    // requested it: the request was made elsewhere, and the address is the only thing missing.
+    if (emailLinkAvailable || completingLink) {
+        OutlinedTextField(
+            value = email,
+            onValueChange = { email = it },
+            singleLine = true,
+            label = { Text(stringResource(R.string.registration_email_label)) }
         )
+
+        TextButton(onClick = { onEmail(email.trim()) }, enabled = !busy && email.contains('@')) {
+            Text(
+                stringResource(
+                    if (completingLink) R.string.registration_email_confirm
+                    else R.string.registration_email
+                )
+            )
+        }
     }
 }
 

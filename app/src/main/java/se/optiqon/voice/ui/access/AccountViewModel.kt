@@ -32,10 +32,18 @@ import javax.inject.Inject
 sealed interface AccountUiState {
     data object Loading : AccountUiState
     /**
+     * @param googleAvailable this build can offer Google sign-in (primary route).
+     * @param emailLinkAvailable this build can request a sign-in link (secondary route).
      * @param completingLink a sign-in link is open and only needs the address it was sent to,
      * which happens when the link is followed on a device other than the one that asked for it.
      */
-    data class SignedOut(val configured: Boolean, val completingLink: Boolean) : AccountUiState
+    data class SignedOut(
+        val googleAvailable: Boolean,
+        val emailLinkAvailable: Boolean,
+        val completingLink: Boolean
+    ) : AccountUiState {
+        val configured: Boolean get() = googleAvailable || emailLinkAvailable
+    }
 
     /**
      * Signed in, with no registration yet, asking what the person is called.
@@ -141,7 +149,11 @@ class AccountViewModel @Inject constructor(
     ) { decision, uid, pendingLink, _ ->
         when {
             uid == null ->
-                AccountUiState.SignedOut(signInClient.isConfigured, pendingLink != null)
+                AccountUiState.SignedOut(
+                    googleAvailable = signInClient.googleAvailable,
+                    emailLinkAvailable = signInClient.emailLinkAvailable,
+                    completingLink = pendingLink != null
+                )
             decision is AccessDecision.Allowed ->
                 if (accessSession.needsDataClaimDecision()) {
                     AccountUiState.ClaimChoice(authGateway.currentEmail)
@@ -178,7 +190,13 @@ class AccountViewModel @Inject constructor(
                 onSuccess = {
                     _message.value = context.getString(R.string.registration_email_sent, email)
                 },
-                onFailure = { _message.value = it.message }
+                onFailure = {
+                    _message.value = when (it) {
+                        is SignInClient.EmailLinkNotEnabled ->
+                            context.getString(R.string.registration_email_link_disabled)
+                        else -> it.message
+                    }
+                }
             )
         }
     }

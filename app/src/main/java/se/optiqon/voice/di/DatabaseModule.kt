@@ -190,7 +190,12 @@ object DatabaseModule {
             OptiqonVoiceDatabase::class.java,
             storageRoot.databaseName
         ).addMigrations(*ALL_MIGRATIONS)
-            .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
+            // No destructive fallback in either direction. Opening a file written by a newer
+            // schema version now fails with an IllegalStateException and leaves the file
+            // untouched, instead of dropping every table. A distributed build must never be
+            // able to erase a tester's history by being older than the one before it; the
+            // rule "never distribute a lower schema version" is enforced elsewhere, this is
+            // what happens if it is broken anyway. See DowngradeGuardTest.
             .build()
     }
 

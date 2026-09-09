@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "se.optiqon.voice",
+      "sha256_cert_fingerprints": [
+        "23:4E:28:33:E3:E7:4D:72:1B:31:6C:0D:B5:E8:7E:11:2B:3F:74:ED:5F:76:D3:4E:5D:32:08:C5:04:42:9E:ED"
+      ]
+    }
+  }
+]

@@ -13,6 +13,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -72,7 +73,8 @@ class AccountViewModelTest {
      * assertion: it is the one thing that must never come out of the link.
      */
     private class FakeSignInClient : SignInClient {
-        override var isConfigured: Boolean = true
+        override var googleAvailable: Boolean = true
+        override var emailLinkAvailable: Boolean = true
         var completions = mutableListOf<Pair<String, String>>()
             private set
         var sent = mutableListOf<String>()
@@ -120,7 +122,10 @@ class AccountViewModelTest {
         val relay: EmailLinkRelay
     )
 
-    private fun TestScope.harness(configured: Boolean = true): Harness {
+    private fun TestScope.harness(
+        googleAvailable: Boolean = true,
+        emailLinkAvailable: Boolean = true
+    ): Harness {
         val access = AccessFixture(context, backgroundScope)
         val owner = DeviceDataOwner(context)
         val session = AccessSession(
@@ -134,7 +139,10 @@ class AccountViewModelTest {
             storageOwnership = StorageOwnership(owner) { null },
             scope = backgroundScope
         )
-        val signIn = FakeSignInClient().apply { isConfigured = configured }
+        val signIn = FakeSignInClient().apply {
+            this.googleAvailable = googleAvailable
+            this.emailLinkAvailable = emailLinkAvailable
+        }
         val registrar = RecordingRegistrar()
         val pendingEmail = IsolatedPendingEmailStore(context, backgroundScope)
         val relay = EmailLinkRelay()
@@ -407,12 +415,41 @@ class AccountViewModelTest {
 
     @Test
     fun `a build with no Firebase configuration says so instead of offering sign-in`() = runTest {
-        val h = harness(configured = false)
+        val h = harness(googleAvailable = false, emailLinkAvailable = false)
         val state = h.viewModel.state.value
         assertTrue("expected SignedOut, was $state", state is AccountUiState.SignedOut)
         assertTrue(
             "an unconfigured build must not claim it can sign anybody in",
             !(state as AccountUiState.SignedOut).configured
+        )
+    }
+
+    @Test
+    fun `a project without an OAuth client offers the email link and not Google`() = runTest {
+        val h = harness(googleAvailable = false, emailLinkAvailable = true)
+        val state = h.viewModel.state.value as AccountUiState.SignedOut
+        assertFalse("no default_web_client_id, no Google button", state.googleAvailable)
+        assertTrue(state.emailLinkAvailable)
+        assertTrue(state.configured)
+    }
+
+    @Test
+    fun `a fully configured project offers both routes`() = runTest {
+        val h = harness(googleAvailable = true, emailLinkAvailable = true)
+        val state = h.viewModel.state.value as AccountUiState.SignedOut
+        assertTrue(state.googleAvailable)
+        assertTrue(state.emailLinkAvailable)
+    }
+
+    @Test
+    fun `a project that has not enabled sign-in links says so instead of echoing a code`() = runTest {
+        val h = harness()
+        h.signIn.sendResult = Result.failure(SignInClient.EmailLinkNotEnabled())
+        h.viewModel.submitEmail("me@example.test")
+        settle()
+        assertEquals(
+            context.getString(R.string.registration_email_link_disabled),
+            h.viewModel.message.value
         )
     }
 }
