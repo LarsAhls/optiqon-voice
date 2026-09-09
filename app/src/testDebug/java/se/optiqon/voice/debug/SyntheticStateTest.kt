@@ -45,7 +45,10 @@ class SyntheticStateTest {
             owner = uid; activeUid = uid
         }
         override suspend fun recordApproved(uid: String) { access = "APPROVED" }
-        override suspend fun readDefaultRoot() = SyntheticState.DefaultRootState(
+        var lastRootRead: StorageRoot? = null
+
+        override suspend fun readRoot(root: StorageRoot) = SyntheticState.DefaultRootState(
+            dumpedRoot = root.name,
             processRoot = processRootName,
             dbUserVersion = 8,
             profileNames = profiles.map { it.name },
@@ -60,10 +63,12 @@ class SyntheticStateTest {
             defaultOwner = owner,
             activeUid = activeUid,
             accessStatus = access
-        )
+        ).also { lastRootRead = root }
     }
 
     private fun stateFile() = File(folder.root, "debug/${SyntheticState.STATE_FILE_NAME}")
+
+    private fun stateFile(root: String) = File(folder.root, "debug/state-$root.txt")
 
     @Test
     fun `seed writes the fixed data set, claims the default root and records approval`() = runTest {
@@ -164,5 +169,56 @@ class SyntheticStateTest {
 
         val unwired = AccessDebugCommands(AccessDebugControls(), folder.root, { null })
         assertFalse(unwired.handle(AccessDebugCommands.ACTION_SEED_SYNTHETIC, emptyMap()).ok)
+    }
+
+    @Test
+    fun `a dump with no root named describes the root this process is on`() = runTest {
+        val sink = FakeSink(processRootName = "u1")
+
+        assertTrue(SyntheticState(sink, folder.root).dump().ok)
+
+        assertEquals(StorageRoot("u1"), sink.lastRootRead)
+        assertTrue(stateFile("u1").readText().contains("root=u1\n"))
+        assertFalse("the default root's file must not be overwritten by another root's dump", stateFile().exists())
+    }
+
+    @Test
+    fun `each root's evidence is written to a file of its own`() = runTest {
+        val sink = FakeSink(processRootName = "u1")
+        val state = SyntheticState(sink, folder.root)
+
+        assertTrue(state.dump(StorageRoot.DEFAULT).ok)
+        assertTrue(state.dump(StorageRoot("u2")).ok)
+
+        assertTrue(stateFile().readText().contains("root=default\n"))
+        assertTrue(stateFile("u2").readText().contains("root=u2\n"))
+        assertTrue("the root read is not the root the process is on", stateFile("u2").readText().contains("# process_root=u1"))
+    }
+
+    @Test
+    fun `an unusable root name is refused rather than guessed at`() = runTest {
+        val sink = FakeSink()
+        val commands = AccessDebugCommands(AccessDebugControls(), folder.root, { null }, SyntheticState(sink, folder.root))
+
+        val outcome = commands.handle(
+            AccessDebugCommands.ACTION_DUMP_STATE,
+            mapOf(AccessDebugCommands.EXTRA_ROOT to "../other-app")
+        )
+
+        assertFalse(outcome.ok)
+        assertEquals("nothing may be read", null, sink.lastRootRead)
+    }
+
+    @Test
+    fun `the root extra names the root to read`() = runTest {
+        val sink = FakeSink()
+        val commands = AccessDebugCommands(AccessDebugControls(), folder.root, { null }, SyntheticState(sink, folder.root))
+
+        assertTrue(commands.handle(
+            AccessDebugCommands.ACTION_DUMP_STATE,
+            mapOf(AccessDebugCommands.EXTRA_ROOT to "U2")
+        ).ok)
+
+        assertEquals(StorageRoot("u2"), sink.lastRootRead)
     }
 }
