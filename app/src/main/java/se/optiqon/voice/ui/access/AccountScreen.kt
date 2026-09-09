@@ -96,7 +96,12 @@ fun AccountScreenContent(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         when (state) {
-            is AccountUiState.Loading, is AccountUiState.Approved -> CircularProgressIndicator()
+            is AccountUiState.Loading -> CircularProgressIndicator()
+
+            // An approved account is a finished state, not a pending one. Sharing the
+            // spinner with Loading made the one moment the screen has good news to deliver
+            // look exactly like a request that never came back.
+            is AccountUiState.Approved -> Approved()
 
             is AccountUiState.SignedOut -> SignedOut(
                 googleAvailable = state.googleAvailable,
@@ -147,6 +152,12 @@ fun AccountScreenContent(
  */
 
 /** The one heading on the screen. Off-white, large, centred. */
+@Composable
+private fun Approved() {
+    Heading(stringResource(R.string.registration_approved_title))
+    Body(stringResource(R.string.registration_approved_body))
+}
+
 @Composable
 private fun Heading(text: String) {
     Text(

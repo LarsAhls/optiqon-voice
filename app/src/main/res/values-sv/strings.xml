@@ -27,6 +27,8 @@
     <string name="registration_name_submit">Registrera</string>
     <string name="registration_name_invalid">Ange ett namn på minst 2 tecken.</string>
     <string name="registration_check_again">Kontrollera igen</string>
+    <string name="registration_approved_title">Kontot är godkänt</string>
+    <string name="registration_approved_body">Diktering är upplåst för det här kontot. Fortsätt för att slutföra installationen.</string>
     <string name="registration_sign_out">Logga ut</string>
 
     <string name="registration_rejected_title">Ingen åtkomst till OPTIQON Voice</string>

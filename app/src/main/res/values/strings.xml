@@ -26,6 +26,8 @@
     <string name="registration_name_submit">Register</string>
     <string name="registration_name_invalid">Enter a name of at least 2 characters.</string>
     <string name="registration_check_again">Check again</string>
+    <string name="registration_approved_title">Account approved</string>
+    <string name="registration_approved_body">Dictation is unlocked for this account. Continue to finish setting up.</string>
     <string name="registration_sign_out">Sign out</string>
     <string name="registration_not_configured">This build has no Firebase configuration, so signing in is unavailable.</string>
     <string name="registration_email_label">Email</string>
