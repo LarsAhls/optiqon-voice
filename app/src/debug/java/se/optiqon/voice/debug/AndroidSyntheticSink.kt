@@ -1,6 +1,8 @@
 package se.optiqon.voice.debug
 
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.SystemClock
 import androidx.room.Room
 import kotlinx.coroutines.flow.first
@@ -134,6 +136,21 @@ class AndroidSyntheticSink(
         } finally {
             db.close()
         }
+    }
+
+    override fun signingReport(): List<String> {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return listOf("signing_api=unavailable_below_28")
+        val info = context.packageManager
+            .getPackageInfo(context.packageName, PackageManager.GET_SIGNING_CERTIFICATES).signingInfo
+            ?: return listOf("signing_info=null")
+        val current = info.apkContentsSigners.map { SyntheticState.sha256Hex(it.toByteArray()) }
+        val history = if (info.hasMultipleSigners()) emptyList()
+            else info.signingCertificateHistory.map { SyntheticState.sha256Hex(it.toByteArray()) }
+        return listOf(
+            "signers=${current.joinToString(",")}",
+            "history=${history.joinToString(",")}",
+            "multiple_signers=${info.hasMultipleSigners()}"
+        )
     }
 
     private fun strings(db: OptiqonVoiceDatabase, sql: String): List<String> =

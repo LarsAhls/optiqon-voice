@@ -55,6 +55,12 @@ class SyntheticState(private val sink: Sink, private val filesDir: File) {
         fun claimDefaultAndActivate(uid: String)
         suspend fun recordApproved(uid: String)
         suspend fun readDefaultRoot(): DefaultRootState
+        /**
+         * What the platform reports as this package's current signer(s) and signing history,
+         * one line per fact, or empty when not available. Goes to a file of its own because
+         * it is *expected* to change across a rotation while the state must not.
+         */
+        fun signingReport(): List<String> = emptyList()
     }
 
     suspend fun seed(): Outcome {
@@ -93,12 +99,14 @@ class SyntheticState(private val sink: Sink, private val filesDir: File) {
         val target = File(File(filesDir, "debug"), STATE_FILE_NAME)
         target.parentFile?.mkdirs()
         target.writeText(text)
+        val signers = sink.signingReport()
+        if (signers.isNotEmpty()) File(target.parentFile, SIGNER_FILE_NAME).writeText(signers.joinToString("\n", postfix = "\n"))
         return Outcome(true, "state written to files/debug/$STATE_FILE_NAME (${text.lines().size} lines)")
     }
 
-    /** Deterministic: same state, same text. Key values appear only as digests. */
+    /** Deterministic: same state, same text. Key values appear only as digests. Lines starting with `#` are context. */
     fun render(s: DefaultRootState): String = buildString {
-        appendLine("process_root=${s.processRoot}")
+        appendLine("# process_root=${s.processRoot}  (context, not state: becomes signedout once the default root is claimed and nobody is signed in)")
         appendLine("db_user_version=${s.dbUserVersion}")
         appendLine("profiles=${s.profileNames.size}")
         appendLine("profile_names=${s.profileNames.sorted().joinToString("|")}")
@@ -120,6 +128,7 @@ class SyntheticState(private val sink: Sink, private val filesDir: File) {
 
     companion object {
         const val STATE_FILE_NAME = "state.txt"
+        const val SIGNER_FILE_NAME = "signer.txt"
         const val UID = "synthetic-l1-user"
         const val PROFILE_PREFIX = "Synthetic "
 
@@ -163,8 +172,9 @@ class SyntheticState(private val sink: Sink, private val filesDir: File) {
             )
         }
 
-        fun sha256(value: String): String =
-            MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
-                .joinToString("") { "%02x".format(it) }
+        fun sha256(value: String): String = sha256Hex(value.toByteArray(Charsets.UTF_8))
+
+        fun sha256Hex(bytes: ByteArray): String =
+            MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02X".format(it) }
     }
 }
