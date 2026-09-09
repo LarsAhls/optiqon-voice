@@ -29,17 +29,30 @@ The Firestore rules tests in F1 prove none of the above.
 
 ## F5 — platform
 
-- Email-link sign-in is wired end to end in code: the app sends the link, the manifest
-  declares an `autoVerify` App Links filter for `https://voice.optiqon.se/signin`, and
-  `MainActivity` hands the incoming link to the account screen. What is missing is
-  outside the repo: the `assetlinks.json` at that domain and the Firebase console's
-  authorised-domain entry. Until both exist the link opens a browser instead of the app,
-  and the route is unproven. Publishing them is a Gate action.
+- Email-link sign-in is wired end to end in code: the app sends the link with the default
+  Hosting continue-URL `https://<project_id>.web.app/signin` (derived from the same
+  `project_id` as `firebaseAuthHost`; no `setLinkDomain`), the manifest declares one
+  `autoVerify` App Links filter for `https://<project_id>.firebaseapp.com/__/auth/links`,
+  and `MainActivity` hands the incoming link to the account screen. The earlier
+  `voice.optiqon.se` filter is removed (plan rev. 4, D4). The repo now holds
+  `public/.well-known/assetlinks.json` (debug key SHA-256 only) and `public/signin/` with a
+  `hosting` block in `firebase.json`, but **Hosting has not been deployed and
+  Authentication is not initialised** (identitytoolkit still answers
+  `CONFIGURATION_NOT_FOUND`). The route is therefore still unproven; G1+G2 in
+  `docs/gate-m1/G1_G2_RUNBOOK.md` are the Gate actions, G3 (`G3_SMOKE_TEMPLATE.md`) is the
+  proof.
+- Google sign-in is shown as primary and e-mail link as secondary by the account screen,
+  but the built app still has 0 OAuth clients in `google-services.json`, so Google is
+  unavailable until G1 delivers a new file (checked by `scripts/gate/check-google-services.sh`).
 - The address used to complete a link is always the one stored on the device, or one the
   tester types in. It is never read from the link, because a forwarded link would
   otherwise sign the wrong person in.
-- The actual set of signed and installed builds has not been inventoried. Any SHA or
-  signing-identity change is a separate approved action.
+- Signing inventory: the installed build on the one device is signed with the committed
+  debug key (P4 in `gate-m1/PREFLIGHT.md`); no beta key exists. What a key rotation does
+  per Android version, and that the app's stored data survives one, is proven on emulators
+  only — see `docs/BETA_SIGNING_AND_DISTRIBUTION.md`. The method for the existing
+  installation (D2) is not decided; any SHA or signing-identity change remains a separate
+  approved action (G4).
 - App Check is abuse protection, not authorisation.
 
 ## F6 — retention, deletion, privacy

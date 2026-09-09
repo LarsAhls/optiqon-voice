@@ -24,7 +24,7 @@ if (googleServicesConfig.exists()) {
 }
 
 // Firebase Auth sends its email sign-in links through <project-id>.firebaseapp.com before
-// they reach voice.optiqon.se, so the manifest needs a filter for that host too. The host is
+// they reach the Hosting continue-URL, so the manifest needs a filter for that host. The host is
 // read out of the same config the Firebase SDK reads rather than written down twice: the
 // project id is not guessable from the project name (this one is optiqon-voice-47498), and a
 // filter for a host the project does not own is a filter that silently never fires.
