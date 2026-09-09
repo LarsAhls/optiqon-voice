@@ -27,6 +27,15 @@ export async function makeM1Env() {
   return envFor('firestore.rules');
 }
 
+/**
+ * The feedback proposal: `firestore.rules` plus the one path the feedback channel would need.
+ * It is not deployed and `firebase.json` does not name it — this entry point exists so the
+ * proposal can be argued about with evidence instead of by reading.
+ */
+export async function makeFeedbackEnv() {
+  return envFor('firestore.feedback.rules');
+}
+
 function envFor(rulesFile) {
   return initializeTestEnvironment({
     projectId: PROJECT_ID,

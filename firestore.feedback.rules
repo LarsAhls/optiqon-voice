@@ -1,0 +1,336 @@
+// ============================================================================================
+// PROPOSAL — NOT DEPLOYED.
+//
+// This file is a copy of `firestore.rules` with one path added: `feedback`. It exists so the
+// feedback channel can be built, reviewed and tested before anything is switched on.
+//
+// `firebase.json` names `firestore.rules` and nothing else, so `firebase deploy --only
+// firestore:rules` cannot reach this file. Switching the channel on means copying the
+// `feedback` block below into `firestore.rules` and deploying that — a reviewable edit, not
+// an accident. The precedent is `firestore.future.rules`; see the header of `firestore.rules`
+// for why the split exists.
+//
+// Everything above the `feedback` block is `firestore.rules` verbatim as of this commit. If
+// the two ever drift, this file is the stale one.
+// ============================================================================================
+
+rules_version = '2';
+
+// OPTIQON Voice — Mission 1 ruleset. THIS is the file that gets deployed.
+//
+// Mission 1 proves exactly one chain: an account registers, waits, is approved by Lars,
+// dictates, and is revoked. Nothing else in the product exists yet — no cases, no events,
+// no attachments, no uploads, no per-user sync, no news, no invites, no feedback backend.
+//
+// So none of those paths are open here. The full F1 rule set that governs them is preserved
+// verbatim in `firestore.future.rules`, complete with its own emulator suite, and is
+// deployed only when the feature it guards and that feature's security contract have both
+// been verified. A rule that is live before its feature is a promise nobody has tested.
+//
+// The split is deliberate: `firebase.json` names `firestore.rules` and nothing else, so an
+// ordinary `firebase deploy --only firestore:rules` cannot reach for the future file by
+// accident. Opening a future path is an edit to this file, which is a reviewable event.
+//
+// One boundary is unchanged from F1 and worth restating: these rules are the security
+// boundary. The device-side access gate is a product boundary with a grace period; this has
+// none. A revoked account loses cloud access at the next request, not at the next check-in.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------------------------------------------------------------- identity
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function uid() {
+      return request.auth.uid;
+    }
+
+    function userData() {
+      return get(/databases/$(database)/documents/users/$(uid())).data;
+    }
+
+    // A name, not merely a non-empty string. The bounds match DisplayName.kt on the client;
+    // requiring the trimmed form keeps the two comparable without asking the rules to
+    // normalise anything.
+    function validName(n) {
+      return n is string
+        && n.trim() == n
+        && n.size() >= 2
+        && n.size() <= 80;
+    }
+
+    // A missing users/ document makes .data error out, and an errored condition denies —
+    // the outcome we want for anyone who has not registered.
+    function isApproved() {
+      return signedIn()
+        && request.auth.token.email_verified == true
+        && userData().status == 'approved'
+        && userData().email == request.auth.token.email;
+    }
+
+    function adminData() {
+      return get(/databases/$(database)/documents/admins/$(uid())).data;
+    }
+
+    function isAdminActive() {
+      return exists(/databases/$(database)/documents/admins/$(uid()))
+        && !('revokedAt' in adminData())
+        && (!('activeUntil' in adminData()) || adminData().activeUntil > request.time);
+    }
+
+    function isReader() {
+      return isApproved() && isAdminActive();
+    }
+
+    function isWriter() {
+      return isReader() && adminData().role == 'writer';
+    }
+
+    // ------------------------------------------------------------ seat counter
+
+    function counters() {
+      return /databases/$(database)/documents/config/counters;
+    }
+
+    function limits() {
+      return /databases/$(database)/documents/config/limits;
+    }
+
+    function userStatus(userId) {
+      return get(/databases/$(database)/documents/users/$(userId)).data.status;
+    }
+
+    function userStatusAfter(userId) {
+      return getAfter(/databases/$(database)/documents/users/$(userId)).data.status;
+    }
+
+    // Approval consumes one of a fixed number of seats, bumped in the same commit.
+    //
+    // `seatFor` names the account the movement is being spent on, and both halves of the
+    // commit check it. Without it a batch could approve two accounts against a single +1:
+    // each users/ write would look at the same before/after counter and each would be
+    // satisfied. Rules cannot count the documents in a commit, so naming the one account a
+    // seat belongs to is what makes "exactly one decision per movement" expressible.
+    function seatTaken(userId) {
+      return getAfter(counters()).data.approvedUsers == get(counters()).data.approvedUsers + 1
+        && getAfter(counters()).data.approvedUsers <= get(limits()).data.maxApprovedUsers
+        && getAfter(counters()).data.seatFor == userId;
+    }
+
+    // Losing approval returns the seat in the same commit.
+    //
+    // Without this the counter is a high-water mark of approvals ever granted rather than a
+    // count of accounts currently approved, and the ceiling it is compared against means
+    // progressively less every time somebody is revoked. Binding both directions is what
+    // lets the smoke's closing check — counter equals the number of approved accounts — be
+    // a real assertion instead of a restatement of what was seeded.
+    function seatReleased(userId) {
+      return getAfter(counters()).data.approvedUsers == get(counters()).data.approvedUsers - 1
+        && getAfter(counters()).data.approvedUsers >= 0
+        && getAfter(counters()).data.seatFor == userId;
+    }
+
+    /** A transition that neither takes nor returns a seat must leave the counter alone. */
+    function seatUnchanged() {
+      return getAfter(counters()).data.approvedUsers == get(counters()).data.approvedUsers;
+    }
+
+    // ------------------------------------------------------------------- users
+
+    match /users/{userId} {
+      // Kept deliberately at signedIn(), and the only read here that is not gated on
+      // approval: an account must be able to read its own record to learn that it is
+      // pending, rejected or revoked. Without it the app could never display a revocation.
+      // It exposes nothing but the reader's own document.
+      allow get: if signedIn() && userId == uid();
+
+      // An admin has to be able to see who is waiting in order to decide, and the closing
+      // counter check has to be able to count what is actually approved.
+      allow get, list: if isReader();
+
+      // Registration is a claim, never a grant: the client may only write 'pending', and
+      // only against its own verified token email.
+      allow create: if signedIn()
+        && userId == uid()
+        && request.auth.token.email_verified == true
+        && request.resource.data.keys().hasOnly(
+             ['uid', 'email', 'displayName', 'phone', 'status', 'createdAt'])
+        && request.resource.data.keys().hasAll(
+             ['uid', 'email', 'displayName', 'status', 'createdAt'])
+        && request.resource.data.uid == userId
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.status == 'pending'
+        && validName(request.resource.data.displayName)
+        && request.resource.data.createdAt == request.time;
+
+      // No self-update path in Mission 1. The name is confirmed once, at registration, and
+      // no profile-editing feature exists — so the rule that would permit one is not live.
+      // Reinstating it is the F1 file's business, once there is a screen behind it.
+
+      allow update: if isWriter()
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['status', 'decidedBy', 'decidedAt'])
+        && request.resource.data.decidedBy == uid()
+        && request.resource.data.decidedAt == request.time
+        && (
+             (request.resource.data.status == 'approved'
+               && resource.data.status == 'pending'
+               && seatTaken(userId))
+             ||
+             (request.resource.data.status in ['rejected', 'revoked']
+               && resource.data.status != request.resource.data.status
+               && (resource.data.status == 'approved'
+                     ? seatReleased(userId)
+                     : seatUnchanged()))
+           );
+
+      allow delete: if false;
+    }
+
+    // ------------------------------------------------------------------ config
+
+    // Read is admin-only here. The Worker that needed `signedIn()` in F1 does not exist in
+    // Mission 1, and an ordinary account has no reason to learn how many seats are taken.
+    match /config/{docId} {
+      allow get: if isReader();
+      allow list: if false;
+      allow create, delete: if false;
+
+      // `limits` is seeded once, out of band, and is not editable from a client in M1.
+      //
+      // The counter is not bookkeeping: it is compared against maxApprovedUsers to decide
+      // whether anyone else may be approved. The users/ rule already refused an approval
+      // that did not move the counter — but the reverse was open, so a writer could walk
+      // the number down on its own and manufacture headroom, or walk it up and burn seats
+      // nobody holds. Both directions must therefore name the account they are spending on
+      // and be checked against that account's actual transition in the same commit.
+      allow update: if isWriter()
+        && docId == 'counters'
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['approvedUsers', 'seatFor'])
+        && request.resource.data.approvedUsers is int
+        && request.resource.data.approvedUsers >= 0
+        && request.resource.data.approvedUsers <= get(limits()).data.maxApprovedUsers
+        && request.resource.data.seatFor is string
+        && (
+             (request.resource.data.approvedUsers == resource.data.approvedUsers + 1
+               && userStatus(request.resource.data.seatFor) == 'pending'
+               && userStatusAfter(request.resource.data.seatFor) == 'approved')
+             ||
+             (request.resource.data.approvedUsers == resource.data.approvedUsers - 1
+               && userStatus(request.resource.data.seatFor) == 'approved'
+               && userStatusAfter(request.resource.data.seatFor) in ['rejected', 'revoked'])
+           );
+    }
+
+    // ------------------------------------------------------------------ admins
+
+    // Closed entirely. The roster is consulted by isReader()/isWriter() through rules-internal
+    // get(), which needs no read permission, and nothing in Mission 1 reads it as a client.
+    // Writes were already impossible: an admin is created out of band, deliberately.
+    match /admins/{userId} {
+      allow read, write: if false;
+    }
+
+    // ------------------------------------------------- not yet in the product
+    //
+    // Every path below belongs to a feature Mission 1 does not ship. They are written out
+    // rather than left to the implicit default so that the closure is visible in review and
+    // provable in the emulator suite — `m1.test.mjs` asserts each one denies an approved
+    // admin, which is the strongest caller there is.
+    //
+    // `deletionRequests` is closed too, and that is safe rather than a gap: in Mission 1 the
+    // revoked screen carries support@optiqon.se and opens the device's own mail composer.
+    // The app transmits nothing itself, so a revoked account's route to request deletion or
+    // reach support is email, which no Firestore rule can take away. Opening a write path
+    // here would add an obligation nobody is on the other end of yet.
+
+    match /cases/{caseId} {
+      allow read, write: if false;
+    }
+
+    match /cases/{caseId}/events/{eventId} {
+      allow read, write: if false;
+    }
+
+    match /cases/{caseId}/attachments/{aid} {
+      allow read, write: if false;
+    }
+
+    match /users/{userId}/uploads/{aid} {
+      allow read, write: if false;
+    }
+
+    match /users/{userId}/quota/{docId} {
+      allow read, write: if false;
+    }
+
+    match /users/{userId}/sync/{docId} {
+      allow read, write: if false;
+    }
+
+    match /users/{userId}/reads/{itemId} {
+      allow read, write: if false;
+    }
+
+    match /news/{newsId} {
+      allow read, write: if false;
+    }
+
+    match /invites/{email} {
+      allow read, write: if false;
+    }
+
+    match /deletionRequests/{userId} {
+      allow read, write: if false;
+    }
+
+    // ---------------------------------------------------------------- feedback
+    //
+    // What this opens: an approved, signed-in account may create one feedback document per
+    // outbox row, naming itself, with a bounded set of fields.
+    //
+    // What it deliberately does not open:
+    //  * reading. Not even your own. A feedback message is written to be answered out of
+    //    band, and a read path here would be a second place other people's reports could
+    //    leak from. The console is the reader.
+    //  * updating or deleting. A report that can be rewritten after the fact is not evidence
+    //    of anything, and nobody should be able to erase a complaint — including its author,
+    //    who could be pressured to.
+    //  * writing as somebody else. `uid` must equal the caller.
+    //  * listing. Enumerating the collection would expose who has complained.
+    //
+    // The document id is the outbox row id, so the client's own retry overwrites nothing:
+    // create-only plus a stable id means a duplicate delivery is denied rather than doubled.
+
+    function validFeedback() {
+      return request.resource.data.keys().hasOnly(
+               ['uid', 'message', 'contact', 'appVersion', 'androidSdk', 'deviceModel', 'createdAtMs'])
+        && request.resource.data.keys().hasAll(
+               ['uid', 'message', 'appVersion', 'androidSdk', 'deviceModel', 'createdAtMs'])
+        && request.resource.data.uid == uid()
+        && request.resource.data.message is string
+        && request.resource.data.message.size() > 0
+        && request.resource.data.message.size() <= 4000
+        && (!('contact' in request.resource.data)
+              || request.resource.data.contact == null
+              || (request.resource.data.contact is string
+                    && request.resource.data.contact.size() <= 200))
+        && request.resource.data.appVersion is string
+        && request.resource.data.appVersion.size() <= 60
+        && request.resource.data.androidSdk is int
+        && request.resource.data.deviceModel is string
+        && request.resource.data.deviceModel.size() <= 120
+        && request.resource.data.createdAtMs is int;
+    }
+
+    match /feedback/{entryId} {
+      allow read, list: if false;
+      allow create: if isApproved() && validFeedback();
+      allow update, delete: if false;
+    }
+  }
+}
