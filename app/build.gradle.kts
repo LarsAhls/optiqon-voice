@@ -223,6 +223,20 @@ tasks.withType<Test>().configureEach {
     }
 }
 
+/**
+ * Unit tests run against the debug variant only. The Compose UI tests (createComposeRule)
+ * launch androidx.activity.ComponentActivity, which only exists in the merged manifest
+ * through `debugImplementation(ui-test-manifest)`; it must never be part of a release
+ * artifact, so the release-variant unit-test task cannot resolve the activity and has
+ * failed for every Compose test since PR #1. CI has always run `testDebugUnitTest`; this
+ * makes `./gradlew test` say the same thing.
+ */
+androidComponents {
+    beforeVariants(selector().withBuildType("release")) { variant ->
+        variant.enableUnitTest = false
+    }
+}
+
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
