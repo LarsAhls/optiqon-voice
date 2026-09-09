@@ -34,12 +34,15 @@ import javax.inject.Inject
  *     adb shell run-as se.optiqon.voice cat files/debug/id-token.txt
  *     adb shell am broadcast -a se.optiqon.voice.debug.SEED_SYNTHETIC
  *     adb shell am broadcast -a se.optiqon.voice.debug.DUMP_STATE
+ *     adb shell am broadcast -a se.optiqon.voice.debug.DUMP_STATE --es root u1
  *     adb shell run-as se.optiqon.voice cat files/debug/state.txt
+ *     adb shell run-as se.optiqon.voice cat files/debug/state-u1.txt
  *
  * The exported token goes to the app's private files directory and nowhere else: never to
  * logcat, never to the broadcast result. The smoke procedure reads it once, uses it once
- * and deletes it. The state dump contains counts, names, settings and key *digests*; see
- * [SyntheticState].
+ * and deletes it. The state dump contains counts, names, settings and key *digests* — never a
+ * transcript and never a key — and describes the process's own root unless `--es root` names
+ * another; see [SyntheticState].
  *
  * The work runs off the main thread under [goAsync]: the stores are suspend/IO, and the
  * Firebase task bridge refuses to block the main thread. `am broadcast` waits for

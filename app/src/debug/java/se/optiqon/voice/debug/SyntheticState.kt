@@ -28,6 +28,8 @@ class SyntheticState(private val sink: Sink, private val filesDir: File) {
 
     /** Everything the dump reads from the default root, plus the process root for context. */
     data class DefaultRootState(
+        /** The root these numbers describe. Not the same thing as the process root below. */
+        val dumpedRoot: String,
         val processRoot: String,
         val dbUserVersion: Int,
         val profileNames: List<String>,
@@ -54,7 +56,16 @@ class SyntheticState(private val sink: Sink, private val filesDir: File) {
         /** Must throw [IllegalStateException] when the default root is already claimed. */
         fun claimDefaultAndActivate(uid: String)
         suspend fun recordApproved(uid: String)
-        suspend fun readDefaultRoot(): DefaultRootState
+        /**
+         * Reads one root's own files by name, whichever root this process resolved to.
+         *
+         * Takes the root as an argument rather than reading "the" root because the questions
+         * this dump answers are per-root ones: whether the account that just signed in has its
+         * settings and history, and — the harder one — whether the account next door can be
+         * seen from here at all. A dump that could only describe the default root could not
+         * even ask that.
+         */
+        suspend fun readRoot(root: StorageRoot): DefaultRootState
         /**
          * What the platform reports as this package's current signer(s) and signing history,
          * one line per fact, or empty when not available. Goes to a file of its own because
@@ -70,7 +81,7 @@ class SyntheticState(private val sink: Sink, private val filesDir: File) {
                 "process root is '${sink.processRootName}', not '${StorageRoot.DEFAULT.name}'; not seeding"
             )
         }
-        val before = sink.readDefaultRoot()
+        val before = sink.readRoot(StorageRoot.DEFAULT)
         if (before.profileNames.any { it.startsWith(PROFILE_PREFIX) }) {
             return Outcome(false, "already seeded (a '$PROFILE_PREFIX*' profile exists); nothing written")
         }
@@ -85,7 +96,7 @@ class SyntheticState(private val sink: Sink, private val filesDir: File) {
         sink.claimDefaultAndActivate(UID)
         sink.recordApproved(UID)
 
-        val after = sink.readDefaultRoot()
+        val after = sink.readRoot(StorageRoot.DEFAULT)
         return Outcome(
             true,
             "seeded: profiles=${after.profileNames.size} rules=${after.ruleNames.size} " +
@@ -93,19 +104,30 @@ class SyntheticState(private val sink: Sink, private val filesDir: File) {
         )
     }
 
-    suspend fun dump(): Outcome {
-        val state = sink.readDefaultRoot()
+    /**
+     * Writes one root's readout to `files/debug/`, digests only.
+     *
+     * @param root the root to read; the process's own when null. The default root keeps the
+     * file name it has always had so an existing record still points at the same place; every
+     * other root gets its own file, so two roots can be dumped and compared without one
+     * overwriting the evidence for the other.
+     */
+    suspend fun dump(root: StorageRoot? = null): Outcome {
+        val target = root ?: StorageRoot(sink.processRootName)
+        val state = sink.readRoot(target)
         val text = render(state)
-        val target = File(File(filesDir, "debug"), STATE_FILE_NAME)
-        target.parentFile?.mkdirs()
-        target.writeText(text)
+        val fileName = if (target.isDefault) STATE_FILE_NAME else "state-${target.name}.txt"
+        val file = File(File(filesDir, "debug"), fileName)
+        file.parentFile?.mkdirs()
+        file.writeText(text)
         val signers = sink.signingReport()
-        if (signers.isNotEmpty()) File(target.parentFile, SIGNER_FILE_NAME).writeText(signers.joinToString("\n", postfix = "\n"))
-        return Outcome(true, "state written to files/debug/$STATE_FILE_NAME (${text.lines().size} lines)")
+        if (signers.isNotEmpty()) File(file.parentFile, SIGNER_FILE_NAME).writeText(signers.joinToString("\n", postfix = "\n"))
+        return Outcome(true, "state of root '${target.name}' written to files/debug/$fileName (${text.lines().size} lines)")
     }
 
     /** Deterministic: same state, same text. Key values appear only as digests. Lines starting with `#` are context. */
     fun render(s: DefaultRootState): String = buildString {
+        appendLine("root=${s.dumpedRoot}")
         appendLine("# process_root=${s.processRoot}  (context, not state: becomes signedout once the default root is claimed and nobody is signed in)")
         appendLine("db_user_version=${s.dbUserVersion}")
         appendLine("profiles=${s.profileNames.size}")

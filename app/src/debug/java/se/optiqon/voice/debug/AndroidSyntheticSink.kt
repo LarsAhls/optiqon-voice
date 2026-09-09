@@ -79,8 +79,7 @@ class AndroidSyntheticSink(
         )
     }
 
-    override suspend fun readDefaultRoot(): SyntheticState.DefaultRootState {
-        val root = StorageRoot.DEFAULT
+    override suspend fun readRoot(root: StorageRoot): SyntheticState.DefaultRootState {
         val db = Room.databaseBuilder(context, OptiqonVoiceDatabase::class.java, root.databaseName)
             .addMigrations(*DatabaseModule.ALL_MIGRATIONS)
             .build()
@@ -118,6 +117,7 @@ class AndroidSyntheticSink(
             val owner = deviceDataOwner.defaultOwner()
             val access = owner?.let { accessStateStore.snapshot(it).first()?.status?.name }
             return SyntheticState.DefaultRootState(
+                dumpedRoot = root.name,
                 processRoot = processRoot.name,
                 dbUserVersion = userVersion,
                 profileNames = profileNames,

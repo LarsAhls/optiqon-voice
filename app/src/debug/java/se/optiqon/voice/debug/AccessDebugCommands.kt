@@ -1,5 +1,6 @@
 package se.optiqon.voice.debug
 
+import se.optiqon.voice.data.storage.StorageRoot
 import java.io.File
 
 /**
@@ -49,8 +50,16 @@ class AccessDebugCommands(
         } ?: Outcome(false, "sign-out is not wired in this process")
         ACTION_SEED_SYNTHETIC -> synthetic?.seed()?.let { Outcome(it.ok, it.description) }
             ?: Outcome(false, "synthetic state is not wired in this process")
-        ACTION_DUMP_STATE -> synthetic?.dump()?.let { Outcome(it.ok, it.description) }
-            ?: Outcome(false, "synthetic state is not wired in this process")
+        // `--es root <name>` reads a root other than this process's own, which is the only way
+        // to ask the isolation question from one side and answer it about the other. Refused
+        // rather than guessed when the name is not a legal root name.
+        ACTION_DUMP_STATE -> {
+            val requested = (args[EXTRA_ROOT] as? String)?.trim()?.lowercase()
+            val root = runCatching { requested?.let { StorageRoot(it) } }
+                .getOrElse { return Outcome(false, "'$requested' is not a storage root name") }
+            synthetic?.dump(root)?.let { Outcome(it.ok, it.description) }
+                ?: Outcome(false, "synthetic state is not wired in this process")
+        }
         else -> Outcome(false, "unknown action: $action")
     }
 
@@ -63,6 +72,7 @@ class AccessDebugCommands(
         const val ACTION_DUMP_STATE = "se.optiqon.voice.debug.DUMP_STATE"
         const val EXTRA_ENABLED = "enabled"
         const val EXTRA_OFFSET_MS = "offsetMs"
+        const val EXTRA_ROOT = "root"
         const val TOKEN_FILE_NAME = "id-token.txt"
     }
 }
