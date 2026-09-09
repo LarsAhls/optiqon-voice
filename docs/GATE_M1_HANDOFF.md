@@ -179,19 +179,22 @@ Of the four missing values, three are now known:
    does not apply.
 3. **Active ruleset** — `4937759b-d4a7-4e95-b59a-22d363dac881`, the console locked default
    (`allow read, write: if false`), sha256 `ecf30f94…d84eb`. Only release ever created.
-4. **P4 signing certificate** — still unknown. `adb` is installed and this is the right
-   machine, but no device is attached.
+4. **P4 signing certificate** — **done, and it matches.** The installed `se.optiqon.voice`
+   (`v20260906`, code `2026090600`) on device `c1f9837c` / CPH2645 is signed by the repo's
+   `debug.keystore`: SHA-256 `234e2833…429eed`, SHA-1 `3326d33e…d3ccf4`, DN
+   `CN=Debug, O=Sasayaki, C=US`. The repo's `verify-apk-signer.sh` exits 0 against it.
+   **An in-place upgrade preserves the device's data — no uninstall, no separate test device.**
 
 Everything else is unchanged: nothing was deployed, no provider touched, no SHA registered,
 nothing installed, nothing merged.
 
 ### The remaining Gate box, exactly
 
-Ungranted until Lars approves, in this order:
+All Gate *inputs* are now filled; everything below is a write and each needs Lars's approval.
 
-1. `adb devices` with the phone attached → `verify-apk-signer.sh` against the debug fingerprint.
-   Read-only, but needs the device. This is the last Gate *input*.
-2. Register the debug SHA-256 on app `1:699805184613:android:35a5860f14504f1e130c8c` — a write.
+1. ~~P4 signing inventory~~ — **done 2026-09-09, PASS.** See `gate-m1/PREFLIGHT.md`.
+2. Register **both** fingerprints on app `1:699805184613:android:35a5860f14504f1e130c8c`:
+   SHA-256 `23:4E:…:9E:ED` and SHA-1 `33:26:…:CC:F4`. SHA-1 is what Credential Manager needs.
 3. `firebase deploy --only firestore:rules --project optiqon-voice-47498` — rollback target is
    ruleset `4937759b-…`, which denies all reads and writes.
 4. Add the App Link `<intent-filter>` for host `optiqon-voice-47498.firebaseapp.com`, path
@@ -204,11 +207,26 @@ Ungranted until Lars approves, in this order:
    budget for an initial Hosting release as well — a separate approval.
 7. Install, then merge.
 
-### Manual actions for Lars
+### Separate provider actions, each its own approval
 
-- **Attach the phone** with USB debugging on, so P4 can run. Nothing else unblocks it.
-- **Decide where the config file lives.** `google-services (1).json` is in the repo root,
-  untracked, and *not* covered by `.gitignore:43` (which names `app/google-services.json`).
-  It carries the project API key. Moving it to `app/google-services.json` both puts it where
-  the Gradle plugin expects it and brings it under the existing ignore rule. Not done here:
-  it is a write on a file holding a secret.
+- **Delete protection is off** on `(default)`. Nothing in the Gate box deletes a database, so
+  this does not block anything — but the guard that would stop an accidental deletion is not
+  armed. Enabling it is a provider write and is *not* bundled into the rules deploy.
+- **An initial Hosting release** is likely required before `/.well-known/assetlinks.json`
+  serves. Both the `.firebaseapp.com` and `.web.app` hosts return "Site Not Found", which is
+  what an un-released site serves for every path. Registering the SHA may not be enough on its
+  own. This is a Hosting deploy and needs its own approval.
+
+### Config file — secured 2026-09-09
+
+Done, not pending. `google-services (1).json` was verified against the provider readback
+(project id, project number, app id, package all match; sha256 `7f0c26ec…7ef9a5`) and moved
+byte-identically to `app/google-services.json`, where the Gradle plugin expects it. No target
+file existed, so nothing was overwritten.
+
+The ignore rule was the real gap, and it was not about location: `google-services.json` is a
+bare pattern that already matched at any depth. What it did not match was the name a *second*
+browser download actually gets — `google-services (1).json`. The pattern is now
+`google-services*.json`, verified to match at the root, in `app/`, and deeper, with and without
+the ` (n)` suffix. Nothing matching has ever been committed on any ref, and no `AIza…` key
+appears anywhere in history.

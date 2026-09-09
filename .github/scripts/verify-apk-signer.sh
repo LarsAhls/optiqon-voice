@@ -41,8 +41,13 @@ if [ -z "$BUILD_TOOLS_VERSION" ]; then
 fi
 
 APKSIGNER="$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner"
-if [ ! -x "$APKSIGNER" ]; then
-  echo "::error::apksigner not found or not executable at $APKSIGNER"
+if [ ! -x "$APKSIGNER" ] && [ -f "$APKSIGNER.bat" ]; then
+  # A Windows SDK ships only the .bat launcher; the extensionless wrapper is absent.
+  # Without this the script cannot run on the machine that holds the physical device.
+  APKSIGNER="$APKSIGNER.bat"
+fi
+if [ ! -f "$APKSIGNER" ]; then
+  echo "::error::apksigner not found at $APKSIGNER"
   exit 1
 fi
 

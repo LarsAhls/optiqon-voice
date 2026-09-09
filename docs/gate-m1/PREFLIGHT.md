@@ -146,13 +146,63 @@ file carrying a secret, and it is Lars's call. See the manual action below.
   the handoff exactly — `firestore.rules` `42f7fc81…101b`, `firestore.future.rules`
   `1c7c12cd…16ab8`. **No drift.** The discrepancy is line endings, not content.
 
-## P4 — signing inventory: blocked, device not attached
+## P4 — signing inventory: **PASS**, 2026-09-09
 
-- `adb` is present at `%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe`; `local.properties`
-  points at that SDK. This *is* the right machine.
-- `ANDROID_HOME` / `ANDROID_SDK_ROOT` are unset in this shell — cosmetic, `local.properties`
-  covers Gradle.
-- `adb devices -l` → **no devices attached.** So `pm path se.optiqon.voice` cannot run and the
-  installed build's signing certificate is still unknown.
+Device attached and authorised: `c1f9837c`, model **CPH2645**, Android 16 (SDK 36).
 
-P4 is the only Gate input that a session on this machine cannot supply on its own.
+Read-only inventory of the installed build — nothing installed, uninstalled, cleared or
+re-signed, and the device clock was not touched:
+
+| Field | Value |
+| --- | --- |
+| Package | `se.optiqon.voice`, present |
+| APK path | `/data/app/~~ev1YUss…/se.optiqon.voice-xKuCiOdj…/base.apk` (single APK, no splits) |
+| versionName / versionCode | `v20260906` / `2026090600` |
+| minSdk / targetSdk | 26 / 35 |
+| APK signing scheme | v2 |
+| Installer | `com.google.android.packageinstaller` (sideload) |
+| First install / last update | both 2026-09-07 09:47:03 |
+| Pulled copy | scratchpad `installed.apk`, 13 210 105 bytes, sha256 `4f859194…a1fcc` |
+
+### The comparison
+
+The repo's own `.github/scripts/verify-apk-signer.sh` was run against the pulled APK with the
+debug fingerprint, and **exited 0**:
+
+```
+Signer #1 certificate DN: CN=Debug, O=Sasayaki, C=US
+Signer #1 certificate SHA-256 digest: 234e2833e3e74d721b316c0db5e87e112b3f74ed5f76d34e5d3208c504429eed
+Signer #1 certificate SHA-1   digest: 3326d33e30e035999b9a3c5c2fce404a06d3ccf4
+Signer certificate SHA-256 matches the expected release certificate.
+```
+
+Confirmed independently rather than taken from the handoff: `keytool -list -v` on the repo's
+`debug.keystore` (alias `androiddebugkey`) reports the same owner `CN=Debug, O=Sasayaki, C=US`
+and the same SHA-256 `23:4E:…:9E:ED`, plus SHA-1 `33:26:D3:3E:30:E0:35:99:9B:9A:3C:5C:2F:CE:40:4A:06:D3:CC:F4`.
+
+The check is load-bearing, not decorative: re-run with one byte of the fingerprint altered, the
+script exits 1 and prints the mismatch.
+
+**Consequence: an in-place upgrade preserves the device's data.** The installed build and the
+build this branch produces are signed by the same key, so no uninstall is needed and the
+`allowBackup="false"` dead end never has to be entered.
+
+Version ordering also holds. The installed code is `2026090600`; an untagged local build derives
+its code from today's date (`20260909 * 100 = 2026090900`), so the upgrade is monotonic and
+Android will accept it.
+
+### The SHA-1 that Gate step 2 needs
+
+`33:26:D3:3E:30:E0:35:99:9B:9A:3C:5C:2F:CE:40:4A:06:D3:CC:F4` — Credential Manager / Google
+Sign-In requires SHA-1, not only SHA-256, so both fingerprints go on the app at registration
+time. Registration is still a write and still outside the box.
+
+### Repo repair made to get here
+
+`verify-apk-signer.sh` required an executable `$ANDROID_HOME/build-tools/<v>/apksigner`. A
+Windows SDK ships only `apksigner.bat`, so the script aborted on the one machine that has the
+physical device. It now falls back to the `.bat` launcher when the extensionless wrapper is
+absent. CI on Linux is unaffected — it still finds the extensionless wrapper first.
+
+`JAVA_HOME` also has to be set for `apksigner`; the JBR inside Android Studio
+(`C:\Program Files\Android\Android Studio\jbr`) works and no JDK was installed.
