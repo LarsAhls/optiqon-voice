@@ -23,6 +23,25 @@ if (googleServicesConfig.exists()) {
     )
 }
 
+// Firebase Auth sends its email sign-in links through <project-id>.firebaseapp.com before
+// they reach voice.optiqon.se, so the manifest needs a filter for that host too. The host is
+// read out of the same config the Firebase SDK reads rather than written down twice: the
+// project id is not guessable from the project name (this one is optiqon-voice-47498), and a
+// filter for a host the project does not own is a filter that silently never fires.
+//
+// Only project_id is taken. Nothing else from the file is read, logged, or embedded here.
+val firebaseAuthHost: String = if (googleServicesConfig.exists()) {
+    val projectId = (
+        groovy.json.JsonSlurper().parse(googleServicesConfig) as Map<*, *>
+    ).let { it["project_info"] as Map<*, *> }["project_id"] as String
+    "$projectId.firebaseapp.com"
+} else {
+    // A build without Firebase configuration has no project to name. `.invalid` is reserved
+    // by RFC 2606 and never resolves, so the filter stays syntactically valid and inert
+    // instead of pointing at somebody else's host.
+    "unconfigured.invalid"
+}
+
 android {
     namespace = "se.optiqon.voice"
     compileSdk = 35
@@ -47,6 +66,8 @@ android {
         val patchCode = tagParts.getOrNull(1)?.toIntOrNull()?.coerceIn(0, 99) ?: 0
         versionCode = baseCode * 100 + patchCode
         versionName = if (tag.isNotBlank()) "v$tag" else "v$baseCode"
+
+        manifestPlaceholders["firebaseAuthHost"] = firebaseAuthHost
     }
 
     signingConfigs {

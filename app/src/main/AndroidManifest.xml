@@ -49,6 +49,25 @@
                     android:host="voice.optiqon.se"
                     android:pathPrefix="/signin" />
             </intent-filter>
+
+            <!--
+                The same link, one hop earlier. Firebase Auth wraps an email sign-in link so
+                that it lands on the project's own auth domain first and only then continues
+                to voice.optiqon.se. Without a filter for that hop the link leaves the app and
+                completes in a browser, which is where sign-in stops working.
+
+                The host is injected from google-services.json at build time (see
+                app/build.gradle.kts); it is the project id, which is not the project name.
+            -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="${firebaseAuthHost}"
+                    android:pathPrefix="/__/auth/links" />
+            </intent-filter>
         </activity>
 
         <!--
