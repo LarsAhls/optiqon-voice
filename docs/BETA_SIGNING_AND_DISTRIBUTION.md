@@ -164,11 +164,13 @@ into chat, repository, CI or logs.
 4. Register the beta certificate SHA-1 and SHA-256 **additively** in the Firebase project
    (debug SHAs stay), add the SHA-256 to `public/.well-known/assetlinks.json` and redeploy
    Hosting (G2 postflight again) **before** the first beta-signed build is installed.
-5. Then G4 proper, according to the method D2 selects:
-   (a) rotation in place on the phone (`adb install -r` of a beta-signed, lineage-carrying
-   build), or (b) beta key only for new installations while the phone stays on the debug key
-   until a proven migration exists. Rollback after a successful rotation does not exist,
-   which is why §2 and §3 came first.
+5. Then G4 proper. **D2 was decided 2026-09-10 (`docs/DECISION_SHEET_2026-09-10.md`):
+   rotation in place, no uninstall** — `adb install -r` of a beta-signed,
+   lineage-carrying build, with the installation's data kept. The alternative (beta key for
+   new installations only) was not taken. Two consequences follow and are accepted:
+   rollback after a successful rotation does not exist, which is why §2 and §3 came
+   first; and the floor is Android 9 (D8, §1 fact 2), because below API 28 rotation in
+   place is not a thing that can be done at all.
 
 ## 7. Play App Signing — out of scope
 
@@ -176,9 +178,12 @@ Uploading lineage-rotated APKs to Play and Play's own key rotation (Android 13+)
 different rules from sideloaded/App Distribution builds. Nothing here is designed to make the
 beta key a Play upload key; that is a separate decision when Play becomes relevant.
 
-## 8. Distribution (unchanged from plan rev. 4, decision D3 pending)
+## 8. Distribution — D3 decided: Firebase App Distribution
 
-Firebase App Distribution is recommended for ≤ 10 private testers (private APK, invitation
+**Decided 2026-09-10** (`docs/DECISION_SHEET_2026-09-10.md`). The console work is a tickable
+list in `docs/gate-m1/SITTING_3_CHECKLIST.md`; this section keeps the reasoning.
+
+Firebase App Distribution is used for ≤ 10 private testers (private APK, invitation
 by mail, in-app update SDK, Spark tier). GitHub Releases would publish every beta APK from a
 public repository and is not used for artefacts while the repository is public. The in-app
 "check for update" must show three distinct states (up to date / new version / could not
