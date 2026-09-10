@@ -196,12 +196,45 @@ class RecordingTeardownTest {
         // there is nothing a unit test here can drive. Leaving it held mutes the user's music
         // until something else happens to take focus. Measured: dropping the call keeps every
         // behaviour test above green, which is why this reads the source instead.
-        val taking = blockOf(source, "private fun takeUnfinishedRecording()")
+        val taking = blockOf(source, "private fun takeRecordingInProgress()")
         assertTrue(
-            "takeUnfinishedRecording does not abandon audio focus. Nothing downstream will: the " +
+            "takeRecordingInProgress does not abandon audio focus. Nothing downstream will: the " +
                 "service is what holds it, and the scope that would otherwise carry the release " +
                 "is the one being cancelled. It has to happen here, synchronously.\n" + taking,
             taking.contains("abandonRecordingAudioFocus()")
+        )
+
+        // The state one step later. The behaviour test below drives the seam directly, so it stays
+        // green even when the service never reaches it: the dispatch is the only place that says
+        // a shutdown mid-transcription is a shutdown with audio worth keeping. Measured: removing
+        // this branch keeps every behaviour test in this class green.
+        val dispatch = blockOf(source, "private fun takeUnfinishedRecording()")
+        assertTrue(
+            "takeUnfinishedRecording does not reach the mid-transcription teardown. The recorder " +
+                "has stopped, the WAV is on disk and the transcriber has not answered yet - and " +
+                "a destroy in that window throws the dictation away silently, which is the " +
+                "defect this class exists to keep closed.\n" + dispatch,
+            Regex("""is ServiceState\.Transcribing[\s\S]{0,160}?takeAudioAwaitingTranscription\(""")
+                .containsMatchIn(dispatch)
+        )
+
+        // Where the audio is has to be findable from outside the coroutine that owns it, because
+        // that coroutine is the one being cancelled.
+        assertTrue(
+            "Nothing records the WAV being transcribed, so the mid-transcription teardown has " +
+                "no file to find and returns null. The branch above would be present and " +
+                "inoperative.",
+            Regex("""processingWav\s*=\s*wavFile""").containsMatchIn(source)
+        )
+
+        // And it has to be moved, not merely pointed at: the cancelled request deletes the path
+        // it knows in its own `finally`, which cancellation is exactly what runs.
+        val awaiting = blockOf(source, "private fun takeAudioAwaitingTranscription()")
+        assertTrue(
+            "The mid-transcription teardown hands over the audio without taking it out of the " +
+                "cancelled request's reach. That request's `finally` deletes the path it knows " +
+                "about, so the preserving would race a deletion it cannot see.\n" + awaiting,
+            awaiting.contains("takeAudioFromCancelledJob(")
         )
 
         // The surviving scope has to come from somewhere that really does outlive the service.
@@ -211,6 +244,29 @@ class RecordingTeardownTest {
                 "as applicationScope is either absent or not application-lived. A scope bound to " +
                 "anything shorter reintroduces the defect on a longer fuse.",
             Regex("""@Singleton[\s\S]{0,200}?CoroutineScope""").containsMatchIn(module)
+        )
+    }
+
+    @Test
+    fun `audio already converted survives a shutdown during transcription`() {
+        val f = TranscribingFixture()
+
+        f.destroyService()
+        f.awaitPreserving()
+
+        assertArrayEquals(
+            "The user had finished speaking and the WAV was on disk, waiting for the transcriber, " +
+                "when the service went down — and it was thrown away. This is the same loss as " +
+                "mid-recording, one state later: there is no PCM left to convert, so a teardown " +
+                "that only looks for a PCM finds nothing to keep and says nothing about it.",
+            SPOKEN,
+            f.preservedBytes()
+        )
+        assertEquals(
+            "The duration handed to preservation is not the one measured when the recording " +
+                "stopped; the history row would misreport how long the user spoke.",
+            DURATION_MS,
+            f.preservedDuration()
         )
     }
 
@@ -332,8 +388,84 @@ class RecordingTeardownTest {
         fun preservedDuration(): Long = preservedDurationMs
     }
 
+    /**
+     * A service one state later: the recorder is done, the WAV is on disk, and a transcription
+     * request is in flight. Nothing is still writing the file — what can still lose it is the
+     * teardown, and the `finally` of the very coroutine the teardown cancels.
+     */
+    private inner class TranscribingFixture {
+        private val serviceDispatcher = Executors.newSingleThreadExecutor { r ->
+            Thread(r, "service-main")
+        }.also { dispatchers += it }
+
+        private val serviceScope =
+            CoroutineScope(SupervisorJob() + serviceDispatcher.asCoroutineDispatcher())
+                .also { scopes += it }
+
+        val applicationScope =
+            CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it }
+
+        /** The working WAV, in the cache, exactly as the transcription coroutine left it. */
+        val wav: File = File(tmp.root, "recording_1.wav").also { it.writeBytes(SPOKEN) }
+
+        @Volatile private var preservedFrom: ByteArray? = null
+        @Volatile private var preservedDurationMs: Long = -1
+
+        private val transcribing = CompletableDeferred<Unit>()
+
+        /** The in-flight request, and the `finally` that deletes the file it knows about. */
+        private val transcriptionJob: Job = serviceScope.launch {
+            try {
+                transcribing.complete(Unit)
+                awaitCancellation()
+            } finally {
+                wav.delete()
+            }
+        }
+
+        private var preserving: Job? = null
+
+        init {
+            runBlocking { withTimeout(TIMEOUT_MS) { transcribing.await() } }
+        }
+
+        /** What `onDestroy` does in this state, through the same functions production calls. */
+        fun destroyService() {
+            val taken = takeAudioFromCancelledJob(wav, File(tmp.root, "interrupted_1.wav"))
+            val unfinished = UnfinishedRecording(
+                recordingJob = null,
+                pcm = null,
+                wav = requireNotNull(taken) { "The audio was not taken out of the job's reach." },
+                durationMs = DURATION_MS,
+                convert = { _, _ -> error("There is no PCM left to convert in this state") },
+                preserve = { audio, duration ->
+                    preservedFrom = audio.readBytes()
+                    preservedDurationMs = duration
+                },
+            )
+            preserving = runBlocking(serviceDispatcher.asCoroutineDispatcher()) {
+                cancelKeepingRecording(serviceScope, applicationScope, unfinished)
+            }
+            // The cancelled request's own cleanup, which deletes the path it knows about. If the
+            // hand-over left the audio at that path, this is what loses it.
+            runBlocking { withTimeout(TIMEOUT_MS) { transcriptionJob.join() } }
+        }
+
+        fun awaitPreserving() {
+            val job = requireNotNull(preserving) { "destroyService() was not called" }
+            runBlocking { withTimeout(TIMEOUT_MS) { job.join() } }
+        }
+
+        fun preservedBytes(): ByteArray = requireNotNull(preservedFrom) {
+            "Nothing was ever handed to preservation; the user's audio was dropped silently."
+        }
+
+        fun preservedDuration(): Long = preservedDurationMs
+    }
+
     private companion object {
         val HEAD: ByteArray = ByteArray(4096) { (it % 251).toByte() }
+        val SPOKEN: ByteArray = ByteArray(2048) { (it % 193).toByte() }
         val TAIL: ByteArray = ByteArray(512) { (it % 97).toByte() }
         const val DURATION_MS = 7531L
         const val RECORDER_TAIL_MS = 50L

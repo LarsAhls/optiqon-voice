@@ -26,7 +26,9 @@ class RecordingStoppedException :
  * @param recordingJob the coroutine writing the PCM. Joined, never cancelled, so the tail of the
  *   recording is on disk before anything reads it. The caller has already signalled the recorder
  *   to stop; without that this would wait for a recording that is still running.
- * @param convert PCM in, WAV out, on whichever dispatcher the caller considers right for IO.
+ * @param convert PCM in, WAV out, on whichever dispatcher the caller considers right for IO. Only
+ *   called when there is a [pcm] still to convert; a recording taken after the conversion already
+ *   happened has nothing for it to do.
  * @param preserve hands the WAV and its duration to the user's own storage.
  * @param onDone runs after the temp files go, whether or not anything was preserved.
  */
@@ -35,7 +37,7 @@ internal class UnfinishedRecording(
     val pcm: File?,
     val wav: File,
     val durationMs: Long,
-    val convert: suspend (File, File) -> Unit,
+    val convert: suspend (File, File) -> Unit = { _, _ -> },
     val preserve: suspend (File, Long) -> Unit,
     val onDone: () -> Unit = {},
 )
@@ -76,6 +78,36 @@ internal fun cancelKeepingRecording(
 }
 
 /**
+ * Moves audio out of the reach of a coroutine that is about to be cancelled, and returns where it
+ * now is — or null when there was nothing worth taking, in which case nothing was moved.
+ *
+ * A coroutine that owns a working file deletes it in its `finally`, and cancelling it is what
+ * makes that run. Telling it not to would mean a flag the two sides have to agree about, on
+ * whichever threads they happen to be on; renaming the file needs nobody to agree about anything.
+ * Afterwards the path the dying coroutine knows is empty, and what the user said is somewhere
+ * else.
+ *
+ * Both paths are in the same directory, so the rename is a directory operation rather than a copy.
+ * The copy is there for the case that cannot happen, because losing the dictation is worse than
+ * copying a few hundred kilobytes.
+ */
+internal fun takeAudioFromCancelledJob(audio: File, to: File): File? {
+    if (!audio.exists() || audio.length() == 0L) {
+        Log.w(TAG, "No audio to take from the cancelled job")
+        return null
+    }
+    if (audio.renameTo(to)) return to
+    return try {
+        audio.copyTo(to, overwrite = true).also {
+            Log.w(TAG, "Renaming the audio failed; copied it instead")
+        }
+    } catch (e: java.io.IOException) {
+        Log.e(TAG, "Could not take the audio out of the cancelled job's reach", e)
+        null
+    }
+}
+
+/**
  * Waits for the recorder to let go of the file, converts what it managed to write, and hands
  * that to the user's storage before the working files go.
  *
@@ -95,11 +127,22 @@ internal fun preserveUnfinishedRecording(
             // domain/access/Cancellation.kt.
             runCatchingCancellable { unfinished.recordingJob?.join() }
                 .onFailure { Log.w(TAG, "Waiting for the recorder to finish failed", it) }
-            if (pcm != null && pcm.exists() && pcm.length() > 0L) {
-                unfinished.convert(pcm, unfinished.wav)
-                unfinished.preserve(unfinished.wav, unfinished.durationMs)
-            } else {
-                Log.w(TAG, "Nothing recorded to preserve")
+            val wav = unfinished.wav
+            when {
+                // Mid-recording: the recorder wrote PCM and nothing has converted it yet.
+                pcm != null ->
+                    if (pcm.exists() && pcm.length() > 0L) {
+                        unfinished.convert(pcm, wav)
+                        unfinished.preserve(wav, unfinished.durationMs)
+                    } else {
+                        Log.w(TAG, "Nothing recorded to preserve")
+                    }
+                // Mid-transcription: the PCM is already gone and the WAV is what the user said.
+                // Without this branch a shutdown one state later loses the dictation exactly as
+                // a shutdown mid-recording used to, and just as quietly.
+                wav.exists() && wav.length() > 0L ->
+                    unfinished.preserve(wav, unfinished.durationMs)
+                else -> Log.w(TAG, "Nothing recorded to preserve")
             }
         }
     } finally {

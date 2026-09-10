@@ -123,6 +123,15 @@ class BubbleService : Service() {
      */
     @Volatile private var processingStoppedBy: BlockReason? = null
 
+    /**
+     * The WAV being transcribed right now and how long the user spoke, held here rather than only
+     * in [transcriptionJob]'s locals. A shutdown has to be able to find the audio, and the
+     * coroutine that knows where it is is the one being cancelled; see
+     * [takeAudioAwaitingTranscription].
+     */
+    @Volatile private var processingWav: File? = null
+    @Volatile private var processingDurationMs: Long = 0L
+
     private var state: ServiceState = ServiceState.Idle
     private var recordingStartTime: Long = 0
     private var pausedStartedAt: Long = 0
@@ -705,8 +714,16 @@ class BubbleService : Service() {
      * else's decision — [cancelKeepingRecording] is where it is made, and it is the only place
      * that cancels [scope].
      */
-    private fun takeUnfinishedRecording(): UnfinishedRecording? {
-        if (state !is ServiceState.Recording) return null
+    private fun takeUnfinishedRecording(): UnfinishedRecording? = when (state) {
+        is ServiceState.Recording -> takeRecordingInProgress()
+        // The same dictation, one state later. Leaving this out is how the fix below stayed
+        // inoperative for the window between the recorder stopping and the text coming back.
+        is ServiceState.Transcribing, is ServiceState.PostProcessing -> takeAudioAwaitingTranscription()
+        else -> null
+    }
+
+    /** A recording that is still being written. The recorder is signalled here, never cancelled. */
+    private fun takeRecordingInProgress(): UnfinishedRecording? {
         audioRecorder?.stop()
         levelJob?.cancel()
         timerJob?.cancel()
@@ -735,6 +752,37 @@ class BubbleService : Service() {
                 audioRecorder = null
                 silenceDetector = null
             }
+        )
+    }
+
+    /**
+     * Audio that is already a WAV and is waiting for, or sitting inside, a transcription request.
+     *
+     * Cancelling [scope] takes that request down, and its `finally` deletes the working file it
+     * knows about - so the audio is moved out of its reach first, which is also why nothing here
+     * needs the two sides to agree about order or threads. Audio focus is left to that `finally`,
+     * which runs on cancellation because it suspends nowhere.
+     */
+    private fun takeAudioAwaitingTranscription(): UnfinishedRecording? {
+        val taken = takeAudioFromCancelledJob(
+            processingWav ?: return null,
+            File(cacheDir, "interrupted_${System.currentTimeMillis()}.wav")
+        ) ?: return null
+
+        val durationMs = processingDurationMs
+        val appContext = recordingAppContext
+        processingWav = null
+
+        return UnfinishedRecording(
+            // Nothing is writing any more: the recording coroutine was joined before the
+            // conversion ran, which is how the WAV came to exist at all.
+            recordingJob = null,
+            pcm = null,
+            wav = taken,
+            durationMs = durationMs,
+            preserve = { audio, duration ->
+                preserveInterrupted(audio, duration, appContext, RecordingStoppedException())
+            },
         )
     }
 
@@ -775,6 +823,10 @@ class BubbleService : Service() {
                 withContext(Dispatchers.IO) {
                     AudioConverter.pcmToWav(currentPcmFile, wavFile)
                 }
+                // From here on the user's words exist as a WAV that only this coroutine knows the
+                // location of, and this coroutine is what a shutdown cancels. Tell the service.
+                processingWav = wavFile
+                processingDurationMs = durationMs
 
                 val appContext = recordingAppContext
 
@@ -836,6 +888,9 @@ class BubbleService : Service() {
                 }
                 showError(e.message ?: "Unknown error", retryEntryId)
             } finally {
+                // Either the audio was handed over - in which case it is no longer at this path -
+                // or it is about to be deleted below. Neither is something to point at.
+                processingWav = null
                 abandonRecordingAudioFocus()
                 // Temp files only: the WAV here is a working copy in cacheDir. Anything the
                 // user is entitled to keep has already been copied into their own storage by
