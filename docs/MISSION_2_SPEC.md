@@ -1,6 +1,7 @@
 # Mission 2 — typed profiles and a capability registry
 
-**Status:** proposed, awaiting Lars's approval. Nothing here is built.
+**Status:** **approved by Lars 2026-09-10**, including `NOTES` = `SummarizeMode.LIGHT` and the
+irreversibility of the Room 8→9 column. Being built; no further stops.
 **Written:** 2026-09-10, against head `6a67184`.
 
 This exists because Mission 2 had no spec anywhere in the repo. Building it from the name alone
@@ -183,16 +184,16 @@ No profile↔app binding, no automatic profile switching, no sampling parameters
 (`temperature`/`maxTokens` stay hardcoded in `ChatModels.kt:5-10`), no new table, no onboarding
 change, no sync of the new field, no change to the existing enums or to any replacement-rule text.
 
-## Two things to decide
+## Two things to decide — both answered 2026-09-10
 
 1. **Irreversible, explicitly:** once a v9 build is installed, **no v8 APK can open the database
    again** — it throws and leaves the file untouched, by design (no destructive fallback in either
    direction), and no later update undoes it. A rollback to a pre-Mission-2 build means the tester
    loses their profiles, keys and history. This is the one irreversible act in the mission, so the
-   column is worth approving deliberately rather than as a detail.
+   column is worth approving deliberately rather than as a detail. **Accepted knowingly.**
 2. **`NOTES` presets `SummarizeMode.LIGHT`.** This is the only place in the spec where a preset
    changes visible output. The alternative is `NONE`, leaving condensing always an explicit
-   choice. Either is cheap to build; say which.
+   choice. **Decided: `LIGHT`.**
 
 ## Sequencing note
 
