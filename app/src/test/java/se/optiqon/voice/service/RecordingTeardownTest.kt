@@ -162,9 +162,9 @@ class RecordingTeardownTest {
     @Test
     fun `the service really does route its destroy through this teardown`() {
         // None of the above touches BubbleService, so on its own it would pass while production
-        // kept its own copy of the teardown. This reads the source instead. It is the part of the
-        // defect that was never about behaviour: the old code's two statements were in the wrong
-        // order, and nothing at the call site said they had to be in any particular one.
+        // kept its own copy of the teardown. This reads the source instead. It is the half of the
+        // defect no behaviour test can reach: the choice of scope is made here, at the call site,
+        // and a call site passing the wrong one leaves every test above green.
         val source = File(MODULE_DIR, "src/main/java/se/optiqon/voice/service/BubbleService.kt")
             .readText()
         val onDestroy = blockOf(source, "override fun onDestroy()")
@@ -189,6 +189,19 @@ class RecordingTeardownTest {
                 "dictation is lost exactly as before, with the fix in place and inoperative.\n" +
                 onDestroy,
             Regex("""cancelKeepingRecording\(\s*scope\s*,\s*scope\s*,""").containsMatchIn(onDestroy)
+        )
+
+        // Audio focus is the one effect of the teardown that has no surviving owner: the service
+        // is the thing that holds it, and `abandonRecordingAudioFocus` touches AudioManager, so
+        // there is nothing a unit test here can drive. Leaving it held mutes the user's music
+        // until something else happens to take focus. Measured: dropping the call keeps every
+        // behaviour test above green, which is why this reads the source instead.
+        val taking = blockOf(source, "private fun takeUnfinishedRecording()")
+        assertTrue(
+            "takeUnfinishedRecording does not abandon audio focus. Nothing downstream will: the " +
+                "service is what holds it, and the scope that would otherwise carry the release " +
+                "is the one being cancelled. It has to happen here, synchronously.\n" + taking,
+            taking.contains("abandonRecordingAudioFocus()")
         )
 
         // The surviving scope has to come from somewhere that really does outlive the service.

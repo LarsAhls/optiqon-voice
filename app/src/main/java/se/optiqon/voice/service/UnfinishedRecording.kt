@@ -56,9 +56,12 @@ internal class UnfinishedRecording(
  * message. The user lost what they had just said and was not told. The name said the opposite of
  * what the code did, which is the expensive part — the next reader believes the wait is there.
  *
- * Cancelling the service scope lives here, after the hand-off, so that the order cannot be got
- * wrong at the call site and cannot be got right in a test while production has it backwards.
- * Pass the same scope twice and the defect is back.
+ * Cancelling the service scope lives here rather than at the call site so that handing the
+ * recording over is not something a caller can forget to do: the two are now one step with one
+ * name. The order of the two statements, measured, is not what carries the fix — swapping them
+ * keeps every test green, because the recording coroutine is joined either way. The scope choice
+ * is what carries it. Pass the same scope twice and the defect is back, which is why the call
+ * site is pinned by a test that reads it.
  *
  * @return the job doing the preserving, or null when nothing was recording.
  */

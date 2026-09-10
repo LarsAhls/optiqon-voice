@@ -302,7 +302,8 @@ class BubbleService : Service() {
         TextInjectorService.keyboardListener = null
         try { unregisterReceiver(stopReceiver) } catch (_: Exception) {}
         // Cancelling [scope] is inside this call, after the recording has been handed to a scope
-        // that survives. Keeping the two steps together is what stops the order being got wrong.
+        // that survives. Keeping the two steps in one call is what stops the hand-off being
+        // forgotten; the scope it is handed to is what stops the recording being lost.
         cancelKeepingRecording(scope, applicationScope, unfinished)
         super.onDestroy()
     }
