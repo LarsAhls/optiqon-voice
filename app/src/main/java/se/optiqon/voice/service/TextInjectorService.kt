@@ -96,10 +96,6 @@ class TextInjectorService : AccessibilityService() {
         var instance: TextInjectorService? = null
             private set
 
-        var keyboardListener: KeyboardListener? = null
-        var isKeyboardVisible: Boolean = false
-            private set
-
         var focusedAppPackage: String? = null
             private set
 
@@ -112,6 +108,7 @@ class TextInjectorService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        keyboardLink.accessibilityConnected(imeVisible = imeWindowPresent())
         Log.d(TAG, "Accessibility service connected")
     }
 
@@ -140,14 +137,15 @@ class TextInjectorService : AccessibilityService() {
 
     private fun checkKeyboardVisibility(editableFocused: Boolean = false) {
         try {
-            val hasIme = windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
-            val report = shouldReportKeyboard(hasIme, isKeyboardVisible, editableFocused)
-            isKeyboardVisible = hasIme
-            if (report) keyboardListener?.onKeyboardVisibilityChanged(hasIme)
+            keyboardLink.report(imeWindowPresent(), editableFocused)
         } catch (e: Exception) {
             Log.e(TAG, "Error checking keyboard", e)
         }
     }
+
+    /** Only this service can see the window list, which is why the link does not measure. */
+    private fun imeWindowPresent(): Boolean =
+        windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
 
     override fun onInterrupt() {}
 
@@ -155,8 +153,7 @@ class TextInjectorService : AccessibilityService() {
         instance = null
         lastFocusedPackage = null
         lastFocusedEditablePackage = null
-        isKeyboardVisible = false
-        keyboardListener = null
+        keyboardLink.accessibilityGone()
         focusedAppPackage = null
         super.onDestroy()
     }

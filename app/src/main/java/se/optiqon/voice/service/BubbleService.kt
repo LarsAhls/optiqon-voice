@@ -302,11 +302,12 @@ class BubbleService : Service() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         prepareBubble()
 
-        // Register for keyboard events
-        TextInjectorService.keyboardListener = keyboardListener
+        // Register for keyboard events. The bubble owns this registration for as long as it
+        // lives: see KeyboardLink, and F15 for what happened when it did not.
+        keyboardLink.listen(keyboardListener)
 
         // If keyboard is already visible, show immediately
-        if (TextInjectorService.isKeyboardVisible) {
+        if (keyboardLink.isKeyboardVisible) {
             showBubble()
         }
 
@@ -318,7 +319,7 @@ class BubbleService : Service() {
         fanMenuController?.dismiss()
         val unfinished = takeUnfinishedRecording()
         removeBubble()
-        TextInjectorService.keyboardListener = null
+        keyboardLink.stopListening(keyboardListener)
         try { unregisterReceiver(stopReceiver) } catch (_: Exception) {}
         // Cancelling [scope] is inside this call, after the recording has been handed to a scope
         // that survives. Keeping the two steps in one call is what stops the hand-off being
@@ -1054,7 +1055,7 @@ class BubbleService : Service() {
             bubbleView?.updateState(newState)
             syncBubbleLayout()
             // When done transcribing, hide bubble if keyboard is gone
-            if (newState is ServiceState.Idle && !TextInjectorService.isKeyboardVisible) {
+            if (newState is ServiceState.Idle && !keyboardLink.isKeyboardVisible) {
                 hideBubble()
             }
         }
