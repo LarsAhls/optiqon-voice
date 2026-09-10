@@ -7,11 +7,13 @@ skrevs samma natt och rättades direkt; allt annat är oförändrat.
 
 Rankningen är efter **förväntad framtida kostnad**, inte efter hur illa koden ser ut.
 
-**Uppdatering 2026-09-10:** fynd 1, 2, 3 och 4 är åtgärdade och stängda. Två av revisionens egna
-rader är dessutom rättade: fynd 1 påstod "noll migrationstester", men steget 7→8 var redan täckt,
-och fynd 4:s rekommenderade verifiering (grep i release-DEX) visade sig osund — den svarar grönt
-på en trasig release. Fynd 4 har flyttats hit från *Fix when touched*. Detaljer under respektive
-fynd.
+**Uppdatering 2026-09-10:** fynd 1, 2, 3, 4 och 5 är åtgärdade och stängda. Tre av revisionens
+egna rader är dessutom rättade: fynd 1 påstod "noll migrationstester", men steget 7→8 var redan
+täckt; fynd 4:s rekommenderade verifiering (grep i release-DEX) visade sig osund — den svarar
+grönt på en trasig release; och fynd 5 hade fel om *vad* som förlorades — inte flushen, utan
+bevarandet. Fynd 4 och 5 har flyttats hit från *Fix when touched*. Arbetet med fynd 5 blottade
+dessutom **ett nytt fynd (nr 9)**: samma förlust sker på transkriberingsvägen, och det är
+oklarerat. Detaljer under respektive fynd.
 
 ---
 
@@ -398,30 +400,142 @@ uppgiften körd. Commit `3975e05`.
 
 ---
 
-## Fix when touched
+### 5. `stopRecordingAndWait()` väntar inte, och anroparen avbryter flushen ✅ STÄNGT 2026-09-10
 
-### 5. `stopRecordingAndWait()` väntar inte, och anroparen avbryter flushen
-
-**Evidens.** `BubbleService.kt:685-692` stoppar recordern och avbryter tre jobb, med
-kommentaren *"Don't cancel recordingJob — let it finish flushing the file"* — men funktionen
-returnerar direkt. Den enda anroparen är `onDestroy()` (`:293-297`), som två rader senare kör
-`scope.cancel()`. `recordingJob` är startat i just den scopen (`:626`).
+**Evidens (som den löd vid revisionen).** `BubbleService.kt:685-692` stoppar recordern och
+avbryter tre jobb, med kommentaren *"Don't cancel recordingJob — let it finish flushing the
+file"* — men funktionen returnerar direkt. Den enda anroparen är `onDestroy()` (`:293-297`),
+som två rader senare kör `scope.cancel()`. `recordingJob` är startat i just den scopen (`:626`).
 
 **Allvarlighet / sannolikhet:** medel / medel. **Faktisk defekt, men liten yta.**
 
-**Påverkan.** Stoppas tjänsten mitt i en inspelning — "Turn off for now", en systemstopp, ett
-notifikationsstopp — avbryts flushen. Ljudet blir varken WAV, dikteringsrad eller bevarat fall.
-Användaren får ingen text och inget meddelande om att något gick förlorat. Namnet
-`…AndWait` säger dessutom motsatsen till vad koden gör, vilket är den dyra delen: nästa läsare
-tror att väntan redan finns.
+**Bekräftad — och revisionen hade fel om vad som förlorades.** Defekten är verklig, men
+"avbryter flushen" är inte den. `AudioRecorder.record()` skriver genom en **obuffrad**
+`FileOutputStream` inne i `use { }`, så byten ligger redan på disk. Det `scope.cancel()` förstör
+är **bevarandet**: ingen PCM→WAV-konvertering, ingen `preserveInterrupted`, ingen historikrad,
+inget meddelande. Två följder som revisionen inte nämnde: PCM-filen lämnas kvar i `cacheDir`, och
+**ljudfokus släpps aldrig** — användarens musik ligger nere tills något annat råkar ta fokus.
+Namnet `…AndWait` var det dyraste: det fick raden att passera granskning.
 
-**Billigaste tillräckliga verifiering.** Enhetstest som stoppar tjänsten under inspelning och
-hävdar antingen en bevarad fil eller ett uttryckligt meddelande.
+**Uppmätt RED före fix.** Med produktionskoden i sitt defekta läge (bevarandet startat i
+tjänstens egen scope): **5 av 6 nya tester faller**, och det som faller är att ingenting alls når
+bevarandet — inte ens PCM:en städas. Den sjätte, källkodsspärren, passerade rätt: inkopplingen var
+redan rätt, beteendet var fel.
 
-**Rekommendation.** Antingen gör den till det den heter (flusha under `NonCancellable` innan
-`scope.cancel()`), eller döp om den till `stopRecordingWithoutWaiting()` och skriv ned att
-ljudet förloras med flit. Båda är ärliga; dagens läge är det inte. **Effort:** några timmar.
-**Regressionsrisk:** medel — den rör nedstängningsvägen för mikrofonen.
+**Åtgärd.** Nedrivningen är lyft till `service/UnfinishedRecording.kt`:
+
+- `UnfinishedRecording` — vad som återstår av inspelningen, hämtat innan fälten nollas.
+- `cancelKeepingRecording(serviceScope, survivingScope, unfinished)` — lämnar över och avbeställer
+  sedan tjänstens scope. `onDestroy` har inget eget `scope.cancel()` kvar.
+- Den överlevande scopen är **applikationens** `@Singleton CoroutineScope` som redan fanns i
+  DI-grafen (`di/AccessModule.kt:60-63`), nu injicerad i `BubbleService`.
+- Kroppen kör under `NonCancellable` och `join`:ar inspelningskoroutinen genom
+  `runCatchingCancellable` (fynd 2:s lärdom), inte `runCatching`.
+- Den dubblerade bevarandesvansen i `stopRecordingAndPreserve(reason)` är borta — båda vägarna
+  går genom samma funktion. Två kopior är hur en av dem blir avbrytbar igen.
+- `abandonRecordingAudioFocus()` sker **synkront** i `takeUnfinishedRecording()`, medan tjänsten
+  fortfarande finns — scopen som annars skulle bära det är den som avbeställs.
+
+Användaren får nu en `FAILURE`-rad med `RecordingStoppedException`:s text, och ljudet behålls
+enligt hens egna historik- och retentionsinställningar.
+
+**Spärrar.** `app/src/test/java/se/optiqon/voice/service/RecordingTeardownTest.kt`, 6 tester.
+Fixturen modellerar recordern som den faktiskt beter sig — obuffrad ström i `use { }` som skriver
+sin sista buffert på väg ut — och kör nedrivningen på en enkeltrådad "Main"-dispatcher, precis
+som `onDestroy`. Det är vad som gör den gamla defekten deterministisk i stället för en kapplöpning.
+
+| Test | Vad det håller fast |
+| --- | --- |
+| *a recording outlives the service that was carrying it* | ljudet **och** längden når bevarandet |
+| *the recorder is allowed to finish writing before the file is read* | `join`:en — inspelningens sista buffert finns med |
+| *the working files go and the recorder is let go of* | PCM + WAV raderas, `onDone` exakt en gång |
+| *nothing recorded is not an error, and still cleans up* | tom inspelning blir ingen historikrad |
+| *a cancellation arriving mid-preserve does not lose the audio* | `NonCancellable` |
+| *the service really does route its destroy through this teardown* | inkopplingen: `onDestroy`, scope-valet, ljudfokus, `@Singleton`-scopen |
+
+`BubbleService` kan inte drivas här — `@AndroidEntryPoint`-Service med `WindowManager`-overlays
+och riktig `AudioRecord`, och modulen har inget `hilt-android-testing`. Därför är hälften en
+källkodsspärr. Ingen av hälfterna räcker: beteendetesterna skulle passera mot en funktion ingen
+anropar, och källkodsspärren mot en funktion som tappar ljudet.
+
+**Mutationer — en i taget, var och en återställd.**
+
+| # | Mutation | Utfall |
+| --- | --- | --- |
+| 1 | bevarandet startas i tjänstens scope (= det gamla läget) | **5 av 6 faller** |
+| 2 | `recordingJob?.join()` tas bort | 2 faller (svansen försvinner) |
+| 3 | `NonCancellable` → `EmptyCoroutineContext` | 1 faller |
+| 4 | avbeställ scopen **före** överlämningen | **ÖVERLEVDE** — se nedan |
+| 5 | `runCatchingCancellable` → `runCatching` | 1 faller (fynd 2:s spärr) |
+| 6 | `pcm.length() > 0L` tas bort | 1 faller |
+| 7 | `pcm?.delete()` tas bort | 2 faller |
+| 8 | `onDestroy` skickar `scope` som överlevande scope | 1 faller (källkodsspärren) |
+| 9 | `onDestroy` får tillbaka sitt eget `scope.cancel()` | 1 faller |
+| 10 | längden tappas på väg in (`0L`) | 1 faller |
+| 11 | `abandonRecordingAudioFocus()` tas bort | **ÖVERLEVDE först** — se nedan |
+
+**Två mutationer överlevde, och båda ändrade något.**
+
+- **Nr 4 är nu ett dokumenterat icke-krav.** Att byta plats på överlämningen och `serviceScope
+  .cancel()` håller hela sviten grön, eftersom inspelningskoroutinen `join`:as ändå. Ordningen
+  är alltså **inte** det som bär fixen — scope-valet är det. KDoc:en påstod ordningen, och är
+  rättad: mätningen falsifierade den egna kommentaren.
+- **Nr 11 blev en ny spärr.** Att ta bort `abandonRecordingAudioFocus()` höll varje
+  beteendetest grönt — ljudfokus vilade på ingenting. `AudioManager` inne i en Service modulen
+  inte kan instansiera går inte att driva här, så spärren läser källan. Den lades till **medan
+  mutationen satt kvar**, så dess RED är uppmätt, inte antagen.
+
+**Det som inte täcks, uttryckligen.**
+
+- `onDestroy` i sin helhet, och hela tjänstens livscykel. Mellanlagret mellan
+  `cancelKeepingRecording` och en verklig systemstopp är oprövat.
+- Att `preserveInterrupted` faktiskt skriver raden — `preserve`-kroken är en parameter här.
+  `TranscriptionManager` returnerar dessutom tidigt och behåller **ingenting** när
+  `!historyEnabled && retryEntryId == null`; med historiken av är tystnaden avsiktlig, och det
+  är inte den här fixens sak att ändra.
+- `RecordingStoppedException`:s text är teknisk engelska, som övriga undantag i kodbasen, och
+  hamnar som den är på en historikrad användaren ser. Inte lokaliserad. Samma sak gäller
+  `AccessRevokedException`, så detta är konsekvent snarare än nytt.
+- **Nedstängning under transkribering tappar fortfarande ljudet** — uppmätt, oåtgärdat,
+  uppskrivet som fynd 9.
+
+**Vad som medvetet lämnades.** En `SurvivingScope`-wrapper som hade gjort det till ett
+kompileringsfel att skicka tjänstens egen scope övervägdes och avvisades: den flyttar bara
+frågan till var wrappern konstrueras, och kostar en typ i produktionskoden för att ersätta en
+spärr som redan finns. `takeUnfinishedRecording()` är fortfarande privat i en klass som bär för
+mycket — det är fynd 7, inte det här.
+
+**Effort:** utfört. **Regressionsrisk:** medel — den rör nedstängningsvägen för mikrofonen, som
+revisionen varnade för. Hela sviten: **384 tester, 0 fel, 2 hoppade** (var 378). Commitar
+`9147b6e` och `fd847f9`.
+
+---
+
+### 9. Nedstängning under transkribering tappar ljudet på exakt samma sätt — oklarerat
+
+**Nytt fynd, uppmätt under arbetet med fynd 5.** `onDestroy` är nu säker medan tillståndet är
+`Recording`. Det är det inte medan det är `Transcribing` eller `PostProcessing`.
+`takeUnfinishedRecording()` returnerar `null` i de lägena, och `cancelKeepingRecording` avbeställer
+scopen som äger `transcriptionJob`. Koroutinens `catch (e: CancellationException)` läser
+`processingStoppedBy`, som är `null` när det är en nedstängning och inte ett återkallat tillstånd
+— alltså bevaras ingenting — och `finally` raderar WAV:en. Samma tysta förlust som fynd 5, på en
+annan väg.
+
+**Allvarlighet / sannolikhet:** medel / låg-medel. Fönstret är kortare än en inspelning, men allt
+användaren sa ligger i det.
+
+**Varför det inte åtgärdades här.** WAV:en finns bara som lokal variabel inne i
+`transcriptionJob`. Att låta någon utanför behålla den kräver att huvudflödet — den lyckade
+transkriberingsvägen — byggs om, vilket är en annan ändring än fynd 5 och bör bedömas som en
+sådan. Att göra det "på vägen" hade gjort fynd 5:s fix omöjlig att granska.
+
+**Billigaste tillräckliga verifiering.** Samma söm som fynd 5 fick, fast på den vägen: lämna
+WAV:en och `durationMs` till en överlevande scope när nedstängningen kommer, och pröva det med
+samma fixtur. **Effort:** en dag. **Regressionsrisk:** hög — det är appens huvudflöde.
+
+---
+
+## Fix when touched
 
 ### 6. Två tjänster kopplade genom processglobala `companion object`-fält
 
