@@ -56,15 +56,26 @@ class BubbleService : Service() {
         private const val TAG = "BubbleService"
         const val ACTION_START = "${BuildConfig.APPLICATION_ID}.ACTION_START_BUBBLE"
 
-        @Volatile
-        var isRunning: Boolean = false
-            private set(value) {
-                field = value
-                _runningState.value = value
-            }
-
         private val _runningState = MutableStateFlow(false)
+
+        /**
+         * Whether a bubble service is up. The home screen collects it: it is what the hero says,
+         * and what decides whether its button starts or stops the service.
+         *
+         * This used to be two fields - a `@Volatile var isRunning` whose private setter also wrote
+         * this flow. A debt review searched for readers of the var, found none, and recommended
+         * deleting it; deleting it would have taken the only writer of this flow with it and left
+         * the home screen insisting the bubble was off while it was on. One fact, one field, so
+         * there is nothing to delete by mistake and nothing for the two halves to drift apart on.
+         *
+         * It says the *service* is alive, not that the bubble is on screen - those can come apart
+         * (see finding 6 in the debt review), and this is not the flag to ask about that.
+         */
         val runningState: StateFlow<Boolean> = _runningState.asStateFlow()
+
+        private fun setRunning(value: Boolean) {
+            _runningState.value = value
+        }
 
         fun start(context: Context) {
             context.startForegroundService(Intent(context, BubbleService::class.java).apply {
@@ -164,7 +175,7 @@ class BubbleService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        isRunning = true
+        setRunning(true)
         val helper = NotificationHelper(this)
         notificationHelper = helper
         hapticFeedback = HapticFeedback(this)
@@ -303,7 +314,7 @@ class BubbleService : Service() {
     }
 
     override fun onDestroy() {
-        isRunning = false
+        setRunning(false)
         fanMenuController?.dismiss()
         val unfinished = takeUnfinishedRecording()
         removeBubble()
