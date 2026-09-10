@@ -7,9 +7,11 @@ skrevs samma natt och rättades direkt; allt annat är oförändrat.
 
 Rankningen är efter **förväntad framtida kostnad**, inte efter hur illa koden ser ut.
 
-**Uppdatering 2026-09-10:** fynd 1, 2 och 3 är åtgärdade och stängda. Fynd 1:s rubrik är dessutom
-rättad — den påstod "noll migrationstester", men steget 7→8 var redan täckt. Detaljer under
-respektive fynd.
+**Uppdatering 2026-09-10:** fynd 1, 2, 3 och 4 är åtgärdade och stängda. Två av revisionens egna
+rader är dessutom rättade: fynd 1 påstod "noll migrationstester", men steget 7→8 var redan täckt,
+och fynd 4:s rekommenderade verifiering (grep i release-DEX) visade sig osund — den svarar grönt
+på en trasig release. Fynd 4 har flyttats hit från *Fix when touched*. Detaljer under respektive
+fynd.
 
 ---
 
@@ -278,33 +280,125 @@ Hela sviten: **374 tester, 0 fel, 2 hoppade** (var 370). Commits `685d0ac` och `
 
 ---
 
-## Fix when touched
+### 4. R8:s keep-regler räknas upp per paket, så reflektionsberoende klasser utanför dem tystnar bara i release ✅ STÄNGT 2026-09-10
 
-### 4. R8:s keep-regler räknas upp per paket, så reflektionsberoende klasser utanför dem tystnar bara i release
-
-**Evidens.** `app/proguard-rules.pro` håller `se.optiqon.voice.data.api.model.**` och
-`se.optiqon.voice.data.db.entity.**`. `FeedbackPayload` lades i natt i
-`se.optiqon.voice.domain.feedback` och serialiseras av Gson via reflektion
+**Evidens (som den löd vid revisionen).** `app/proguard-rules.pro` håller
+`se.optiqon.voice.data.api.model.**` och `se.optiqon.voice.data.db.entity.**`. `FeedbackPayload`
+lades i natt i `se.optiqon.voice.domain.feedback` och serialiseras av Gson via reflektion
 (`FeedbackPayload.kt:34-37`). Den låg alltså utanför skyddet.
 
-**Verifierat, inte antaget.** Release-bygge kört: i `mapping.txt` kom `FeedbackBuildInfo` —
-samma källfil, ingen keep-regel — ut som `m5.a` med fälten `a` och `b`. Med den tillagda regeln
-överlever `FeedbackPayload`s sex fältnamn som strängar i `classes.dex`.
-
-**Allvarlighet / sannolikhet:** hög / medel. **Var en faktisk defekt; rättad i `788658c`.**
+**Allvarlighet / sannolikhet:** hög / medel. **Var en faktisk defekt; rättad i `788658c`
+samma natt.**
 
 **Påverkan (den kvarvarande, generella).** Enhetstesterna kör på JVM utan R8. En sådan här
 defekt kan alltså aldrig synas i en grön svit — den syns först i en release-APK, i fält.
 Konstruktionen "räkna upp paket" gör att nästa reflektionsberoende klass utanför de två paketen
 tystnar på exakt samma sätt.
 
-**Billigaste tillräckliga verifiering.** Grep i release-DEX efter fältnamnen, vilket är precis
-vad som gjordes.
+---
 
-**Rekommendation.** Behåll uppräkningen men flytta beviset: ett litet test som
-serialiserar/deserialiserar varje reflektionsberoende typ och jämför nyckelmängden, plus en
-release-DEX-kontroll i utsläppsskriptet. Rätta inte genom att keepa hela `domain`. **Effort:**
-några timmar. **Regressionsrisk:** låg.
+**Bekräftad.** Med keep-regeln för `FeedbackPayload` borttagen och ett verkligt release-bygge kört
+står alla sex fältnamnen som omdöpta i R8:s egen `mapping.txt` — `message -> a`, `contact -> b`,
+`appVersion -> c`, `androidSdk -> d`, `deviceModel -> e`, `createdAtMs -> f`. Samma byggträd,
+samma commit: **hela enhetssviten grön.** Det är RED-beviset, och det är också hela fyndets
+poäng — defekten finns bara där ingen JVM-test kan se den.
+
+**Revisionens egen rekommenderade verifiering håller inte.** "Grep i release-DEX efter
+fältnamnen" — raden ovan, skriven av mig — är osund, och det är uppmätt: med keep-regeln
+borttagen och varje fält bevisat omdöpt fanns `contact`, `deviceModel` och `createdAtMs`
+fortfarande som strängar i `classes.dex`. De kommer från annat: `FeedbackDocument.kt` skriver
+samma namn som handskrivna literaler, och `createdAtMs` är dessutom ett Room-kolumnnamn i det
+keepade `data.db.entity`. En grep svarar grönt på en trasig release. `mapping.txt` svarar exakt.
+
+**Invarianten är skarpare än "räkna upp paket".** Gson läser aldrig ett klass*namn* — den
+reflekterar över *fält*. Ett reflektionsserialiserat fält är säkert i release om **antingen**
+det bär `@SerializedName` (ett strängkonstant R8 inte kan döpa om) **eller** dess klass ligger
+under en keep-regel som bevarar `<fields>`. Allt under `data.api.model` är säkert via det första
+och behöver därför inte stå på någon lista; `FeedbackPayload` bär ingen annotering alls och
+hänger helt på det andra. Det är skillnaden mellan de två som gör regeln bärande, inte paketet.
+
+**Åtgärd.** Svaret är medvetet tvedelat, för att ingen halva räcker. Filen
+`app/release-reflection-contract.txt` namnger de typer vilkas fältnamn är ett trådkontrakt, i
+**en** fil eftersom två
+kontroller måste läsa samma lista: `ReleaseReflectionContractTest` (4 tester, på JVM) kontrollerar
+*orsaken* — det statiskt synliga — och Gradle-uppgiften `verifyReleaseReflectionContract`, som
+`assembleRelease` och `bundleRelease` är `finalizedBy`, kontrollerar *verkan* i R8:s `mapping.txt`
+efter `minifyReleaseWithR8`. Bara den senare kan faila av den verkliga orsaken, och den kan inte
+köras på JVM.
+
+En detalj som måste stå skriven: R8 loggar **bara omdöpningar**. Ett bevarat fält har ingen rad
+alls, så grönt är *frånvaro* och det som failar är att raden finns. Klassnamnet kontrolleras
+inte — en omdöpt klass med bevarade fält är korrekt för Gson och ska inte faila.
+
+Nyckelmängdstesterna revisionen också bad om finns redan och dubblerades inte:
+`FeedbackPayloadTest.kt:31` och `FeedbackDocumentTest.kt:41` spärrar båda den exakta
+nyckelmängden. De fångar ett glömt fält, aldrig en saknad keep-regel — på JVM finns ingen
+keep-regel att sakna. Det står i testets KDoc så att ingen lägger till dem igen.
+
+**Spärrar:**
+
+| Spärr | Vad den spärrar |
+|---|---|
+| `every type whose field names are a wire contract is under a keep rule that preserves them` | Varje kontraktstyp täcks av en regel som bevarar `<fields>` |
+| `the rules these tests read are the rules R8 is given` | `proguardFiles` namnger verkligen regelfilen, och release minifierar fortfarande |
+| `no type reaches Gson through a route nobody checked` | Nytt `toJson`/`fromJson`/`@Body`/konverterare i en fil ingen granskat |
+| `the contract names types that exist and really do need the rule` | Kontraktstypen finns kvar, och är inte redan omdöpningssäker via `@SerializedName` |
+| `verifyReleaseReflectionContract` (Gradle, efter R8) | Ett kontrakterat fält faktiskt omdöpt i `mapping.txt` |
+
+**Bevis att spärrarna kan gå sönder.** Tio avsiktliga mutationer, en åt gången, varje gång
+återställd:
+
+| Mutation | Utfall |
+|---|---|
+| keep-regeln för `FeedbackPayload` borttagen, bygget i sitt gamla läge | **hela sviten grön** — RED-beviset för fyndet; release-sidan failar och namnger alla sex fälten |
+| keep-regeln utkommenterad i stället för borttagen | JVM-spärr 1, ensam |
+| regeln pekad på ett närliggande men fel paket | JVM-spärr 1, ensam |
+| en andra kontraktstyp utan egen regel | JVM-spärr 1, ensam |
+| kontraktet namnger en typ som inte finns | JVM-spärr 4, ensam |
+| fälten annoterade med fullt kvalificerat `@com.google.gson.annotations.SerializedName` | JVM-spärr 4, ensam |
+| nytt `toJson`-anrop i `FeedbackDocument.kt` | JVM-spärr 3, ensam |
+| `proguardFiles` pekad på en omdöpt regelfil | JVM-spärr 2, ensam |
+| `isMinifyEnabled = false` (plus `isShrinkResources = false`, se nedan) | JVM-spärr 2, ensam |
+| kontraktsfilen tömd | rött på båda nivåerna |
+
+`isMinifyEnabled = false` ensamt når inte fram till testet — AGP vägrar vid konfiguration
+("Removing unused resources requires unused code shrinking to be turned on"). Mutationen kördes
+därför om med båda flaggorna av, och då failar spärren som avsett.
+
+**Mutationerna hittade fyra hål i spärrarna själva**, alla rättade i samma commit. Två av dem är
+samma klass av defekt som fynd 3:s saknade `inputs.dir`:
+
+- `testDebugUnitTest` var **UP-TO-DATE** efter att en keep-regel raderats, och **FROM-CACHE** efter
+  en källändring. En fil som läses som *data* är ingen deklarerad indata, så spärren kördes inte
+  alls och rapporterade grönt. Fyra `inputs.file`/`inputs.dir` tillagda.
+- Regexen för keep-regler matchade `-keep` inne i en **utkommenterad** regel. `filterNot` på
+  träffen testade träffen, som börjar vid `-keep`, inte raden. Kommentarer strippas nu först.
+- `proguardFiles`-kontrollen var uppfylld av **sin egen ställning**: den sökte hela byggfilen
+  efter regelfilens namn och hittade `inputs.file(…"proguard-rules.pro")`-raden som lagts till för
+  just det här testet. Läser nu argumentlistan med balanserade parenteser.
+- `Regex.escape` sveper in mönstret i `\Q…\E` i stället för att backsläsa varje metatecken, så
+  ersättningskedjan över stjärnorna träffade aldrig något och **inget wildcard-mönster matchade
+  någonting alls**. Den exakta regeln på kontraktet har inga wildcards, så buggen syntes först
+  när en paketbred regel prövades. Översatt tecken för tecken nu.
+
+**Det som inte täcks, uttryckligen.** Ett hål, uppmätt: en **för bred** keep-regel fångas inte.
+`-keep class se.optiqon.voice.domain.** { <fields>; }` — precis det revisionen sa att man inte
+skulle göra — passerar båda nivåerna. Båda kontrollerar att fältnamnen *överlever*; ingen av dem
+kan skilja en nödvändig keep från en onödig. Felmeddelandena säger det åt läsaren, och
+kommentaren i regelfilen står kvar, men det är granskning, inte en spärr.
+
+**Vad som medvetet lämnades.** `REFLECTION_SITES` är handskriven av samma skäl som bildlistan i
+fynd 3: att härleda Kotlin-typer ur källtext pålitligt går inte, och en lista som *måste*
+redigeras failar åt båda hållen. Kontraktet spärrar inte heller vilka fält en typ har — det
+gör nyckelmängdstesterna.
+
+**Effort:** utfört. **Regressionsrisk:** ingen i produktionskod — ingen produktionsfil ändrades.
+Hela sviten: **378 tester, 0 fel, 2 hoppade** (var 374). `assembleRelease` grön med den nya
+uppgiften körd. Commit `3975e05`.
+
+---
+
+## Fix when touched
 
 ### 5. `stopRecordingAndWait()` väntar inte, och anroparen avbryter flushen
 
