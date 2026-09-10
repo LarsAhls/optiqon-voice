@@ -236,6 +236,13 @@ class RecordingTeardownTest {
                 "about, so the preserving would race a deletion it cannot see.\n" + awaiting,
             awaiting.contains("takeAudioFromCancelledJob(")
         )
+        assertTrue(
+            "The mid-transcription teardown does not pass on the duration measured when the " +
+                "recording stopped, so the preserved history row would misreport how long the " +
+                "user spoke. Nothing here can drive the real service, hence the source read.\n" +
+                awaiting,
+            awaiting.contains("processingDurationMs")
+        )
 
         // The surviving scope has to come from somewhere that really does outlive the service.
         val module = File(MODULE_DIR, "src/main/java/se/optiqon/voice/di/AccessModule.kt").readText()
@@ -267,6 +274,25 @@ class RecordingTeardownTest {
                 "stopped; the history row would misreport how long the user spoke.",
             DURATION_MS,
             f.preservedDuration()
+        )
+    }
+
+    @Test
+    fun `there is nothing to hand over when the file is empty`() {
+        val empty = File(tmp.root, "recording_empty.wav").also { it.createNewFile() }
+        val to = File(tmp.root, "interrupted_empty.wav")
+
+        assertEquals(
+            "An empty working file was handed over as if it were a dictation. The caller builds " +
+                "an UnfinishedRecording around whatever comes back, so a path to nothing becomes " +
+                "a history row about nothing - and the real audio is not there to be found later.",
+            null,
+            takeAudioFromCancelledJob(empty, to)
+        )
+        assertFalse(
+            "Nothing was worth taking, and the file was moved anyway. A hand-over that reports " +
+                "failure must not also have had an effect.",
+            to.exists()
         )
     }
 
@@ -413,6 +439,13 @@ class RecordingTeardownTest {
 
         private val transcribing = CompletableDeferred<Unit>()
 
+        /**
+         * Opened once the cancelled request has run its own `finally`. The preserving waits for it,
+         * because otherwise whether the audio survives depends on which of two coroutines happens
+         * to get there first - and measured, the lucky order is the common one.
+         */
+        private val deletionDone = CompletableDeferred<Unit>()
+
         /** The in-flight request, and the `finally` that deletes the file it knows about. */
         private val transcriptionJob: Job = serviceScope.launch {
             try {
@@ -439,7 +472,10 @@ class RecordingTeardownTest {
                 durationMs = DURATION_MS,
                 convert = { _, _ -> error("There is no PCM left to convert in this state") },
                 preserve = { audio, duration ->
-                    preservedFrom = audio.readBytes()
+                    deletionDone.await()
+                    // Defensively, so that a lost file fails with the message below rather than an
+                    // IOException out of a coroutine nobody is awaiting.
+                    preservedFrom = if (audio.exists()) audio.readBytes() else null
                     preservedDurationMs = duration
                 },
             )
@@ -449,6 +485,7 @@ class RecordingTeardownTest {
             // The cancelled request's own cleanup, which deletes the path it knows about. If the
             // hand-over left the audio at that path, this is what loses it.
             runBlocking { withTimeout(TIMEOUT_MS) { transcriptionJob.join() } }
+            deletionDone.complete(Unit)
         }
 
         fun awaitPreserving() {
