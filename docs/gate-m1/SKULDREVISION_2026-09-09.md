@@ -629,7 +629,7 @@ filen ändå ska ändras — inspelningen är den självständigaste och den mes
 
 ## Accept / monitor
 
-### 8. `BubbleService.isRunning` skrivs på två ställen och läses ingenstans
+### 8. `BubbleService.isRunning` skrivs på två ställen och läses ingenstans ❌ FELAKTIGT FYND — rättat och stängt 2026-09-10
 
 **Evidens.** `BubbleService.kt:60-61` deklarerar `@Volatile var isRunning`, satt till `true` på
 `:152` och `false` på `:291`. Sökning i hela `app/src` ger noll läsare (de träffar som finns i
@@ -643,6 +643,46 @@ utan att tjänsten dör (se fynd 6), så flaggan skulle ljuga just i det fall n�
 den.
 
 **Rekommendation.** Ta bort raden nästa gång filen öppnas. Ingen egen insats.
+
+---
+
+#### Rättelse 2026-09-10: evidensen var falsk, och rekommendationen var farlig
+
+**Fältet läses.** Inte direkt, men dess `private set` var den **enda skrivaren** av
+`_runningState`, och `runningState` kollas av `HomeScreen.kt:108`. Den flaggan är vad hjälten på
+hemskärmen säger (*"The bubble is on"* / *"off"*) och vad som avgör om dess knapp startar
+tjänsten eller stoppar den (`HomeScreen.kt:136`). Sökningen som gjordes — läsare av `isRunning` —
+kunde inte se det, eftersom kopplingen går genom setteren.
+
+**Att följa rekommendationen hade gått sönder.** Utan skrivaren fryser `runningState` på `false`:
+hemskärmen påstår att bubblan är av medan den är på, och knappen erbjuder sig att starta en andra
+tjänst. Det är värre än det döda fält fyndet trodde att det beskrev.
+
+**Vad som gjordes i stället — motsatsen till rekommendationen.** Faktumet behölls, dubbletten
+togs bort: `setRunning()` är enda skrivaren, flödet enda innehavaren, och ett `var` som *ser*
+oläst ut går inte längre att ta bort för sig. Flaggan säger att *tjänsten* lever, inte att
+bubblan syns — de kan glida isär, vilket är fynd 6, och det står nu i KDoc:en så att nästa läsare
+inte frågar flaggan om fel sak.
+
+**Spärr.** `ServiceRunningStateTest` läser källan för det ingen enhetstest här kan driva (tjänsten
+är en `@AndroidEntryPoint` som lägger overlays på skärmen): `onCreate` publicerar `true`,
+`onDestroy` publicerar `false`, inget andra föränderligt fält håller samma sak, och tillståndet har
+exakt en skrivare. Plus ett beteendetest: ingenting är igång innan en tjänst har sagt det.
+
+**RED uppmätt mot den gamla formen** — två av de tre testerna faller där (det mättes av misstag,
+genom att en återställning under mutationsarbetet tog refaktoreringen med sig, och det var en
+bättre mätning än den jag hade planerat). **Fem mutationer, en i taget, var och en återställd:**
+`setRunning(true)` bort, `setRunning(false)` bort, ett andra `@Volatile var` tillbaka,
+begynnelsevärdet `true`, och en andra skrivare insmugen i `onStartCommand`. Alla fem dör, var och
+en på exakt den spärr den riktar sig mot.
+
+**Lärdomen om revisionen själv.** "Noll läsare" ur en textsökning är inte samma sak som död kod
+när kopplingen går genom en setter eller en `StateFlow`. Det här var det enda av de nio fynden
+vars evidens inte höll — de övriga åtta stämde vid mätning.
+
+**Effort:** utfört (minuter, som uppskattat — men innehållet blev ett annat).
+**Regressionsrisk:** ingen ny: en fälttilldelning blev ett funktionsanrop, och hemskärmens
+läsväg är oförändrad. Hela sviten: **389 tester, 0 fel, 2 hoppade** (var 386). Commit `73e14a6`.
 
 ---
 
