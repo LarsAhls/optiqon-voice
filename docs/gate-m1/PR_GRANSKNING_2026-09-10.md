@@ -18,7 +18,8 @@ Underlag: `docs/MISSION_2_SPEC.md`, `docs/DECISION_SHEET_2026-09-10.md`,
 | **#10** `minSdk 28` | **Matchar D8 exakt** | Nej | Två stale `minSdk = 26`-referenser, båda avsiktligt orörda |
 | **#12** Offline-text vid inloggning | **Ingen regression, korrekt klassning** | Nej | Två fynd, båda backlog-material |
 
-Merge-lyft för #10 och #12 är Lars beslut. #9 mergas enligt planen efter G3 och efter den
+**Uppdatering 2026-09-10:** #10 (`4792200`) och #12 (`29d873a`) är mergade efter Lars merge-lyft;
+`main` står på `649b799`. #9 mergas enligt planen efter G3 och efter den
 fysiska 8→9-verifieringen på enhet — den ordningen är specens egen
 (*"Room v9 is not in the G3 build … Mission 2's APK is installed after G3"*).
 
@@ -81,7 +82,20 @@ inserten får `"profileKind" to "GENERAL"`, och KDoc:en förklarar varför siffr
 `MigrationChainTest.CURRENT_VERSION = 9`. Meddelandeassertionen är **inte** uppmjukad — det
 hade varit utanför ramen.
 
-### Öppna beslut för Lars (eskaleras, inte avgjorda)
+### Öppna beslut för Lars (eskaleras, inte avgjorda) — **avgjorda 2026-09-10, se rutan**
+
+> **Beslut 2026-09-10 (Lars/ChatGPT).** Granskningen är godkänd. B1 **godkänd** — sex värden är
+> spec-enligt, PR-beskrivningen är rättad. B2 **avslagen** — `CHAT` och `SOCIAL` får deklarera sin
+> `ProfileKind`/kontext men ska **inte** skriva över användarens separata stilfält med `RELAXED`
+> och `emojiAllowed = true`; `NOTES = LIGHT` behålls; ingen migrering och ingen befintlig profil
+> får ändras av detta. B3 är **inte** ett produktbeslut utan löses spec-konformt i M-C: bevara
+> signaturen specen kräver, eller använd en annan intern söm som ger samma kontrakt — eskalera
+> endast om det kräver en materiell arkitekturändring. Å1 (nyckelexponeringen) **ska åtgärdas i
+> M-C före merge** med minimal representation, t.ex. `hasApiKey: Boolean`; ingen API-nyckel får
+> kunna hamna i `toString()`, en Compose-dump eller vanlig krasch-/loggutdata. PR #9 är därmed
+> fortfarande **inte** godkänd för merge. Besluten är också inskrivna i PR #9:s beskrivning.
+
+
 
 **B1 — Sex `ProfileKind` är *inte* en avvikelse. PR-texten har fel om sin egen PR.**
 PR-beskrivningen listar *"Sex värden, inte fem som specen sa"* som avvikelse 1.
@@ -252,9 +266,13 @@ testinfrastrukturskuld.
 
 | Punkt | Vem | När |
 |---|---|---|
-| Merge-lyft #10 | Lars | När som helst; före A7-bygget |
-| Merge-lyft #12 (gärna efter Fynd 2:s två tester) | Lars | När som helst |
-| Beslut B2 och B3 på #9 | Lars | Före #9:s merge |
+| ~~Merge-lyft #10~~ | — | **Mergad 2026-09-10** (`4792200`) |
+| ~~Merge-lyft #12~~ | — | **Mergad 2026-09-10** (`29d873a`) |
+| ~~Beslut B2 och B3 på #9~~ | — | **Avgjorda 2026-09-10** — B2 avslagen, B3 löses spec-konformt |
+| ~~Å2 PR-beskrivningen (B1)~~ | — | **Rättad 2026-09-10** i PR #9:s beskrivning |
+| B2:s följdändring: ta bort `suggested` för `CHAT`/`SOCIAL` | Claude, inom M-C | Före #9:s merge |
+| B3: spec-konform lösning för `ProfilesViewModel` | Claude, inom M-C | Före #9:s merge |
 | Å1 nyckelexponeringen | Claude, inom M-C | Före #9:s merge |
-| Å2/Å3 PR-beskrivningen på #9 | Claude, inom M-C | Före #9:s merge |
+| Fynd 2 på #12: två tester för `Offline`/`Cancelled` | Claude, backlog | Ej merge-blockerande |
+| Fynd 1 på #12: `NET_CAPABILITY_VALIDATED` | Claude, backlog | Ej merge-blockerande |
 | Fysisk Room 8→9 på enhet + full svit | M-C, efter G3 | Efter G3-closeout |
