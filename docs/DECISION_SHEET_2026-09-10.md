@@ -1,5 +1,30 @@
 # Decision sheet — sitting 1, 2026-09-10
 
+> **ANSWERED 2026-09-10.** All seven lines decided; the answers are recorded immediately below
+> and the questions are kept underneath as the record of what was asked and on what evidence.
+
+## Answers
+
+| # | Decision | Answer |
+|---|---|---|
+| 1 | `MISSION_2_SPEC.md` | **Approved in full, including `NOTES` = `SummarizeMode.LIGHT`.** Room 8→9 and its irreversibility accepted knowingly. |
+| 2 | Merge lift for the grace rename | **Lifted.** Merged as [PR #6](https://github.com/LarsAhls/optiqon-voice/pull/6) → `007230f`. |
+| 3 | **D2** — existing installation | **Rotation in place, no uninstall.** G3 runs first; the debug-signed APK is kept on hand as the fallback. |
+| 4 | **D8** — Android floor | **Raise `minSdk` 26 → 28.** Lars confirms no tester is on Android 8.0/8.1. |
+| 5 | **D3** — distribution | **Firebase App Distribution.** Console work is Lars's, in sitting 3. |
+| 6 | Identity for feedback | **Reuse the live Firebase Auth.** Feedback is therefore never anonymous — accepted. |
+| 7 | G3 | **Box open, sitting 2 booked.** |
+
+**What the answers unblock:** Mission 2 is built in full per the approved spec; the `minSdk` raise
+becomes a PR (running code — it needs its own lift before merge); the G3 build is prepared and
+every part of the smoke protocol that does not need the phone is filled in; the G4 commands are
+made concrete for floor 28; and the App Distribution console steps become a tickable list for
+sitting 3. No key is generated and no password entered — G4 stays Lars's work in sitting 3.
+
+---
+
+## The questions as asked
+
 Seven lines. None needs the phone. Everything else in the programme is built autonomously
 between this sitting and the device run, so this is the sheet that unblocks the rest.
 
