@@ -1,8 +1,10 @@
 name: Unit tests
 
-# Runs the JVM test suite on every push and pull request. The suite is offline by
-# construction: the post-processing benchmark skips itself unless OPENAI_ENDPOINT and a key
-# are present in the environment, and neither is set here, so no provider is ever called.
+# Runs the JVM test suite and the Firestore rules suite on every push and pull request. Both
+# are offline by construction: the post-processing benchmark skips itself unless
+# OPENAI_ENDPOINT and a key are present in the environment, and neither is set here; the
+# rules suite runs against the local Firestore emulator under a project id that does not
+# exist (optiqon-voice-rules-test). No provider is ever called.
 
 on:
   push:
@@ -50,3 +52,28 @@ jobs:
           path: app/build/outputs/roborazzi
           if-no-files-found: ignore
           retention-days: 7
+
+  firestore-rules:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The emulator is a Java program; the tests themselves are Node.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install rules tooling
+        run: npm ci
+
+      - name: Run Firestore rules and bootstrap tests against the emulator
+        run: npm run test:rules

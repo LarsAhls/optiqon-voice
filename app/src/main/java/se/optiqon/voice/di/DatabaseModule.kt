@@ -7,9 +7,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import se.optiqon.voice.data.db.OptiqonVoiceDatabase
 import se.optiqon.voice.data.db.dao.DictationDao
 import se.optiqon.voice.data.db.dao.LifetimeStatsDao
+import se.optiqon.voice.data.db.dao.OutboxDao
 import se.optiqon.voice.data.db.dao.PostProcessingPromptDao
 import se.optiqon.voice.data.db.dao.ProfileDao
 import se.optiqon.voice.data.db.dao.TextReplacementRuleDao
+import se.optiqon.voice.data.storage.StorageRoot
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -138,22 +140,62 @@ object DatabaseModule {
         }
     }
 
+    /**
+     * Adds the outbox. This is a real migration rather than a destructive fallback because
+     * version 7 databases hold the only copy of a tester profile, API keys and dictation
+     * history; dropping them to make room for a queue would be an absurd trade.
+     */
+    private val migration7To8 = object : Migration(7, 8) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `outbox` (
+                    `id` TEXT NOT NULL,
+                    `ownerUid` TEXT NOT NULL,
+                    `kind` TEXT NOT NULL,
+                    `payload` TEXT NOT NULL,
+                    `createdAtMs` INTEGER NOT NULL,
+                    `state` TEXT NOT NULL,
+                    `attempts` INTEGER NOT NULL,
+                    `lastError` TEXT,
+                    PRIMARY KEY(`id`)
+                )
+                """.trimIndent()
+            )
+        }
+    }
+
+    /**
+     * Every migration, in order. Exposed rather than inlined so the migration tests upgrade a
+     * real version 7 file through the same chain a phone does.
+     */
+    internal val ALL_MIGRATIONS = arrayOf(
+        migration1To2,
+        migration2To3,
+        migration3To4,
+        migration4To5,
+        migration5To6,
+        migration6To7,
+        migration7To8
+    )
+
     @Provides
     @Singleton
-    fun provideDatabase(@ApplicationContext context: Context): OptiqonVoiceDatabase {
+    fun provideDatabase(
+        @ApplicationContext context: Context,
+        storageRoot: StorageRoot
+    ): OptiqonVoiceDatabase {
         return Room.databaseBuilder(
             context,
             OptiqonVoiceDatabase::class.java,
-            "optiqon_voice.db"
-        ).addMigrations(
-            migration1To2,
-            migration2To3,
-            migration3To4,
-            migration4To5,
-            migration5To6,
-            migration6To7
-        )
-            .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
+            storageRoot.databaseName
+        ).addMigrations(*ALL_MIGRATIONS)
+            // No destructive fallback in either direction. Opening a file written by a newer
+            // schema version now fails with an IllegalStateException and leaves the file
+            // untouched, instead of dropping every table. A distributed build must never be
+            // able to erase a tester's history by being older than the one before it; the
+            // rule "never distribute a lower schema version" is enforced elsewhere, this is
+            // what happens if it is broken anyway. See DowngradeGuardTest.
             .build()
     }
 
@@ -171,4 +213,7 @@ object DatabaseModule {
 
     @Provides
     fun provideLifetimeStatsDao(db: OptiqonVoiceDatabase): LifetimeStatsDao = db.lifetimeStatsDao()
+
+    @Provides
+    fun provideOutboxDao(db: OptiqonVoiceDatabase): OutboxDao = db.outboxDao()
 }

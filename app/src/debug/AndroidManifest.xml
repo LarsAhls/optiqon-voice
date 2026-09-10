@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug-only additions. Merged into the debug variant's manifest and absent from release;
+  the release build's merged manifest is checked for the receiver's absence as part of the
+  Mission L1 definition of done.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!--
+          adb-only test hooks for the access smoke. DUMP is a signature|privileged
+          permission that the adb shell holds and no installable app can be granted, so
+          "exported" here means "reachable from adb", not "reachable from other apps".
+        -->
+        <receiver
+            android:name="se.optiqon.voice.debug.AccessDebugReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="se.optiqon.voice.debug.FAIL_REFRESH" />
+                <action android:name="se.optiqon.voice.debug.CLOCK_OFFSET" />
+                <action android:name="se.optiqon.voice.debug.EXPORT_ID_TOKEN" />
+                <action android:name="se.optiqon.voice.debug.SIGN_OUT" />
+                <action android:name="se.optiqon.voice.debug.SEED_SYNTHETIC" />
+                <action android:name="se.optiqon.voice.debug.DUMP_STATE" />
+            </intent-filter>
+        </receiver>
+    </application>
+
+</manifest>

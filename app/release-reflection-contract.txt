@@ -1,0 +1,22 @@
+# Types whose FIELD NAMES are part of a wire contract and are read reflectively.
+#
+# Gson does not care what a class is called — it reflects over the fields — so the thing that
+# has to survive R8 is each field's name. A field is safe in release if either:
+#
+#   a) it carries @SerializedName, whose value is a string constant R8 cannot rename, or
+#   b) its class is under a keep rule in proguard-rules.pro that preserves <fields>.
+#
+# Everything under se.optiqon.voice.data.api.model is safe by (a) and is deliberately absent
+# from this file. What is listed here is safe only by (b), which makes the keep rule load
+# bearing: delete it and the release build writes {"a":…,"b":…} while the whole unit suite —
+# which runs on the JVM, un-shrunk — stays green. That happened once already; FeedbackPayload
+# was added outside the two kept packages and was obfuscated in a real release build.
+#
+# Read by two checks that have to agree, which is why the list lives in one file:
+#   ReleaseReflectionContractTest  — on the JVM, asserts a field-preserving keep rule exists
+#   verifyReleaseReflectionContract — after R8, asserts mapping.txt really did preserve them
+#
+# One fully-qualified class name per line. Do not add a type here to silence a failure; a type
+# belongs here only if its field names are genuinely read by name at runtime.
+
+se.optiqon.voice.domain.feedback.FeedbackPayload

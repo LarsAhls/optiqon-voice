@@ -1,0 +1,202 @@
+package se.optiqon.voice.debug
+
+import se.optiqon.voice.data.db.entity.Dictation
+import se.optiqon.voice.data.db.entity.ProfileEntity
+import se.optiqon.voice.data.db.entity.TextReplacementRuleEntity
+import se.optiqon.voice.data.storage.StorageRoot
+import java.io.File
+import java.security.MessageDigest
+
+/**
+ * Seeds the *default* storage root with a known, synthetic data set and renders a
+ * deterministic description of it, so that an in-place update of the app (Mission L1, B.2:
+ * a signing-key rotation) can be shown to leave every persisted thing exactly as it was.
+ *
+ * Debug source set only; reached through [AccessDebugReceiver] from adb. The Android plumbing
+ * (Room, DataStore, EncryptedSharedPreferences, the binding prefs) sits behind [Sink] so this
+ * class is unit-testable with a fake, and so the seed data is defined in exactly one place.
+ *
+ * What the rendered state contains: counts, names, settings values, the binding/claim of the
+ * default root, the recorded access verdict, and SHA-256 digests of the two API keys read back
+ * *decrypted* from the keystore-backed store. The key values themselves are never written
+ * anywhere: a digest that is equal before and after proves the AndroidKeyStore master key
+ * still unwraps them, which is the point of the check, without copying a secret into a file.
+ */
+class SyntheticState(private val sink: Sink, private val filesDir: File) {
+
+    data class Outcome(val ok: Boolean, val description: String)
+
+    /** Everything the dump reads from the default root, plus the process root for context. */
+    data class DefaultRootState(
+        /** The root these numbers describe. Not the same thing as the process root below. */
+        val dumpedRoot: String,
+        val processRoot: String,
+        val dbUserVersion: Int,
+        val profileNames: List<String>,
+        val activeProfileNames: List<String>,
+        val ruleNames: List<String>,
+        val dictationCount: Int,
+        val dictationWordTotal: Int,
+        val dictationTexts: List<String>,
+        val settings: Map<String, String>,
+        val asrApiKey: String,
+        val llmApiKey: String,
+        val defaultOwner: String?,
+        val activeUid: String?,
+        val accessStatus: String?
+    )
+
+    interface Sink {
+        /** The root this process resolved at start-up; seeding only makes sense on the default one. */
+        val processRootName: String
+        suspend fun insertProfile(profile: ProfileEntity)
+        suspend fun insertRule(rule: TextReplacementRuleEntity)
+        suspend fun insertDictation(dictation: Dictation)
+        suspend fun seedSettings(asrApiKey: String, llmApiKey: String)
+        /** Must throw [IllegalStateException] when the default root is already claimed. */
+        fun claimDefaultAndActivate(uid: String)
+        suspend fun recordApproved(uid: String)
+        /**
+         * Reads one root's own files by name, whichever root this process resolved to.
+         *
+         * Takes the root as an argument rather than reading "the" root because the questions
+         * this dump answers are per-root ones: whether the account that just signed in has its
+         * settings and history, and — the harder one — whether the account next door can be
+         * seen from here at all. A dump that could only describe the default root could not
+         * even ask that.
+         */
+        suspend fun readRoot(root: StorageRoot): DefaultRootState
+        /**
+         * What the platform reports as this package's current signer(s) and signing history,
+         * one line per fact, or empty when not available. Goes to a file of its own because
+         * it is *expected* to change across a rotation while the state must not.
+         */
+        fun signingReport(): List<String> = emptyList()
+    }
+
+    suspend fun seed(): Outcome {
+        if (sink.processRootName != StorageRoot.DEFAULT.name) {
+            return Outcome(
+                false,
+                "process root is '${sink.processRootName}', not '${StorageRoot.DEFAULT.name}'; not seeding"
+            )
+        }
+        val before = sink.readRoot(StorageRoot.DEFAULT)
+        if (before.profileNames.any { it.startsWith(PROFILE_PREFIX) }) {
+            return Outcome(false, "already seeded (a '$PROFILE_PREFIX*' profile exists); nothing written")
+        }
+        if (before.defaultOwner != null) {
+            return Outcome(false, "default root already claimed by another uid; nothing written")
+        }
+
+        PROFILES.forEach { sink.insertProfile(it) }
+        RULES.forEach { sink.insertRule(it) }
+        DICTATIONS.forEach { sink.insertDictation(it) }
+        sink.seedSettings(ASR_API_KEY, LLM_API_KEY)
+        sink.claimDefaultAndActivate(UID)
+        sink.recordApproved(UID)
+
+        val after = sink.readRoot(StorageRoot.DEFAULT)
+        return Outcome(
+            true,
+            "seeded: profiles=${after.profileNames.size} rules=${after.ruleNames.size} " +
+                "dictations=${after.dictationCount} owner=${after.defaultOwner} access=${after.accessStatus}"
+        )
+    }
+
+    /**
+     * Writes one root's readout to `files/debug/`, digests only.
+     *
+     * @param root the root to read; the process's own when null. The default root keeps the
+     * file name it has always had so an existing record still points at the same place; every
+     * other root gets its own file, so two roots can be dumped and compared without one
+     * overwriting the evidence for the other.
+     */
+    suspend fun dump(root: StorageRoot? = null): Outcome {
+        val target = root ?: StorageRoot(sink.processRootName)
+        val state = sink.readRoot(target)
+        val text = render(state)
+        val fileName = if (target.isDefault) STATE_FILE_NAME else "state-${target.name}.txt"
+        val file = File(File(filesDir, "debug"), fileName)
+        file.parentFile?.mkdirs()
+        file.writeText(text)
+        val signers = sink.signingReport()
+        if (signers.isNotEmpty()) File(file.parentFile, SIGNER_FILE_NAME).writeText(signers.joinToString("\n", postfix = "\n"))
+        return Outcome(true, "state of root '${target.name}' written to files/debug/$fileName (${text.lines().size} lines)")
+    }
+
+    /** Deterministic: same state, same text. Key values appear only as digests. Lines starting with `#` are context. */
+    fun render(s: DefaultRootState): String = buildString {
+        appendLine("root=${s.dumpedRoot}")
+        appendLine("# process_root=${s.processRoot}  (context, not state: becomes signedout once the default root is claimed and nobody is signed in)")
+        appendLine("db_user_version=${s.dbUserVersion}")
+        appendLine("profiles=${s.profileNames.size}")
+        appendLine("profile_names=${s.profileNames.sorted().joinToString("|")}")
+        appendLine("active_profiles=${s.activeProfileNames.sorted().joinToString("|")}")
+        appendLine("rules=${s.ruleNames.size}")
+        appendLine("rule_names=${s.ruleNames.sorted().joinToString("|")}")
+        appendLine("dictations=${s.dictationCount}")
+        appendLine("dictation_words=${s.dictationWordTotal}")
+        appendLine("dictation_texts_sha256=${sha256(s.dictationTexts.sorted().joinToString("\n"))}")
+        s.settings.toSortedMap().forEach { (k, v) -> appendLine("setting.$k=$v") }
+        appendLine("asr_api_key_len=${s.asrApiKey.length}")
+        appendLine("asr_api_key_sha256=${sha256(s.asrApiKey)}")
+        appendLine("llm_api_key_len=${s.llmApiKey.length}")
+        appendLine("llm_api_key_sha256=${sha256(s.llmApiKey)}")
+        appendLine("default_owner=${s.defaultOwner}")
+        appendLine("active_uid=${s.activeUid}")
+        appendLine("access_status=${s.accessStatus}")
+    }
+
+    companion object {
+        const val STATE_FILE_NAME = "state.txt"
+        const val SIGNER_FILE_NAME = "signer.txt"
+        const val UID = "synthetic-l1-user"
+        const val PROFILE_PREFIX = "Synthetic "
+
+        // Synthetic credentials: not valid anywhere, present only so that decryption after an
+        // update can be proven by digest. They must never be real.
+        const val ASR_API_KEY = "synthetic-asr-key-0123456789abcdef0123456789abcdef"
+        const val LLM_API_KEY = "synthetic-llm-key-fedcba9876543210fedcba9876543210"
+
+        val PROFILES = listOf(
+            ProfileEntity(
+                name = "${PROFILE_PREFIX}Alpha", isActive = true, asrModel = "whisper-synthetic",
+                language = "sv", llmEnabled = true, llmModel = "llm-synthetic",
+                profilePrompt = "Skriv kort.", emojiAllowed = true, selectedRuleIds = "1,2",
+                createdAt = 1_700_000_000_000L, updatedAt = 1_700_000_000_000L
+            ),
+            ProfileEntity(
+                name = "${PROFILE_PREFIX}Beta", isActive = false, language = "en",
+                createdAt = 1_700_000_001_000L, updatedAt = 1_700_000_001_000L
+            )
+        )
+        val RULES = listOf(
+            TextReplacementRuleEntity(
+                name = "synthetic plain", pattern = "optikon", replacement = "OPTIQON",
+                createdAt = 1_700_000_002_000L
+            ),
+            TextReplacementRuleEntity(
+                name = "synthetic regex", pattern = "\\bmvh\\b", replacement = "Med vänliga hälsningar",
+                isRegex = true, createdAt = 1_700_000_003_000L
+            ),
+            TextReplacementRuleEntity(
+                name = "synthetic unicode", pattern = "aa", replacement = "å",
+                createdAt = 1_700_000_004_000L
+            )
+        )
+        val DICTATIONS = (1..5).map { i ->
+            val text = "Syntetisk diktering nummer $i med några ord åäö."
+            Dictation(
+                text = text, rawText = text.lowercase(), wordCount = 6 + i,
+                timestamp = 1_700_000_010_000L + i * 60_000L, sourceApp = "Synthetic",
+                sourceAppPackage = "se.optiqon.synthetic", durationMs = 1_000L * i, profileId = 1L
+            )
+        }
+
+        fun sha256(value: String): String = sha256Hex(value.toByteArray(Charsets.UTF_8))
+
+        fun sha256Hex(bytes: ByteArray): String =
+            MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02X".format(it) }
+    }
+}

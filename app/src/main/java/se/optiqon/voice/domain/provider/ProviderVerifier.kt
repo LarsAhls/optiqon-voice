@@ -6,6 +6,9 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import retrofit2.HttpException
 import se.optiqon.voice.data.api.ApiClientFactory
 import se.optiqon.voice.data.api.AsrApiService
+import se.optiqon.voice.data.api.LlmApiService
+import se.optiqon.voice.data.api.model.ChatCompletionRequest
+import se.optiqon.voice.data.api.model.ChatMessage
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -55,6 +58,42 @@ class ProviderVerifier @Inject constructor(
                 silentWav().toRequestBody("audio/wav".toMediaType())
             )
             service.transcribe(filePart, model.trim().toRequestBody("text/plain".toMediaType()))
+            VerificationResult.Ok
+        } catch (e: HttpException) {
+            VerificationResult.Rejected(e.code(), readErrorBody(e))
+        } catch (e: IOException) {
+            VerificationResult.Unreachable(e.message ?: "Could not reach the server.")
+        } catch (e: IllegalArgumentException) {
+            VerificationResult.Invalid(e.message ?: "Endpoint is not usable.")
+        }
+    }
+
+    /**
+     * The same question for the text model. Transcription working says nothing about the
+     * cleanup pass: a decommissioned chat model answers 404 while the ASR model on the same
+     * host and the same key answers 200, and `TextProcessor` then falls back to the raw
+     * transcript without telling anyone (smoke finding F17). One token is asked for, because
+     * the point is to make the provider resolve the model name, not to generate anything.
+     */
+    suspend fun verifyCompletion(
+        baseUrl: String,
+        apiKey: String,
+        model: String
+    ): VerificationResult {
+        val service = try {
+            apiClientFactory.create(LlmApiService::class.java, baseUrl, apiKey)
+        } catch (e: IllegalArgumentException) {
+            return VerificationResult.Invalid(e.message ?: "Endpoint is not usable.")
+        }
+
+        return try {
+            service.chatCompletion(
+                ChatCompletionRequest(
+                    model = model.trim(),
+                    messages = listOf(ChatMessage(role = "user", content = "ping")),
+                    maxTokens = 1
+                )
+            )
             VerificationResult.Ok
         } catch (e: HttpException) {
             VerificationResult.Rejected(e.code(), readErrorBody(e))

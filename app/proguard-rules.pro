@@ -32,3 +32,9 @@
 # Hilt
 -keep class dagger.hilt.** { *; }
 -keep class * extends dagger.hilt.android.internal.managers.ViewComponentManager$FragmentContextWrapper { *; }
+
+# Gson reads these field names reflectively, and the feedback payload's whole contract is
+# its exact field set. R8 renames anything not kept, so without this the release build
+# would write {"a":…,"b":…} while every unit test — which runs on the JVM, un-shrunk —
+# stayed green. Keep the field names, not just the class.
+-keep class se.optiqon.voice.domain.feedback.FeedbackPayload { <fields>; }

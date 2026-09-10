@@ -96,11 +96,57 @@ class ProviderVerifierTest {
     }
 
     @Test
+    fun `a serving text model verifies, on the completions path`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(CHAT_OK))
+
+        val result = verifier.verifyCompletion(baseUrl, "gsk_not-a-real-key", "openai/gpt-oss-20b")
+
+        assertEquals(VerificationResult.Ok, result)
+        val request = server.takeRequest()
+        assertEquals("/v1/chat/completions", request.path)
+        assertEquals("Bearer gsk_not-a-real-key", request.getHeader("Authorization"))
+        assertTrue(request.body.readUtf8().contains("openai/gpt-oss-20b"))
+    }
+
+    /**
+     * The shape of F17: a model name the provider has decommissioned answers 404, and the
+     * verifier has to say so rather than let the caller assume the whole provider works
+     * because transcription did.
+     */
+    @Test
+    fun `a decommissioned text model is rejected with its status`() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(404).setBody("""{"error":{"message":"model_decommissioned"}}""")
+        )
+
+        val result = verifier.verifyCompletion(baseUrl, "gsk_key", "llama-3.1-8b-instant")
+
+        assertTrue(result is VerificationResult.Rejected)
+        result as VerificationResult.Rejected
+        assertEquals(404, result.status)
+        assertTrue(result.detail.contains("model_decommissioned"))
+    }
+
+    @Test
+    fun `plain http is invalid for the text model too`() = runTest {
+        val result = verifier.verifyCompletion("http://api.example.com/", "gsk_key", "openai/gpt-oss-20b")
+
+        assertTrue(result is VerificationResult.Invalid)
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test
     fun `the probe is a real, short wav`() {
         val wav = verifier.silentWav()
 
         assertEquals("RIFF", String(wav.copyOfRange(0, 4)))
         assertEquals("WAVE", String(wav.copyOfRange(8, 12)))
         assertEquals(44 + 1600 * 2, wav.size)
+    }
+
+    private companion object {
+        /** A minimal OpenAI-compatible completion body. */
+        const val CHAT_OK =
+            """{"choices":[{"index":0,"message":{"role":"assistant","content":"ok"}}]}"""
     }
 }

@@ -20,8 +20,16 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.Toast
 import se.optiqon.voice.BuildConfig
+import se.optiqon.voice.R
 import se.optiqon.voice.data.preferences.PreferencesDataStore
 import se.optiqon.voice.data.repository.ProfileRepository
+import se.optiqon.voice.domain.access.AccessDecision
+import se.optiqon.voice.domain.access.AccessGrant
+import se.optiqon.voice.domain.access.AccessRevokedException
+import se.optiqon.voice.domain.access.AccessGuard
+import se.optiqon.voice.domain.access.AccessLease
+import se.optiqon.voice.domain.access.AccessRepository
+import se.optiqon.voice.domain.access.BlockReason
 import se.optiqon.voice.domain.model.AppContext
 import se.optiqon.voice.domain.transcription.AudioConverter
 import se.optiqon.voice.domain.transcription.TranscriptionManager
@@ -30,8 +38,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -48,15 +56,26 @@ class BubbleService : Service() {
         private const val TAG = "BubbleService"
         const val ACTION_START = "${BuildConfig.APPLICATION_ID}.ACTION_START_BUBBLE"
 
-        @Volatile
-        var isRunning: Boolean = false
-            private set(value) {
-                field = value
-                _runningState.value = value
-            }
-
         private val _runningState = MutableStateFlow(false)
+
+        /**
+         * Whether a bubble service is up. The home screen collects it: it is what the hero says,
+         * and what decides whether its button starts or stops the service.
+         *
+         * This used to be two fields - a `@Volatile var isRunning` whose private setter also wrote
+         * this flow. A debt review searched for readers of the var, found none, and recommended
+         * deleting it; deleting it would have taken the only writer of this flow with it and left
+         * the home screen insisting the bubble was off while it was on. One fact, one field, so
+         * there is nothing to delete by mistake and nothing for the two halves to drift apart on.
+         *
+         * It says the *service* is alive, not that the bubble is on screen - those can come apart
+         * (see finding 6 in the debt review), and this is not the flag to ask about that.
+         */
         val runningState: StateFlow<Boolean> = _runningState.asStateFlow()
+
+        private fun setRunning(value: Boolean) {
+            _runningState.value = value
+        }
 
         fun start(context: Context) {
             context.startForegroundService(Intent(context, BubbleService::class.java).apply {
@@ -73,6 +92,15 @@ class BubbleService : Service() {
     @Inject lateinit var textInjectionBridge: TextInjectionBridge
     @Inject lateinit var preferencesDataStore: PreferencesDataStore
     @Inject lateinit var profileRepository: ProfileRepository
+    @Inject lateinit var accessRepository: AccessRepository
+    @Inject lateinit var accessGuard: AccessGuard
+
+    /**
+     * The application's own scope, which outlives this service. Preserving a recording that is
+     * being interrupted has to run somewhere [onDestroy] does not cancel; see
+     * [cancelKeepingRecording].
+     */
+    @Inject lateinit var applicationScope: CoroutineScope
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var windowManager: WindowManager? = null
@@ -94,6 +122,26 @@ class BubbleService : Service() {
     private var audioFocusRequest: AudioFocusRequest? = null
     private var collapsedBubbleX: Int? = null
     private var collapsedBubbleY: Int? = null
+
+    /**
+     * Set immediately before a processing job is cancelled because access ended, and read by
+     * that job's cancellation handler.
+     *
+     * A flag rather than a custom [CancellationException], because the reason a job is
+     * cancelled has to survive the hop through [Job.cancel] intact. Losing it would make an
+     * access cancellation indistinguishable from the user's own, and the two owe the recording
+     * opposite things: the user asked for it to go, the server did not.
+     */
+    @Volatile private var processingStoppedBy: BlockReason? = null
+
+    /**
+     * The WAV being transcribed right now and how long the user spoke, held here rather than only
+     * in [transcriptionJob]'s locals. A shutdown has to be able to find the audio, and the
+     * coroutine that knows where it is is the one being cancelled; see
+     * [takeAudioAwaitingTranscription].
+     */
+    @Volatile private var processingWav: File? = null
+    @Volatile private var processingDurationMs: Long = 0L
 
     private var state: ServiceState = ServiceState.Idle
     private var recordingStartTime: Long = 0
@@ -127,7 +175,7 @@ class BubbleService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        isRunning = true
+        setRunning(true)
         val helper = NotificationHelper(this)
         notificationHelper = helper
         hapticFeedback = HapticFeedback(this)
@@ -139,7 +187,96 @@ class BubbleService : Service() {
             }
         }
 
+        // Fail-closed twin of the check in BootReceiver, for every other way this service can
+        // be started. Disk only: currentDecision() reads the stored verdict and never the
+        // network, so it answers even on a cold boot with no connectivity.
+        scope.launch {
+            if (accessRepository.currentDecision() is AccessDecision.Blocked) {
+                Log.i(TAG, "Bubble not available: account is blocked")
+                stopSelf()
+                return@launch
+            }
+            observeAccess()
+        }
+
         registerReceiver(stopReceiver, IntentFilter(NotificationHelper.ACTION_STOP), RECEIVER_NOT_EXPORTED)
+    }
+
+    /**
+     * Ends dictation the moment the account stops being allowed to do it.
+     *
+     * The service outlives every screen, so this is the only place a revocation can be noticed
+     * while the app itself is closed. It stops effects; it does not tidy up after the user.
+     * What was already recorded is kept or discarded strictly by their own retention setting.
+     *
+     * The bubble is left on screen rather than removed, so the reason is visible. Refusing to
+     * *start* while blocked is a different question, answered above.
+     */
+    private suspend fun observeAccess() {
+        accessRepository.decision.collect { decision ->
+            if (decision !is AccessDecision.Blocked) return@collect
+            onAccessLost(decision.reason)
+        }
+    }
+
+    private fun onAccessLost(reason: BlockReason) {
+        // The lease is already invalid; dropping it stops a later stage from finding one at all.
+        currentLease = null
+        when (state) {
+            is ServiceState.Recording -> stopRecordingAndPreserve(reason)
+            is ServiceState.Transcribing, is ServiceState.PostProcessing -> {
+                processingStoppedBy = reason
+                transcriptionJob?.cancel()
+            }
+            else -> Unit
+        }
+    }
+
+    /**
+     * Stops a recording that lost its authorisation part-way, keeping the audio on the user's
+     * own terms.
+     *
+     * Deliberately not routed through [stopRecordingAndTranscribe]: transcription would be
+     * refused at the first effect boundary anyway, and asking for it would only mean a failed
+     * request in the log and a retriable entry for work that must not be retried.
+     */
+    private fun stopRecordingAndPreserve(reason: BlockReason) {
+        audioRecorder?.stop()
+        demoteToIdleService()
+        silenceCheckJob?.cancel()
+        levelJob?.cancel()
+        timerJob?.cancel()
+        fanMenuController?.dismiss()
+
+        val durationMs = recordedDurationMs()
+        val appContext = recordingAppContext
+        showBlocked(reason)
+
+        val job = recordingJob
+        val pcm = pcmFile
+        recordingJob = null
+        pcmFile = null
+
+        // The same keeping as on shutdown, described the same way: the two paths differ only in
+        // why the dictation stopped. Duplicating it is how one copy ends up cancellable.
+        preserveUnfinishedRecording(
+            applicationScope,
+            UnfinishedRecording(
+                recordingJob = job,
+                pcm = pcm,
+                wav = File(cacheDir, "interrupted_${System.currentTimeMillis()}.wav"),
+                durationMs = durationMs,
+                convert = { from, to -> withContext(Dispatchers.IO) { AudioConverter.pcmToWav(from, to) } },
+                preserve = { audio, duration ->
+                    preserveInterrupted(audio, duration, appContext, AccessRevokedException(reason))
+                },
+                onDone = {
+                    abandonRecordingAudioFocus()
+                    audioRecorder = null
+                    silenceDetector = null
+                }
+            )
+        )
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -165,11 +302,12 @@ class BubbleService : Service() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         prepareBubble()
 
-        // Register for keyboard events
-        TextInjectorService.keyboardListener = keyboardListener
+        // Register for keyboard events. The bubble owns this registration for as long as it
+        // lives: see KeyboardLink, and F15 for what happened when it did not.
+        keyboardLink.listen(keyboardListener)
 
         // If keyboard is already visible, show immediately
-        if (TextInjectorService.isKeyboardVisible) {
+        if (keyboardLink.isKeyboardVisible) {
             showBubble()
         }
 
@@ -177,13 +315,16 @@ class BubbleService : Service() {
     }
 
     override fun onDestroy() {
-        isRunning = false
+        setRunning(false)
         fanMenuController?.dismiss()
-        stopRecordingAndWait()
+        val unfinished = takeUnfinishedRecording()
         removeBubble()
-        TextInjectorService.keyboardListener = null
+        keyboardLink.stopListening(keyboardListener)
         try { unregisterReceiver(stopReceiver) } catch (_: Exception) {}
-        scope.cancel()
+        // Cancelling [scope] is inside this call, after the recording has been handed to a scope
+        // that survives. Keeping the two steps in one call is what stops the hand-off being
+        // forgotten; the scope it is handed to is what stops the recording being lost.
+        cancelKeepingRecording(scope, applicationScope, unfinished)
         super.onDestroy()
     }
 
@@ -381,7 +522,7 @@ class BubbleService : Service() {
 
     private fun onBubbleTap() {
         when (state) {
-            is ServiceState.Idle -> startRecording()
+            is ServiceState.Idle -> startRecordingIfAllowed()
             is ServiceState.Recording -> stopRecordingAndTranscribe()
             is ServiceState.Transcribing -> cancelProcessing()
             is ServiceState.PostProcessing -> cancelProcessing()
@@ -389,7 +530,8 @@ class BubbleService : Service() {
             is ServiceState.Injecting -> {}
             is ServiceState.Error -> {
                 val retryEntryId = (state as ServiceState.Error).retryEntryId
-                if (retryEntryId != null) retrySavedFailure(retryEntryId) else updateState(ServiceState.Idle)
+                if (retryEntryId != null) ifAllowed { lease -> retrySavedFailure(retryEntryId, lease) }
+                else updateState(ServiceState.Idle)
             }
         }
     }
@@ -434,6 +576,60 @@ class BubbleService : Service() {
         } catch (e: Exception) {
             Log.w(TAG, "Could not drop microphone foreground service type", e)
         }
+    }
+
+    /**
+     * The access gate. Dictation is the one thing an unapproved account must not be able to do,
+     * so the check happens here, at the single entry point, rather than by hiding the bubble:
+     * a hidden control is not a boundary.
+     *
+     * The decision is re-read on every tap instead of being taken from the cached flow, because
+     * offline grace expires with the passage of time and nothing emits when it does.
+     */
+    private fun startRecordingIfAllowed() = ifAllowed { startRecording() }
+
+    /**
+     * The lease the dictation now in flight was authorised under.
+     *
+     * Held rather than re-derived because the point of a lease is to remember *which* identity
+     * said yes. Re-asking the guard later would happily authorise the account that happens to be
+     * signed in by then, which is the substitution the lease exists to make impossible.
+     */
+    private var currentLease: AccessLease? = null
+
+    /**
+     * Runs [action] only for an account the server has approved.
+     *
+     * Every route that turns speech into text goes through here, not just the first one: a
+     * retry re-runs transcription and injects the result, so gating the initial tap alone
+     * would leave a revoked account one saved failure away from dictating anyway.
+     *
+     * The guard refreshes a stale verdict first, with a short cap, and hands back a lease
+     * rather than a boolean. The boolean was the bug: it answered a question about this instant
+     * and was then relied on seconds later, across a recording, an upload and a language model.
+     */
+    private fun ifAllowed(action: (AccessLease) -> Unit) {
+        scope.launch {
+            when (val grant = accessGuard.authorize()) {
+                is AccessGrant.Granted -> {
+                    currentLease = grant.lease
+                    action(grant.lease)
+                }
+                is AccessGrant.Denied -> showBlocked(grant.reason)
+            }
+        }
+    }
+
+    /**
+     * A refusal the person can act on (F14).
+     *
+     * [showError] was not reused: its message clears itself after a couple of seconds and
+     * offers a retry, and neither is true here. None of these blocks lift by tapping the
+     * bubble, so the red pill stays until something actually changes, and the words go out
+     * once through the surface that can carry words.
+     */
+    private fun showBlocked(reason: BlockReason) {
+        updateState(ServiceState.Error(announceBlock(this, reason), null))
     }
 
     private fun startRecording() {
@@ -515,14 +711,91 @@ class BubbleService : Service() {
         }
     }
 
-    /** Stop recording without transcribing (for cleanup on destroy) */
-    private fun stopRecordingAndWait() {
-        if (state !is ServiceState.Recording) return
+    /**
+     * Stops a recording because the service carrying it is being destroyed, and describes what is
+     * left of it so that someone who outlives the service can keep it.
+     *
+     * This used to be `stopRecordingAndWait()`, and it did not wait. It signalled the recorder to
+     * stop, noted in a comment that `recordingJob` was deliberately left alone "to finish flushing
+     * the file", and returned — and its only caller, [onDestroy], ran `scope.cancel()` two lines
+     * later, on the very scope that job belongs to. Stopping the service mid-recording therefore
+     * lost the dictation: nothing converted the PCM, nothing wrote a history row, nothing told the
+     * user. The audio focus was never released either, and the PCM was left behind in the cache.
+     *
+     * Returning the recording rather than launching the work is what makes the lifetime somebody
+     * else's decision — [cancelKeepingRecording] is where it is made, and it is the only place
+     * that cancels [scope].
+     */
+    private fun takeUnfinishedRecording(): UnfinishedRecording? = when (state) {
+        is ServiceState.Recording -> takeRecordingInProgress()
+        // The same dictation, one state later. Leaving this out is how the fix below stayed
+        // inoperative for the window between the recorder stopping and the text coming back.
+        is ServiceState.Transcribing, is ServiceState.PostProcessing -> takeAudioAwaitingTranscription()
+        else -> null
+    }
+
+    /** A recording that is still being written. The recorder is signalled here, never cancelled. */
+    private fun takeRecordingInProgress(): UnfinishedRecording? {
         audioRecorder?.stop()
         levelJob?.cancel()
         timerJob?.cancel()
         silenceCheckJob?.cancel()
-        // Don't cancel recordingJob — let it finish flushing the file
+        // Synchronously, while the service is still here to do it: the scope that would otherwise
+        // carry this is the one being cancelled.
+        abandonRecordingAudioFocus()
+
+        val job = recordingJob
+        val pcm = pcmFile
+        val durationMs = recordedDurationMs()
+        val appContext = recordingAppContext
+        recordingJob = null
+        pcmFile = null
+
+        return UnfinishedRecording(
+            recordingJob = job,
+            pcm = pcm,
+            wav = File(cacheDir, "interrupted_${System.currentTimeMillis()}.wav"),
+            durationMs = durationMs,
+            convert = { from, to -> withContext(Dispatchers.IO) { AudioConverter.pcmToWav(from, to) } },
+            preserve = { audio, duration ->
+                preserveInterrupted(audio, duration, appContext, RecordingStoppedException())
+            },
+            onDone = {
+                audioRecorder = null
+                silenceDetector = null
+            }
+        )
+    }
+
+    /**
+     * Audio that is already a WAV and is waiting for, or sitting inside, a transcription request.
+     *
+     * Cancelling [scope] takes that request down, and its `finally` deletes the working file it
+     * knows about - so the audio is moved out of its reach first, which is also why nothing here
+     * needs the two sides to agree about order or threads. Audio focus is left to that `finally`,
+     * which runs on cancellation because it suspends nowhere.
+     */
+    private fun takeAudioAwaitingTranscription(): UnfinishedRecording? {
+        val taken = takeAudioFromCancelledJob(
+            processingWav ?: return null,
+            File(cacheDir, "interrupted_${System.currentTimeMillis()}.wav")
+        ) ?: return null
+
+        val durationMs = processingDurationMs
+        val appContext = recordingAppContext
+        processingWav = null
+
+        return UnfinishedRecording(
+            // Nothing is writing any more: the recording coroutine was joined before the
+            // conversion ran, which is how the WAV came to exist at all.
+            recordingJob = null,
+            pcm = null,
+            wav = taken,
+            durationMs = durationMs,
+            preserve = { audio, duration ->
+                preserveInterrupted(audio, duration, appContext, RecordingStoppedException())
+            },
+        )
     }
 
     /** Stop recording and start transcription */
@@ -562,11 +835,24 @@ class BubbleService : Service() {
                 withContext(Dispatchers.IO) {
                     AudioConverter.pcmToWav(currentPcmFile, wavFile)
                 }
+                // From here on the user's words exist as a WAV that only this coroutine knows the
+                // location of, and this coroutine is what a shutdown cancels. Tell the service.
+                processingWav = wavFile
+                processingDurationMs = durationMs
 
                 val appContext = recordingAppContext
 
+                // The lease taken when recording started, not a fresh one. Re-authorising here
+                // would ask whether *somebody* may dictate; the question that matters is
+                // whether the person who spoke these words still may.
+                val lease = currentLease
+                if (lease == null) {
+                    updateState(ServiceState.Error(getString(R.string.access_blocked_not_registered), null))
+                    return@launch
+                }
+
                 val result = withContext(Dispatchers.IO) {
-                    transcriptionManager.transcribe(wavFile, durationMs, appContext) {
+                    transcriptionManager.transcribe(wavFile, durationMs, appContext, lease) {
                         scope.launch { updateState(ServiceState.PostProcessing) }
                     }
                 }
@@ -574,11 +860,16 @@ class BubbleService : Service() {
                 result.onSuccess { text ->
                     if (text.isNotBlank()) {
                         updateState(ServiceState.Injecting)
-                        textInjectionBridge.inject(text)
+                        textInjectionBridge.inject(text, lease)
                         hapticFeedback?.complete()
                     }
                     updateState(ServiceState.Idle)
                 }.onFailure { error ->
+                    if (error is AccessRevokedException) {
+                        preserveInterrupted(wavFile, durationMs, appContext, error)
+                        showBlocked(error.reason)
+                        return@onFailure
+                    }
                     Log.e(TAG, "Transcription failed", error)
                     val retryEntryId = withContext(Dispatchers.IO) {
                         transcriptionManager.latestRetriableFailureId()
@@ -586,7 +877,21 @@ class BubbleService : Service() {
                     showError("Transcription failed: ${error.message}", retryEntryId)
                 }
             } catch (e: CancellationException) {
-                // Cancelled by the user; cancelProcessing() owns the state transition.
+                val reason = processingStoppedBy
+                if (reason != null) {
+                    processingStoppedBy = null
+                    // NonCancellable because this coroutine is already cancelled: without it the
+                    // very first suspension inside preservation would throw and the recording
+                    // would be lost by the mechanism meant to stop the effects, not the data.
+                    withContext(NonCancellable) {
+                        val audio = wavFile
+                        if (audio != null) {
+                            preserveInterrupted(audio, durationMs, recordingAppContext, AccessRevokedException(reason))
+                        }
+                    }
+                    showBlocked(reason)
+                }
+                // Otherwise cancelled by the user; cancelProcessing() owns the state transition.
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Processing failed", e)
@@ -595,7 +900,13 @@ class BubbleService : Service() {
                 }
                 showError(e.message ?: "Unknown error", retryEntryId)
             } finally {
+                // Either the audio was handed over - in which case it is no longer at this path -
+                // or it is about to be deleted below. Neither is something to point at.
+                processingWav = null
                 abandonRecordingAudioFocus()
+                // Temp files only: the WAV here is a working copy in cacheDir. Anything the
+                // user is entitled to keep has already been copied into their own storage by
+                // the transcription manager, under their own history and retention settings.
                 currentPcmFile?.delete()
                 wavFile?.delete()
                 recordingJob = null
@@ -667,21 +978,47 @@ class BubbleService : Service() {
         return (now - recordingStartTime - totalPausedMs - currentPauseMs).coerceAtLeast(0L)
     }
 
-    private fun retrySavedFailure(entryId: Long) {
+    /**
+     * Writes an interrupted dictation into its owner's history before the temp files go.
+     *
+     * Separated from stopping the work on purpose. Stopping is immediate and unconditional;
+     * keeping what was already recorded is a different question, answered by the settings the
+     * user had already chosen.
+     */
+    private suspend fun preserveInterrupted(
+        wavFile: File,
+        durationMs: Long,
+        appContext: AppContext?,
+        cause: Throwable
+    ) {
+        runCatching {
+            withContext(Dispatchers.IO) {
+                transcriptionManager.preserveInterrupted(wavFile, durationMs, appContext, cause)
+            }
+        }.onFailure { Log.e(TAG, "Could not preserve interrupted dictation", it) }
+    }
+
+    private fun retrySavedFailure(entryId: Long, lease: AccessLease) {
         updateState(ServiceState.Transcribing)
         scope.launch {
             val result = withContext(Dispatchers.IO) {
-                transcriptionManager.retry(entryId)
+                transcriptionManager.retry(entryId, lease)
             }
             result.onSuccess { text ->
                 if (text.isNotBlank()) {
                     updateState(ServiceState.Injecting)
-                    textInjectionBridge.inject(text)
+                    textInjectionBridge.inject(text, lease)
                     hapticFeedback?.complete()
                 }
                 updateState(ServiceState.Idle)
             }.onFailure { error ->
-                showError("Retry failed: ${error.message}", entryId)
+                if (error is AccessRevokedException) {
+                    // The saved failure stays exactly where it was. It is not retried, not
+                    // deleted, and not offered again until its owner is allowed to use it.
+                    showBlocked(error.reason)
+                } else {
+                    showError("Retry failed: ${error.message}", entryId)
+                }
             }
         }
     }
@@ -689,7 +1026,7 @@ class BubbleService : Service() {
     private fun retryBubbleError() {
         val retryEntryId = (state as? ServiceState.Error)?.retryEntryId
         if (retryEntryId != null) {
-            retrySavedFailure(retryEntryId)
+            ifAllowed { lease -> retrySavedFailure(retryEntryId, lease) }
         } else {
             updateState(ServiceState.Idle)
         }
@@ -718,7 +1055,7 @@ class BubbleService : Service() {
             bubbleView?.updateState(newState)
             syncBubbleLayout()
             // When done transcribing, hide bubble if keyboard is gone
-            if (newState is ServiceState.Idle && !TextInjectorService.isKeyboardVisible) {
+            if (newState is ServiceState.Idle && !keyboardLink.isKeyboardVisible) {
                 hideBubble()
             }
         }

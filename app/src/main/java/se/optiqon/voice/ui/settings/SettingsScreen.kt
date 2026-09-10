@@ -61,6 +61,7 @@ import se.optiqon.voice.ui.common.HairlineDivider
 import se.optiqon.voice.ui.common.ListRow
 import se.optiqon.voice.ui.common.LogoTile
 import se.optiqon.voice.ui.common.SecondaryButton
+import se.optiqon.voice.ui.access.AccountSettingsSection
 import se.optiqon.voice.ui.common.SectionEyebrow
 import se.optiqon.voice.ui.common.SwitchRow
 import se.optiqon.voice.ui.common.SectionCard
@@ -73,12 +74,16 @@ private sealed interface SettingsMode {
     data object BuiltIns : SettingsMode
     data object Advanced : SettingsMode
     data object About : SettingsMode
+    data object Feedback : SettingsMode
 }
 
 @Composable
 fun SettingsScreen(
     outerPadding: PaddingValues,
-    viewModel: SettingsViewModel = hiltViewModel()
+    viewModel: SettingsViewModel = hiltViewModel(),
+    // A slot rather than a call, for the same reason as HomeScreen: the section needs the
+    // access graph, and rendering the settings list should not. The default is the real one.
+    accountSection: @Composable () -> Unit = { AccountSettingsSection() }
 ) {
     val preferences by viewModel.preferences.collectAsStateWithLifecycle()
     val rules by viewModel.rules.collectAsStateWithLifecycle()
@@ -108,7 +113,9 @@ fun SettingsScreen(
             onPrompts = { mode = SettingsMode.Prompts },
             onAdvanced = { mode = SettingsMode.Advanced },
             onAbout = { mode = SettingsMode.About },
-            outerPadding = outerPadding
+            onFeedback = { mode = SettingsMode.Feedback },
+            outerPadding = outerPadding,
+            accountSection = accountSection
         )
         SettingsMode.Advanced -> AdvancedProviderScreen(
             preferences = preferences,
@@ -147,6 +154,10 @@ fun SettingsScreen(
             outerPadding = outerPadding
         )
         SettingsMode.About -> AboutScreen(
+            onBack = { mode = SettingsMode.Main },
+            outerPadding = outerPadding
+        )
+        SettingsMode.Feedback -> FeedbackScreen(
             onBack = { mode = SettingsMode.Main },
             outerPadding = outerPadding
         )
@@ -203,7 +214,9 @@ private fun SettingsMainScreen(
     onPrompts: () -> Unit,
     onAdvanced: () -> Unit,
     onAbout: () -> Unit,
-    outerPadding: PaddingValues
+    onFeedback: () -> Unit,
+    outerPadding: PaddingValues,
+    accountSection: @Composable () -> Unit
 ) {
     val preset = ProviderPresets.byId(preferences.providerPresetId)
     val connected = preferences.asrBaseUrl.isNotBlank() && preferences.asrApiKey.isNotBlank()
@@ -223,6 +236,9 @@ private fun SettingsMainScreen(
                     LogoTile(size = 32.dp)
                 }
             }
+
+            item("account_eyebrow") { SettingsEyebrow("Account") }
+            item("account") { accountSection() }
 
             item("connection_eyebrow") { SettingsEyebrow("Connection") }
             item("connection") {
@@ -274,6 +290,10 @@ private fun SettingsMainScreen(
                     ListRow("Advanced provider settings", subtitle = "Endpoints, keys and model names.", onClick = onAdvanced)
                     HairlineDivider()
                     ListRow("About Optiqon Voice", subtitle = "Version, GPLv3 and bundled font licences.", onClick = onAbout)
+                    HairlineDivider()
+                    // Saved locally only — see FeedbackQueue. The subtitle says so rather than
+                    // implying a message goes anywhere.
+                    ListRow("Report a problem", subtitle = "Saved on this device; sending is not switched on yet.", onClick = onFeedback)
                 }
             }
         }

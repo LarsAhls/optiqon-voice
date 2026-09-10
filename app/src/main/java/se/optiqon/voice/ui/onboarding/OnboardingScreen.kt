@@ -28,6 +28,9 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.content.Intent
 import android.net.Uri
+import se.optiqon.voice.ui.access.AccountScreen
+import se.optiqon.voice.ui.access.AccountUiState
+import se.optiqon.voice.ui.access.AccountViewModel
 import se.optiqon.voice.domain.model.TranscriptionLanguages
 import se.optiqon.voice.domain.provider.ProviderPresets
 import se.optiqon.voice.ui.common.GhostButton
@@ -53,7 +56,17 @@ import se.optiqon.voice.ui.theme.AppIcons
 @Composable
 fun OnboardingScreen(
     onFinished: () -> Unit,
-    viewModel: OnboardingViewModel = hiltViewModel()
+    viewModel: OnboardingViewModel = hiltViewModel(),
+    // The account step is a slot rather than a call, so that rendering the first run does not
+    // require the whole account graph. Its default is the real screen; only tests pass anything
+    // else, and what they pass cannot let somebody past the gate — `accountApproved` is read
+    // here, not decided here.
+    accountStep: @Composable () -> Unit = { AccountScreen(modifier = Modifier.fillMaxWidth()) },
+    accountApproved: @Composable () -> Boolean = {
+        val accountViewModel: AccountViewModel = hiltViewModel()
+        val account by accountViewModel.state.collectAsStateWithLifecycle()
+        account is AccountUiState.Approved
+    }
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
@@ -73,16 +86,17 @@ fun OnboardingScreen(
 
         when (state.step) {
             OnboardingStep.LANGUAGE -> LanguageStep(state, viewModel)
+            OnboardingStep.ACCOUNT -> accountStep()
             OnboardingStep.CONNECT -> ConnectStep(state, viewModel)
             OnboardingStep.PERMISSIONS -> PermissionsStep()
         }
 
-        StepActions(state, viewModel)
+        StepActions(state, viewModel, accountApproved)
         Spacer(Modifier.height(32.dp))
     }
 }
 
-/** The app's name on the left, how far you have got on the right. Same on all three steps. */
+/** The app's name on the left, how far you have got on the right. Same on every step. */
 @Composable
 private fun StepHeader(current: OnboardingStep) {
     Row(
@@ -227,6 +241,26 @@ private fun ConnectStep(state: OnboardingUiState, viewModel: OnboardingViewModel
                 Text("Sending a test clip…", style = MaterialTheme.typography.bodyMedium)
             }
             is ConnectionState.Verified -> InlineStatus("Connected. Transcription is working.")
+            // Deliberately not "Transcription is working": nothing has been called this run.
+            // What is true is that this key worked here before and was kept (F19).
+            is ConnectionState.Restored -> Column(
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                InlineStatus("This device already has a key that worked here.")
+                Text(
+                    text = "Continue with it, or paste a different one to replace it.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+            is ConnectionState.VerifiedWithoutCleanup -> Column(
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                InlineStatus("Connected. Transcription is working.")
+                Text(
+                    text = connection.message,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
             is ConnectionState.Failed -> Text(
                 text = connection.message,
                 style = MaterialTheme.typography.bodyMedium,
@@ -266,10 +300,25 @@ private fun PermissionsStep() {
 }
 
 @Composable
-private fun StepActions(state: OnboardingUiState, viewModel: OnboardingViewModel) {
+private fun StepActions(
+    state: OnboardingUiState,
+    viewModel: OnboardingViewModel,
+    accountApproved: @Composable () -> Boolean
+) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         when (state.step) {
-            OnboardingStep.LANGUAGE -> PrimaryButton("Continue", onClick = viewModel::next)
+            // First step, so no Back: there is nothing behind it, and a button that does
+            // nothing is worse than an absent one.
+            OnboardingStep.ACCOUNT -> PrimaryButton(
+                text = "Continue",
+                enabled = accountApproved(),
+                onClick = viewModel::next
+            )
+
+            OnboardingStep.LANGUAGE -> {
+                PrimaryButton("Continue", onClick = viewModel::next)
+                SecondaryButton("Back", onClick = viewModel::back)
+            }
 
             OnboardingStep.CONNECT -> {
                 if (state.canLeaveConnectStep) {

@@ -29,12 +29,31 @@ output/
 .env
 .env.*
 !.env.example
+# Scratch notes and handoff drafts land in the repo root and must not be committed;
+# the documentation that is meant to be versioned lives under docs/ or is named here.
 *.md
 !README.md
-!docs/OPTIQON_VOICE_IDENTITY.md
+!CLAUDE.md
+!BACKLOG.md
+!docs/**/*.md
+!fine-tuning/README.md
+
+# Firebase Android config: carries the project's API key and is fetched from the
+# Firebase console per machine, so it stays out of git like every other credential.
+# The glob is deliberate: a browser saves a second download as
+# "google-services (1).json", which the bare name does not match, and that copy landed
+# in the repo root untracked and committable.
+google-services*.json
 
 # Production release signing material — must never be committed
 *.keystore
 *.jks
 !debug.keystore
 release-signing.properties
+
+# Node tooling for the Firestore rules test suite (see package.json).
+node_modules/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+.firebase/

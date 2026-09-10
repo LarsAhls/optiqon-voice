@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKeys
 import dagger.hilt.android.qualifiers.ApplicationContext
+import se.optiqon.voice.data.storage.StorageRoot
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -14,10 +15,10 @@ import javax.inject.Singleton
  * EncryptedSharedPreferences needs the AndroidKeyStore, which does not exist off-device.
  */
 open class SecurePreferencesStore @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val storageRoot: StorageRoot = StorageRoot.DEFAULT
 ) {
     companion object {
-        private const val FILE_NAME = "secure_settings"
         private const val ASR_API_KEY = "asr_api_key"
         private const val LLM_API_KEY = "llm_api_key"
     }
@@ -25,8 +26,10 @@ open class SecurePreferencesStore @Inject constructor(
     protected open val sharedPreferences: SharedPreferences by lazy {
         val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
 
+        // Per root, so the keys an account typed in are not merely hidden from the next
+        // account but absent from the file it opens.
         EncryptedSharedPreferences.create(
-            FILE_NAME,
+            storageRoot.securePreferencesName,
             masterKeyAlias,
             context,
             EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,

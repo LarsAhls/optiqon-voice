@@ -65,6 +65,19 @@ internal fun isSensitiveInputType(inputType: Int): Boolean {
     }
 }
 
+/**
+ * Whether the bubble's owner has to be told about the keyboard, given what we last told it.
+ *
+ * A change is always worth reporting. So is an editable field taking focus while the keyboard
+ * is up, even though nothing changed: the cached flag is process-global and outlives the
+ * service, so it can say "keyboard visible" at a moment when no bubble is on screen — and then
+ * no edge ever arrives to correct it. Tapping into a text field is exactly when the user
+ * expects the bubble, so it is also the right moment to re-state the truth rather than trust
+ * the cache. Showing an already-shown bubble is a no-op, so re-stating it costs nothing.
+ */
+internal fun shouldReportKeyboard(imeVisible: Boolean, lastReported: Boolean, editableFocused: Boolean): Boolean =
+    imeVisible != lastReported || (editableFocused && imeVisible)
+
 sealed class InjectionResult {
     data object Success : InjectionResult()
     data object NoFocusedNode : InjectionResult()
@@ -83,10 +96,6 @@ class TextInjectorService : AccessibilityService() {
         var instance: TextInjectorService? = null
             private set
 
-        var keyboardListener: KeyboardListener? = null
-        var isKeyboardVisible: Boolean = false
-            private set
-
         var focusedAppPackage: String? = null
             private set
 
@@ -99,6 +108,7 @@ class TextInjectorService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        keyboardLink.accessibilityConnected(imeVisible = imeWindowPresent())
         Log.d(TAG, "Accessibility service connected")
     }
 
@@ -114,6 +124,8 @@ class TextInjectorService : AccessibilityService() {
                     focusedAppPackage = packageName
                     if (event.source?.isEditable == true) {
                         lastFocusedEditablePackage = packageName
+                        // Not only on TYPE_WINDOW_STATE_CHANGED: see shouldReportKeyboard.
+                        checkKeyboardVisibility(editableFocused = true)
                     }
                 }
             }
@@ -123,17 +135,17 @@ class TextInjectorService : AccessibilityService() {
         }
     }
 
-    private fun checkKeyboardVisibility() {
+    private fun checkKeyboardVisibility(editableFocused: Boolean = false) {
         try {
-            val hasIme = windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
-            if (hasIme != isKeyboardVisible) {
-                isKeyboardVisible = hasIme
-                keyboardListener?.onKeyboardVisibilityChanged(hasIme)
-            }
+            keyboardLink.report(imeWindowPresent(), editableFocused)
         } catch (e: Exception) {
             Log.e(TAG, "Error checking keyboard", e)
         }
     }
+
+    /** Only this service can see the window list, which is why the link does not measure. */
+    private fun imeWindowPresent(): Boolean =
+        windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
 
     override fun onInterrupt() {}
 
@@ -141,8 +153,7 @@ class TextInjectorService : AccessibilityService() {
         instance = null
         lastFocusedPackage = null
         lastFocusedEditablePackage = null
-        isKeyboardVisible = false
-        keyboardListener = null
+        keyboardLink.accessibilityGone()
         focusedAppPackage = null
         super.onDestroy()
     }

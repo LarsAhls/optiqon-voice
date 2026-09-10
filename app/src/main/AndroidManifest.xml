@@ -27,10 +27,32 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:theme="@style/Theme.OptiqonVoice">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!--
+                The return path for an email sign-in link. Firebase Auth wraps the link so
+                that it lands on the project's own auth domain first and only then continues
+                to the Hosting continue-URL (https://<project_id>.web.app/signin). Without a
+                filter for that first hop the link leaves the app and completes in a browser,
+                which is where sign-in stops working. There is deliberately no filter for a
+                custom domain (plan rev. 4, D4): the default Hosting domain is the target.
+
+                The host is injected from google-services.json at build time (see
+                app/build.gradle.kts); it is the project id, which is not the project name.
+            -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="${firebaseAuthHost}"
+                    android:pathPrefix="/__/auth/links" />
             </intent-filter>
         </activity>
 
