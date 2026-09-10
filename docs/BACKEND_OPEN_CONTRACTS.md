@@ -36,14 +36,22 @@ The Firestore rules tests in F1 prove none of the above.
   and `MainActivity` hands the incoming link to the account screen. The earlier
   `voice.optiqon.se` filter is removed (plan rev. 4, D4). The repo now holds
   `public/.well-known/assetlinks.json` (debug key SHA-256 only) and `public/signin/` with a
-  `hosting` block in `firebase.json`, but **Hosting has not been deployed and
-  Authentication is not initialised** (identitytoolkit still answers
-  `CONFIGURATION_NOT_FOUND`). The route is therefore still unproven; G1+G2 in
-  `docs/gate-m1/G1_G2_RUNBOOK.md` are the Gate actions, G3 (`G3_SMOKE_TEMPLATE.md`) is the
-  proof.
-- Google sign-in is shown as primary and e-mail link as secondary by the account screen,
-  but the built app still has 0 OAuth clients in `google-services.json`, so Google is
-  unavailable until G1 delivers a new file (checked by `scripts/gate/check-google-services.sh`).
+  `hosting` block in `firebase.json`. **Updated 2026-09-10:** G1+G2 were run on 2026-09-09
+  (evidence in `gate-m1/GATE_2_READBACK.md`), so the two blockers this paragraph used to name
+  are gone — Authentication **is** initialised in `optiqon-voice-47498` with Google (primary)
+  and Email/Password + email link (secondary), and Hosting has exactly one release on `live`
+  serving `public/`. The Digital Asset Links API lists `se.optiqon.voice`.
+  **Still unproven, and this is what G3 exists to prove:** that the link Firebase actually
+  sends opens the *app* rather than a browser on device `c1f9837c` — App Links verification
+  against `optiqon-voice-47498.firebaseapp.com`, the tester receiving the mail, and the app
+  completing sign-in from it. Nothing about that route has run on hardware.
+  One known deviation from the runbook: `/signin` answers 301 → `/signin/` (Hosting's
+  directory-index redirect, query preserved) rather than 200 directly.
+- Google sign-in is shown as primary and e-mail link as secondary by the account screen.
+  **Updated 2026-09-10:** the local `app/google-services.json` from G1 now carries 2 OAuth
+  clients (1 web) and the build generates `default_web_client_id`, so the "0 OAuth clients"
+  blocker is closed (checked by `scripts/gate/check-google-services.sh`). That the Google
+  flow completes on the device is a G3 step, not a settled fact.
 - The address used to complete a link is always the one stored on the device, or one the
   tester types in. It is never read from the link, because a forwarded link would
   otherwise sign the wrong person in.
@@ -65,8 +73,11 @@ The Firestore rules tests in F1 prove none of the above.
 
 ## Undecided policy values
 
-- Local offline grace: **72 h is a test value**, not an approved live policy. It lives in
-  configuration, not in code.
+- Local offline grace: **decided 2026-09-09 — D6 = 72 h**, as beta policy for ≤10 known
+  testers. Not a V1 policy, and no longer an open item; see the D6 section in
+  `GATE_M1_HANDOFF.md` for what it governs (how long an already-approved device may keep
+  dictating offline) and what it does not (cloud access — `firestore.rules` has no grace).
+  The value lives in configuration, not at the call sites that enforce it.
 - Monotonic quota without refund: proposed for V1.
 
 ## Two rule sets: what is deployed, and what is merely written
