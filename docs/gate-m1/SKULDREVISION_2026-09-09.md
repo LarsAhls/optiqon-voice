@@ -586,7 +586,7 @@ hoppade** (var 384). Commitar `7a25616` och `14dbad1`.
 
 ## Fix when touched
 
-### 6. Två tjänster kopplade genom processglobala `companion object`-fält ✅ STÄNGT 2026-09-10 (F15 rättad; enhetsverifiering kvarstår hos Lars)
+### 6. Två tjänster kopplade genom processglobala `companion object`-fält ✅ STÄNGT 2026-09-10 — F15 rättad och verifierad på enhet
 
 **Evidens.** `TextInjectorService.kt:96-104` håller `instance`, `keyboardListener`,
 `isKeyboardVisible` och `focusedAppPackage` som föränderliga companion-fält.
@@ -647,18 +647,34 @@ nollning vid avregistrering, avregistrering utan verkan, återkomst som sätter 
 säger, rapportregeln slopad, och bubblan som varken registrerar eller avregistrerar sig. **Alla tio
 dör, var och en på exakt den spärr den riktar sig mot.**
 
-**Vad detta inte bevisar.** Att det fungerar på enhet. Testerna spelar matrisen mot länken, inte
-mot Android: att `onServiceConnected()` verkligen körs när användaren slår på tjänsten igen, och
-att `windows` då svarar rätt, kan bara en enhet visa. **Det steget kvarstår hos Lars** — slå av och
-på tillgänglighetstjänsten, tryck i ett textfält, se att bubblan kommer.
+**Verifierat på enhet 2026-09-10 10:38** — OnePlus 8 Pro `01132f9f`, personlig profil,
+`versionName=v20260910`. Lars slog av och på tillgänglighetstjänsten och tryckte i ett textfält;
+bubblan kom upp. Loggen:
+
+```
+10:38:18.788  I/AccessibilityManagerService: updateAccessibilityEnabledSettingLocked:false
+10:38:21.128  I/AccessibilityManagerService: updateAccessibilityEnabledSettingLocked:true
+10:38:21.174  D/TextInjectorService(26538): Accessibility service connected
+```
+
+`onServiceConnected()` körde 46 ms efter påslaget. Att `BubbleService` verkligen var orörd under
+tiden — premissen hela beviset vilar på — visar `dumpsys activity services`: `TextInjectorService`
+hade `createTime=-55s` (återskapad av slaget) medan `BubbleService` hade `createTime=-4m11s` och
+`lastStartId=1` i samma process (26538). Tillgänglighetstjänsten revs och återanslöts under en
+levande, aldrig omstartad bubbeltjänst, och bubblan kom tillbaka. Det är precis den matris
+`KeyboardLinkLifecycleTest` spelar, nu mätt på riktig Android.
+
+**Vad detta inte bevisar.** Att varje app beter sig så: bubblan mättes i en app, och
+`windows`-mätningen är densamma som före rättningen. Det som mättes är att återanslutningen sker
+och att registreringen överlever, vilket var F15.
 
 **De två återstående companion-fälten rördes inte.** `instance` läses genom `TextInjectionBridge`,
 som redan är en ägd söm, och `focusedAppPackage` läses bara inifrån `TextInjectorService` självt.
 Ingen av dem har F15:s form — ingen annan tjänst nollar dem — så de bröts inte ut på spekulation.
 
 **Effort:** utfört (uppskattat en dag; blev mindre, eftersom bara en av fyra fält faktiskt bar
-defekten). **Regressionsrisk:** medel kvarstår till enhetsverifieringen är gjord. Hela sviten:
-**400 tester, 0 fel, 2 hoppade** (var 389). Commit `2b4c61a`.
+defekten). **Regressionsrisk:** lagd — enhetsverifieringen är gjord. Hela sviten: **400 tester, 0
+fel, 2 hoppade** (var 389). Commit `2b4c61a`.
 
 ### 7. `BubbleService` bär för mycket, och defekterna samlas där
 
