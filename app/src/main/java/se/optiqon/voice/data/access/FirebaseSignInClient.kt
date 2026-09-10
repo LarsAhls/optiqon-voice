@@ -15,6 +15,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.tasks.await
 import se.optiqon.voice.BuildConfig
 import se.optiqon.voice.domain.access.SignInClient
+import se.optiqon.voice.domain.access.runCatchingCancellable
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -53,7 +54,7 @@ class FirebaseSignInClient @Inject constructor(
     override suspend fun signInWithGoogle(activity: Activity): Result<Unit> {
         val clientId = webClientId
             ?: return Result.failure(IllegalStateException("This build has no Firebase configuration"))
-        return runCatching {
+        return runCatchingCancellable {
             val option = GetSignInWithGoogleOption.Builder(clientId).build()
             val request = GetCredentialRequest.Builder().addCredentialOption(option).build()
             val response = CredentialManager.create(activity).getCredential(activity, request)
@@ -68,7 +69,7 @@ class FirebaseSignInClient @Inject constructor(
         if (!emailLinkAvailable) {
             return Result.failure(IllegalStateException("This build has no Firebase configuration"))
         }
-        return runCatching {
+        return runCatchingCancellable {
             val settings = ActionCodeSettings.newBuilder()
                 .setUrl(emailLinkContinueUrl(BuildConfig.FIREBASE_PROJECT_ID))
                 .setHandleCodeInApp(true)
@@ -87,11 +88,12 @@ class FirebaseSignInClient @Inject constructor(
         }
     }
 
-    override suspend fun completeEmailLink(link: String, email: String): Result<Unit> = runCatching {
-        auth.signInWithEmailLink(email, link).await()
-        pendingEmailStore.clear()
-        Unit
-    }
+    override suspend fun completeEmailLink(link: String, email: String): Result<Unit> =
+        runCatchingCancellable {
+            auth.signInWithEmailLink(email, link).await()
+            pendingEmailStore.clear()
+            Unit
+        }
 
     override fun isEmailLink(link: String): Boolean = auth.isSignInWithEmailLink(link)
 

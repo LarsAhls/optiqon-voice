@@ -7,7 +7,9 @@ skrevs samma natt och rättades direkt; allt annat är oförändrat.
 
 Rankningen är efter **förväntad framtida kostnad**, inte efter hur illa koden ser ut.
 
-**Uppdatering 2026-09-10:** fynd 1 är åtgärdat och stängt, och dess rubrik rättad — den påstod "noll migrationstester", men steget 7→8 var redan täckt. Detaljer under fyndet.
+**Uppdatering 2026-09-10:** fynd 1 och 2 är åtgärdade och stängda. Fynd 1:s rubrik är dessutom
+rättad — den påstod "noll migrationstester", men steget 7→8 var redan täckt. Detaljer under
+respektive fynd.
 
 ---
 
@@ -80,9 +82,9 @@ Hela sviten: **363 tester, 0 fel** (var 358).
 
 ---
 
-### 2. `runCatching` sväljer `CancellationException` och räknar avbrott som serverfel
+### 2. `runCatching` sväljer `CancellationException` och räknar avbrott som serverfel ✅ STÄNGT 2026-09-10
 
-**Evidens.** `AccessRefresher.kt:84`:
+**Evidens (som den löd vid revisionen).** `AccessRefresher.kt:84`:
 
 ```kotlin
 val outcome = runCatching { deferred.await() }
@@ -103,12 +105,76 @@ tillstånd som stänger av diktering, och som F14-arbetet i natt just gjorde syn
 ord: appen kan spärra sig själv på grund av navigering. På inloggningssidan är effekten
 mildare men lika fel — ett avbrutet Google-flöde renderas som ett inloggningsfel.
 
-**Billigaste tillräckliga verifiering.** Ett enhetstest som avbryter den anropande coroutinen
-under `refresh()` och hävdar att `consecutiveFailures` inte ökade.
+**Bekräftad, inte antagen.** Båda halvorna av påverkan kördes som RED innan något rättades.
+Ett avbrutet anrop publicerade `Failed` på `lastOutcome` (alltså "kunde inte nå servern" på
+skärmen), **och** nästa `FOREGROUND`-trigger svarade `Throttled` — backoffen hade redan
+slagit till efter ett enda avbrott. Den andra delen var den osäkra i revisionen, eftersom
+uppräkningen ligger efter ett `mutex.withLock` i en coroutine som redan är avbruten;
+Mutex:ens okontenderade snabbväg tar ingen suspension, så raden hinner köras.
 
-**Rekommendation.** Byt till `try/catch` med `catch (c: CancellationException) { throw c }`
-före den breda grenen, på alla tre ställena. **Effort:** en timme. **Regressionsrisk:** låg;
-den ändrar bara vägen där anroparen redan är på väg bort.
+**Åtgärd.** En gemensam hjälpare, `runCatchingCancellable` i
+`domain/access/Cancellation.kt`, som alla fyra ställena nu går genom:
+
+```kotlin
+internal suspend inline fun <T> runCatchingCancellable(block: () -> T): Result<T> =
+    try {
+        Result.success(block())
+    } catch (throwable: Throwable) {
+        coroutineContext.ensureActive()
+        Result.failure(throwable)
+    }
+```
+
+Kontrollen är `ensureActive()`, inte `catch (c: CancellationException) { throw c }` som
+revisionen föreslog, och skillnaden är avsiktlig: de två avbrotten är inte samma sak. Är
+**den här** coroutinen avbruten finns ingen kvar att lämna ett resultat till, och avbrottet
+hör uppåt. Är det **arbetet vi kallade** som dog — en Firebase-task som avbryter sig själv,
+en scope som tog sina barn med sig — medan vi själva lever, då är det ett äkta uteblivet
+svar som anroparen måste kunna rendera. Ett villkorslöst omkast hade gjort en död läsning
+till en anropare som tyst försvinner utan att rapportera något.
+
+**Spärrar** — `CancellationPropagationTest`, 7 tester, varav källspärren nedan:
+
+| Test | Vad det spärrar |
+|---|---|
+| `a cancelled caller is not handed a failure it could act on` | Hjälparen kastar om när anroparen själv är avbruten, och lämnar inget `Result` |
+| `work that dies on its own is a failure, not a cancellation of the caller` | Kontrollen mot ett villkorslöst omkast: död callee + levande anropare = `Result.failure` |
+| `an ordinary answer and an ordinary failure are unchanged` | Hjälparen är i övrigt `runCatching` |
+| `a check the user walked away from is not reported as a failure` | `lastOutcome` blir inte `Failed` av att skärmen lämnas |
+| `a check the user walked away from does not back the next one off` | Nästa trigger släpps igenom — det är den halvan som kan låsa appen |
+| `a check that really fails does count, and does back the next one off` | Kontrollen: ett äkta fel räknas fortfarande och bromsar nästa trigger |
+
+**Bevis att testerna kan gå sönder.** Fem avsiktliga mutationer, en åt gången, varje gång
+fångad av exakt det avsedda testet:
+
+| Mutation | Fångades av |
+|---|---|
+| hjälparen blir vanlig `runCatching` (nuläget före fixen) | båda avbrottstesterna + hjälpartestet — 3 tester |
+| hjälparen kastar om *varje* `CancellationException` | kontrollen för död callee |
+| `AccessRefresher`:s anropsställe går tillbaka till `runCatching` | båda avbrottstesterna (bevisar anropsstället, inte bara hjälparen) |
+| `consecutiveFailures` slutar räknas upp vid `Failed` | kontrollen för äkta fel |
+| ett av de spärrade filerna går tillbaka till `runCatching` | källspärren |
+
+**Det som inte går att enhetstesta.** Tre av de fyra ställena ligger i
+`FirebaseSignInClient`, runt `CredentialManager.create(...)` och `FirebaseAuth` — statiska
+fabriker och finala klasser, och modulen har ingen mock-framework (`testImplementation`
+innehåller junit, coroutines-test, Robolectric, Roborazzi, MockWebServer, room-testing,
+work-testing — inget mockk/mockito). Det finns alltså ingen väg att driva dem från ett
+JVM-test. Den spärr som *är* tillgänglig är i stället en källkontroll: testet läser
+`AccessRefresher.kt` och `FirebaseSignInClient.kt` från disk och hävdar att ingen av dem
+innehåller `runCatching`, med ett felmeddelande som namnger hjälparen. Grov, men den fångar
+återfallet, och den går inte att råka ha kvar som grön lögn.
+
+**Vad som medvetet lämnades.** `RegistrationRepository.kt:83` och `:134` har redan ett
+korrekt omkast inline och ändrades inte — att röra korrekt kod hade varit scope-glidning, och
+de ligger därför inte i källspärrens lista. `BubbleService.kt:880` är ett femte ställe av
+samma klass (`runCatching { withContext(...) }` i en suspend-funktion), men det anropas på
+den viktiga vägen redan under `NonCancellable`, där ett avbrott inte kan nå det, och
+`BubbleService` är fynd 7:s område. Lämnat som eget beslut snarare än smuget in här.
+
+**Effort:** utfört. **Regressionsrisk:** låg. Fyra anropsställen byter idiom; produktionskodens
+enda nya beteende är att ett avbrott inte längre blir ett `Failed`. Hela sviten:
+**370 tester, 0 fel** (var 363). `compileReleaseKotlin` grön.
 
 ### 3. Skärmbildstesterna kan inte gå sönder
 

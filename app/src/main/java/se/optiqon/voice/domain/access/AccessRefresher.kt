@@ -81,7 +81,7 @@ class AccessRefresher @Inject constructor(
             }
         }
 
-        val outcome = runCatching { deferred.await() }
+        val outcome = runCatchingCancellable { deferred.await() }
             .getOrElse { RefreshOutcome.Failed(it) }
 
         if (outcome !is RefreshOutcome.Throttled) _lastOutcome.value = outcome
