@@ -7,7 +7,7 @@ skrevs samma natt och rättades direkt; allt annat är oförändrat.
 
 Rankningen är efter **förväntad framtida kostnad**, inte efter hur illa koden ser ut.
 
-**Uppdatering 2026-09-10:** fynd 1 och 2 är åtgärdade och stängda. Fynd 1:s rubrik är dessutom
+**Uppdatering 2026-09-10:** fynd 1, 2 och 3 är åtgärdade och stängda. Fynd 1:s rubrik är dessutom
 rättad — den påstod "noll migrationstester", men steget 7→8 var redan täckt. Detaljer under
 respektive fynd.
 
@@ -176,13 +176,14 @@ den viktiga vägen redan under `NonCancellable`, där ett avbrott inte kan nå d
 enda nya beteende är att ett avbrott inte längre blir ett `Failed`. Hela sviten:
 **370 tester, 0 fel** (var 363). `compileReleaseKotlin` grön.
 
-### 3. Skärmbildstesterna kan inte gå sönder
+### 3. Skärmbildstesterna kan inte gå sönder ✅ STÄNGT 2026-09-10
 
-**Evidens.** `app/build.gradle.kts:207` sätter `systemProperty("roborazzi.test.record", "true")`
-— hårdkodat, inte villkorat. Varje anrop är `captureRoboImage("build/outputs/roborazzi/…")`
-(`ScreenshotTest.kt:146`, `:182`, `:217`, `:241`, `SignedOutScreenTest.kt:56`,
-`WaitingScreenTest.kt:50`), aldrig `compare` eller `verify`. Utdata går till `build/`, och det
-finns inga incheckade referensbilder någonstans i repot.
+**Evidens (som den löd vid revisionen).** `app/build.gradle.kts:207` sätter
+`systemProperty("roborazzi.test.record", "true")` — hårdkodat, inte villkorat. Varje anrop är
+`captureRoboImage("build/outputs/roborazzi/…")` (`ScreenshotTest.kt:146`, `:182`, `:217`,
+`:241`, `SignedOutScreenTest.kt:56`, `WaitingScreenTest.kt:50`), aldrig `compare` eller
+`verify`. Utdata går till `build/`, och det finns inga incheckade referensbilder någonstans i
+repot.
 
 **Allvarlighet / sannolikhet:** medel / hög. **Faktisk defekt i testsviten.**
 
@@ -192,15 +193,86 @@ varje körning och jämför mot ingenting. De kan aldrig faila på en visuell re
 den bekräftelsemening som klipptes av navigeringsfältet — passerade en helt grön svit och
 hittades först på skärmbild från riktig enhet.**
 
-Det är inte värdelöst: de renderar faktiskt skärmarna, så en krasch i komposition failar. Men
-det är rök, inte regression, och namnet lovar det senare.
+---
 
-**Billigaste tillräckliga verifiering.** Kör en gång i record-läge, checka in bilderna, slå
-sedan om till compare och ändra en padding — testet ska bli rött.
+**Bekräftad.** Med 1 dp:s ändring av `horizontal`-paddingen i `AccountScreenContent` och bygget
+i sitt dåvarande läge (`roborazzi.test.record` hårdkodat till `true`): **6 av 6 tester PASSED.**
+De kunde inte gå sönder. Samma mutation med jämförelse påslagen ger 6 FAILED.
 
-**Rekommendation.** Antingen checka in guldbilder och slå på jämförelse, eller döp om dem till
-det de är (`…SmokeTest`) och sluta räkna dem som täckning. Det första är bättre. **Effort:** en
-halv dag. **Regressionsrisk:** låg, men räkna med initial flakighet i teckensnittsrendering.
+**Åtgärd.** Inspelning ligger nu bakom `-Proborazzi.record`; allt annat jämför. De tolv bilderna
+är incheckade i `app/src/test/screenshots/` i stället för i `build/`, och all fotografering går
+genom `captureBaseline`, som är enda vägen till den katalogen. Bygget fick också en
+`inputs.dir(...)` på bildkatalogen — utan den är en redigerad guldbild UP-TO-DATE och sviten
+förblir grön, en tystare variant av samma defekt.
+
+Roborazzis egna förval behövde inga tillägg för att vara stränga: `Added` (guldbild saknas)
+failar lika hårt som `Changed`, så en ny skärm utan incheckad bild går rött av sig själv.
+
+**Ett latent hinder som revisionen inte nämnde** och som fixen tvingade fram: tre tester i
+`ScreenshotTest` fotograferade två gånger till samma filnamn. I inspelningsläge var det
+osynligt — den andra bilden skrev över den första — men i jämförelseläge mäts den första bilden
+mot ett läge skärmen ännu inte nått. Uppdelat i `show` + `shoot`.
+
+**Spärrar** — `ScreenshotBaselineTest`, 4 tester. En vanlig visuell regression failar numera av
+sig själv; det som behöver spärras är uppsättningen, alltså de sätt den kan smyga tillbaka till
+inspelning utan att något ser trasigt ut:
+
+| Test | Vad det spärrar |
+|---|---|
+| `the build compares by default and records only when it is asked to` | `roborazzi.test.record` hårdkodas inte igen, och `roborazzi.test.verify` finns kvar |
+| `no screen is shot into a directory nobody compares` | Ingen testkälla skriver till `build/outputs/roborazzi` eller anropar `captureRoboImage` förbi `captureBaseline` |
+| `every baseline belongs to a screen that is still shot` | Ny skärm utan bild, och kvarglömd bild efter borttaget test — båda faller ut, och felmeddelandet säger vilket |
+| `every screen that is shot resolves its typefaces first` | Ingen skärm fotograferas utan `PrimeTypefaces()` (se nedan) |
+
+**Flakigheten revisionen förutsåg var verklig — och den var inte flakighet.** Raden "räkna med
+initial flakighet i teckensnittsrendering" slog in, men orsaken var deterministisk: båda
+typsnittsfamiljerna levereras som *en* variabel fontfil som instansieras per vikt, och
+typsnittscachen är nycklad på resursen utan dess variationsaxlar. Den vikt som efterfrågas
+först vinner därför för resten av JVM:en. Följden: exakt samma kod gav 0 skilda pixlar i full
+svit och 2197 respektive 3722 när klassen kördes ensam — grön här, röd där. Fixen är
+`PrimeTypefaces()`, som löser upp alla femton typstilar i fast ordning innan skärmen ritas,
+mätt på nollstorlek och klippt. **Ingen av de tolv incheckade bilderna ändrades av det**, vilket
+är beviset på att det är en stabilisering och inte ett nytt utseende; alla fyra körformer
+rapporterar nu 0 skilda pixlar.
+
+**Tröskeln är mätt, inte vald.** Första CI-körningen svarade på den fråga den här maskinen inte
+kan svara på: Linux avviker från de Windows-inspelade bilderna med **2–36 pixlar av 376 980**,
+allt i glyfkanter. Jämförelsen tillåter nu 75 — dubbelt den värsta plattformsskillnaden och en
+fjärdedel av den minsta uppmätta regressionen. Båda talen står i koden bredvid konstanten.
+
+**Bevis att testerna kan gå sönder.** Åtta avsiktliga mutationer i tio körningar, en åt
+gången, varje gång återställd:
+
+| Mutation | Utfall |
+|---|---|
+| 1 dp `horizontal`-padding, bygget i sitt gamla läge (record) | **6 PASSED** — RED-beviset för själva fyndet |
+| 1 dp `horizontal`-padding, jämförelse påslagen | 6 FAILED, 297–3807 pixlar |
+| 1 dp `vertical`-padding | 6 PASSED — inte en testsvaghet: kolumnen är centrerad och kortare än skärmen, så symmetrisk vertikal padding flyttar ingen pixel |
+| `Pine80` ett steg (`0x7E`→`0x7D`) | **6 PASSED, 0 skilda pixlar** — se begränsningen nedan |
+| `Pine80` två steg (`0x7E`→`0x7C`) | FAILED, 21 276 / 22 802 pixlar |
+| `roborazzi.test.record` hårdkodad till `"true"` igen | `the build compares by default…`, ensam |
+| en fotografering riktad tillbaka mot `build/outputs/roborazzi` | `no screen is shot into a directory nobody compares`, ensam |
+| en guldbild raderad | `every baseline belongs to a screen…` **och** Roborazzis `Added` på skärmens eget test |
+| `PrimeTypefaces()` borttagen ur en klass | `every screen that is shot resolves its typefaces first`, plus 2197/3722 pixlars drift |
+| 1 dp `horizontal`-padding **med tröskeln 0,0002 på plats** | 6 FAILED, tystast 297 mot en gräns på 75 |
+
+**Det som inte täcks, uttryckligen.** Två hål, båda uppmätta:
+
+- **Färgdrift under 1/255.** Roborazzis förvalda komparator tillåter ett kanalavstånd på 0,007.
+  Ett steg på primärfärgen gav `pixelDifferences=0`. Uppsättningen fångar layoutdrift och
+  synlig färgändring, inte kanalbrus. Två steg fångas.
+- **Regressioner tystare än 75 pixlar.** Priset för att kunna spela in på Windows och jämföra på
+  Linux. Marginalen till den minsta uppmätta regressionen är fyra gånger, till det värsta
+  plattformsbruset två. Ingen annan spärr täcker mellanrummet.
+
+**Vad som medvetet lämnades.** Bildlistan i `every baseline belongs to a screen that is still
+shot` är handskriven i stället för härledd: namnen når `captureBaseline` via hjälparparametrar
+och går inte att läsa av källorna tillförlitligt, och en lista som *måste* redigeras är själva
+poängen — den failar åt båda hållen. Feedbackskärmen, som var upprinnelsen till fyndet, har
+ingen guldbild här; den ligger utanför de tolv skärmar sviten fotograferar och är eget arbete.
+
+**Effort:** utfört. **Regressionsrisk:** ingen i produktionskod — ingen produktionsfil ändrades.
+Hela sviten: **374 tester, 0 fel, 2 hoppade** (var 370). Commits `685d0ac` och `faf6cc0`.
 
 ---
 
