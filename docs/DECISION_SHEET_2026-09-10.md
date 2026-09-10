@@ -26,7 +26,7 @@ run before the `llmEnabled` check.
 - **`NOTES` presets `SummarizeMode.LIGHT`** — the only preset in the spec that changes visible
   output. The alternative is `NONE`, leaving condensing an explicit choice. Either is cheap.
 
-## 2. Lift merge for PR A2 — the grace-constant rename
+## 2. Lift merge for PR A2 (#6) — the grace-constant rename
 
 **Recommendation: yes.**
 
@@ -34,6 +34,7 @@ run before the `llmEnabled` check.
 72 h "proposed" and "not an approved live policy" even though you decided D6 = 72 h on
 2026-09-09. Six files, no behaviour change, proven by the compiler and `AccessGateTest`.
 
+It is open as [PR #6](https://github.com/LarsAhls/optiqon-voice/pull/6), CI green, and left unmerged on purpose.
 It needs your lift because it is running code: the standing lift covers `docs/`, `BACKLOG.md`,
 KDoc and comments only. PR A1 (documents) is merged under that standing lift already.
 
