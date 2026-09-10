@@ -22,6 +22,25 @@ Prerequisites: G1 and G2 PASS, `GATE_2_READBACK.md` filled in, D6 decided (grace
   deleted in the same step.
 - The debug hooks are reachable only through `adb shell am broadcast` (permission
   `android.permission.DUMP`) and only exist in the debug build (verified in L1).
+- **Debug flags do not survive a process restart — re-assert them (finding F9, 2026-09-10).**
+  `AccessDebugControls` holds `failRefresh` and `clockOffsetMs` as plain `@Volatile var`s in
+  memory (`app/src/debug/.../AccessDebugControls.kt:24,27`); nothing is persisted. A broadcast
+  sent to a **stopped** package starts a fresh process with both flags back at their defaults
+  (`false` / `0`), and it does so **silently** — the broadcast still reports success, so the
+  hook looks like it worked. Any step that spans time, a force-stop, a crash, a low-memory
+  kill or an `install -r` must therefore (a) re-assert the flag and (b) confirm the process
+  identity before the state is believed:
+
+  ```
+  $ADB shell pidof $PKG                       # note the pid
+  $ADB shell stat -c '%Z' /proc/$(…pid…)      # process start time — a new value means a new process
+  $HOOK $PKG.debug.DUMP_STATE                 # read the flags back rather than assuming them
+  ```
+
+  This matters most in **step 9**, where `CLOCK_OFFSET` has to hold across a grace expiry
+  together with step 6's failure hook: if the process restarted in between, the app is
+  measuring real time with a working backend and the step silently proves nothing. Record the
+  pid and its start time next to each hook in steps 6 and 9.
 
 Shorthand used below:
 
@@ -148,16 +167,35 @@ duration, no text.
 
 ## 6. Backend failure inside grace → degraded banner, dictation allowed (11h)
 
+**Corrected 2026-09-10 (finding F8).** This step used to say "force a refresh
+(background/foreground)". That cannot work, and it cost a full cycle of "it looks the same as
+usual" before it was traced. `AccessRefresher.refresh` throttles every trigger except
+`UID_CHANGE` and `MANUAL` (`AccessRefresher.kt:62`): a `FOREGROUND` trigger first asks
+`isStale()`, which needs the verdict to be at least `CHECK_IN_INTERVAL_MS` = 15 min old
+(`:109-115`). Below that it returns `RefreshOutcome.Throttled`, which is deliberately **not
+published** (`:87`), so `lastOutcome` stays `Confirmed` and the banner renders nothing. A
+backgrounded-and-foregrounded app inside 15 minutes therefore looks exactly like a healthy one.
+
+The only unthrottled path reachable from the UI is **Settings → Konto → "Kontrollera igen"**
+(`ui/access/AccountSettingsSection.kt:105` → `AccountViewModel.refresh` →
+`AccessSession.refreshNow()` → `RefreshTrigger.MANUAL`, `AccessSession.kt:117`).
+
 ```
 $HOOK $PKG.debug.FAIL_REFRESH --ez enabled true
+$ADB shell run-as $PKG ls files/debug 2>/dev/null   # re-assert: see the hygiene rule on flags
 ```
 
-Force a refresh (background/foreground). PASS when the degraded banner appears and dictation
-still works. Then:
+Then tap **Settings → Konto → "Kontrollera igen"** on the phone. Do **not** rely on a
+background/foreground cycle. PASS when the degraded banner appears and dictation still works.
+Then:
 
 ```
 $HOOK $PKG.debug.FAIL_REFRESH --ez enabled false
 ```
+
+Waiting out the 15 minutes and then foregrounding is a valid *second* way to see the same
+thing, but it is not the step: if the banner does not appear after the manual re-check, that is
+a real FAIL and not a throttle.
 
 ## 7. Offline → 11i, dictation denied because of ASR, not the account
 
@@ -218,15 +256,27 @@ Also record the counter: approvedUsers back to 1, seatFor = tester uid.
 
 Re-approve is **not** done here; use the admin account (Active) for this step.
 
+**Process identity first (finding F9).** This step needs two flags to hold simultaneously, and
+neither survives a restart. Record the pid and its start time before and after, and read the
+flags back rather than assuming them:
+
 ```
+$ADB shell pidof $PKG                                    # pid before
+$HOOK $PKG.debug.FAIL_REFRESH --ez enabled true          # re-assert step 6's hook
 $HOOK $PKG.debug.CLOCK_OFFSET --el offsetMs 259200001     # 72 h + 1 ms
+$HOOK $PKG.debug.DUMP_STATE                              # both flags must read back set
+$ADB shell pidof $PKG                                    # pid after — must be the same pid
 ```
 
 With the refresh failing (step 6 hook on) the app must fall to the 11i gate; with the offset
-reset to 0 and the failure hook off it returns to Active.
+reset to 0 and the failure hook off it returns to Active. If the pid changed at any point, the
+offset was lost and the observation is void — re-assert and repeat rather than recording the
+result.
 
 ```
 $HOOK $PKG.debug.CLOCK_OFFSET --el offsetMs 0
+$HOOK $PKG.debug.FAIL_REFRESH --ez enabled false
+$HOOK $PKG.debug.DUMP_STATE                              # confirm both are back at defaults
 ```
 
 ## 10. Account switch and sign-out
