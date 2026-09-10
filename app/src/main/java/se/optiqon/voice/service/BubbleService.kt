@@ -85,6 +85,13 @@ class BubbleService : Service() {
     @Inject lateinit var accessRepository: AccessRepository
     @Inject lateinit var accessGuard: AccessGuard
 
+    /**
+     * The application's own scope, which outlives this service. Preserving a recording that is
+     * being interrupted has to run somewhere [onDestroy] does not cancel; see
+     * [cancelKeepingRecording].
+     */
+    @Inject lateinit var applicationScope: CoroutineScope
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var windowManager: WindowManager? = null
     private var bubbleView: BubbleView? = null
@@ -226,31 +233,31 @@ class BubbleService : Service() {
         val appContext = recordingAppContext
         showBlocked(reason)
 
-        scope.launch {
-            var wavFile: File? = null
-            val pcm = try {
-                recordingJob?.join()
-                pcmFile
-            } catch (e: Exception) {
-                Log.w(TAG, "Recording cleanup interrupted", e)
-                null
-            }
-            try {
-                if (pcm != null && pcm.exists() && pcm.length() > 0L) {
-                    wavFile = File(cacheDir, "interrupted_${System.currentTimeMillis()}.wav")
-                    withContext(Dispatchers.IO) { AudioConverter.pcmToWav(pcm, wavFile) }
-                    preserveInterrupted(wavFile, durationMs, appContext, AccessRevokedException(reason))
+        val job = recordingJob
+        val pcm = pcmFile
+        recordingJob = null
+        pcmFile = null
+
+        // The same keeping as on shutdown, described the same way: the two paths differ only in
+        // why the dictation stopped. Duplicating it is how one copy ends up cancellable.
+        preserveUnfinishedRecording(
+            applicationScope,
+            UnfinishedRecording(
+                recordingJob = job,
+                pcm = pcm,
+                wav = File(cacheDir, "interrupted_${System.currentTimeMillis()}.wav"),
+                durationMs = durationMs,
+                convert = { from, to -> withContext(Dispatchers.IO) { AudioConverter.pcmToWav(from, to) } },
+                preserve = { audio, duration ->
+                    preserveInterrupted(audio, duration, appContext, AccessRevokedException(reason))
+                },
+                onDone = {
+                    abandonRecordingAudioFocus()
+                    audioRecorder = null
+                    silenceDetector = null
                 }
-            } finally {
-                abandonRecordingAudioFocus()
-                pcm?.delete()
-                wavFile?.delete()
-                recordingJob = null
-                pcmFile = null
-                audioRecorder = null
-                silenceDetector = null
-            }
-        }
+            )
+        )
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -290,11 +297,13 @@ class BubbleService : Service() {
     override fun onDestroy() {
         isRunning = false
         fanMenuController?.dismiss()
-        stopRecordingAndWait()
+        val unfinished = takeUnfinishedRecording()
         removeBubble()
         TextInjectorService.keyboardListener = null
         try { unregisterReceiver(stopReceiver) } catch (_: Exception) {}
-        scope.cancel()
+        // Cancelling [scope] is inside this call, after the recording has been handed to a scope
+        // that survives. Keeping the two steps together is what stops the order being got wrong.
+        cancelKeepingRecording(scope, applicationScope, unfinished)
         super.onDestroy()
     }
 
@@ -681,14 +690,52 @@ class BubbleService : Service() {
         }
     }
 
-    /** Stop recording without transcribing (for cleanup on destroy) */
-    private fun stopRecordingAndWait() {
-        if (state !is ServiceState.Recording) return
+    /**
+     * Stops a recording because the service carrying it is being destroyed, and describes what is
+     * left of it so that someone who outlives the service can keep it.
+     *
+     * This used to be `stopRecordingAndWait()`, and it did not wait. It signalled the recorder to
+     * stop, noted in a comment that `recordingJob` was deliberately left alone "to finish flushing
+     * the file", and returned — and its only caller, [onDestroy], ran `scope.cancel()` two lines
+     * later, on the very scope that job belongs to. Stopping the service mid-recording therefore
+     * lost the dictation: nothing converted the PCM, nothing wrote a history row, nothing told the
+     * user. The audio focus was never released either, and the PCM was left behind in the cache.
+     *
+     * Returning the recording rather than launching the work is what makes the lifetime somebody
+     * else's decision — [cancelKeepingRecording] is where it is made, and it is the only place
+     * that cancels [scope].
+     */
+    private fun takeUnfinishedRecording(): UnfinishedRecording? {
+        if (state !is ServiceState.Recording) return null
         audioRecorder?.stop()
         levelJob?.cancel()
         timerJob?.cancel()
         silenceCheckJob?.cancel()
-        // Don't cancel recordingJob — let it finish flushing the file
+        // Synchronously, while the service is still here to do it: the scope that would otherwise
+        // carry this is the one being cancelled.
+        abandonRecordingAudioFocus()
+
+        val job = recordingJob
+        val pcm = pcmFile
+        val durationMs = recordedDurationMs()
+        val appContext = recordingAppContext
+        recordingJob = null
+        pcmFile = null
+
+        return UnfinishedRecording(
+            recordingJob = job,
+            pcm = pcm,
+            wav = File(cacheDir, "interrupted_${System.currentTimeMillis()}.wav"),
+            durationMs = durationMs,
+            convert = { from, to -> withContext(Dispatchers.IO) { AudioConverter.pcmToWav(from, to) } },
+            preserve = { audio, duration ->
+                preserveInterrupted(audio, duration, appContext, RecordingStoppedException())
+            },
+            onDone = {
+                audioRecorder = null
+                silenceDetector = null
+            }
+        )
     }
 
     /** Stop recording and start transcription */

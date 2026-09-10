@@ -195,7 +195,12 @@ class CancellationPropagationTest {
     private companion object {
         val GUARDED = listOf(
             "se/optiqon/voice/domain/access/AccessRefresher.kt",
-            "se/optiqon/voice/data/access/FirebaseSignInClient.kt"
+            "se/optiqon/voice/data/access/FirebaseSignInClient.kt",
+            // Joins the recording coroutine while that coroutine is being cancelled, which is
+            // exactly the shape this finding was about. Nothing there can be driven into a
+            // CancellationException from a unit test either — join() on an already-cancelled job
+            // returns rather than throws — so this is the coverage that exists for it.
+            "se/optiqon/voice/service/UnfinishedRecording.kt"
         )
     }
 }
