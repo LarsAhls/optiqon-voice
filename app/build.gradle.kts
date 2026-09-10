@@ -223,6 +223,23 @@ tasks.withType<Test>().configureEach {
     // and stays green — a quieter version of the same defect.
     inputs.dir(layout.projectDirectory.dir("src/test/screenshots"))
         .withPropertyName("screenshotBaselines")
+    // ReleaseReflectionContractTest reads the keep rules, the contract and this build file as
+    // data. None of them is a source or a test resource, so without declaring them the test task
+    // is UP-TO-DATE after a keep rule is deleted and the guard stays green while the release
+    // build is already broken. Measured: removing the FeedbackPayload rule left the guard
+    // unexecuted and reported success.
+    inputs.file(layout.projectDirectory.file("proguard-rules.pro"))
+        .withPropertyName("keepRules")
+    inputs.file(layout.projectDirectory.file("release-reflection-contract.txt"))
+        .withPropertyName("reflectionContract")
+    inputs.file(layout.projectDirectory.file("build.gradle.kts"))
+        .withPropertyName("buildScript")
+    // The same guard reads the main sources as text, to see which files hand a type to Gson and
+    // whether a contract type carries @SerializedName. Compilation inputs do not cover reading a
+    // file as data: adding an annotation to FeedbackPayload was served FROM-CACHE and the guard
+    // never ran.
+    inputs.dir(layout.projectDirectory.dir("src/main/java"))
+        .withPropertyName("mainSourcesAsData")
     testLogging {
         showStandardStreams = true
         events("passed", "skipped", "failed")
@@ -239,6 +256,93 @@ tasks.withType<Test>().configureEach {
     if (providers.environmentVariable("OPENAI_ENDPOINT").isPresent) {
         outputs.upToDateWhen { false }
     }
+}
+
+/**
+ * The only check in this build that can fail for the real reason.
+ *
+ * Gson reflects over field names, so a reflectively serialised field whose class is not under a
+ * keep rule is renamed by R8 and the app writes `{"a":…,"b":…}` on the wire. Unit tests run on
+ * the JVM against un-shrunk classes, so no test can see it — and none did: `FeedbackPayload` was
+ * added outside the two packages `proguard-rules.pro` enumerates and a release build obfuscated
+ * its six fields to `a`…`f` while the whole suite stayed green.
+ *
+ * `ReleaseReflectionContractTest` checks the cause on the JVM, that a field-preserving keep rule
+ * exists for every type on the contract. This checks the effect, in R8's own `mapping.txt`, which
+ * is the only place the answer actually is. Note what green looks like: R8 records renames only,
+ * so a kept field has no line at all and it is the *presence* of a rename that fails here.
+ *
+ * The class name is deliberately not checked. Gson resolves fields off the runtime class and
+ * never reads its name, so a renamed class with kept fields is correct and must not fail.
+ */
+val reflectionContract = layout.projectDirectory.file("release-reflection-contract.txt")
+val releaseMapping = layout.buildDirectory.file("outputs/mapping/release/mapping.txt")
+
+val verifyReleaseReflectionContract = tasks.register("verifyReleaseReflectionContract") {
+    group = "verification"
+    description = "Fails if R8 renamed a field whose name is part of a wire contract."
+    dependsOn("minifyReleaseWithR8")
+    inputs.file(reflectionContract).withPropertyName("reflectionContract")
+    inputs.file(releaseMapping).withPropertyName("releaseMapping")
+
+    val contractFile = reflectionContract
+    val mappingFile = releaseMapping
+    doLast {
+        val mapping = mappingFile.get().asFile
+        val types = contractFile.asFile.readLines()
+            .map { it.substringBefore('#').trim() }
+            .filter { it.isNotEmpty() }
+        if (types.isEmpty()) {
+            throw GradleException(
+                "release-reflection-contract.txt lists no types. Either the file was emptied, " +
+                    "in which case this check now proves nothing, or every reflective type is " +
+                    "annotated \u2014 say which in the file rather than leaving it blank."
+            )
+        }
+        val lines = mapping.readLines()
+        val problems = mutableListOf<String>()
+        for (type in types) {
+            val header = lines.indexOfFirst { it.startsWith("$type -> ") && it.endsWith(":") }
+            if (header < 0) {
+                problems += "$type is not in mapping.txt at all. It was shrunk away, moved or " +
+                    "renamed, and whatever keep rule names it now guards nothing."
+                continue
+            }
+            val renamed = mutableListOf<String>()
+            var i = header + 1
+            while (i < lines.size && (lines[i].startsWith(" ") || lines[i].startsWith("#"))) {
+                val line = lines[i].trim()
+                i++
+                // Comments, methods (which have an argument list) and the line-number tables
+                // that start with a digit are not field renames.
+                if (line.startsWith("#") || line.contains("(")) continue
+                if (line.firstOrNull()?.isDigit() == true) continue
+                val parts = line.split(" -> ")
+                if (parts.size != 2) continue
+                val from = parts[0].substringAfterLast(' ')
+                val to = parts[1].trim()
+                if (from != to) renamed += "$from -> $to"
+            }
+            if (renamed.isNotEmpty()) {
+                problems += "$type had field names obfuscated: ${renamed.joinToString(", ")}"
+            }
+        }
+        if (problems.isNotEmpty()) {
+            throw GradleException(
+                "R8 did not preserve field names that are part of a wire contract:\n  " +
+                    problems.joinToString("\n  ") +
+                    "\n\nThis release would write obfuscated keys and no unit test can see it. " +
+                    "Add a keep rule of the form -keep class <type> { <fields>; } in " +
+                    "proguard-rules.pro. Do not widen an existing rule to a whole package."
+            )
+        }
+    }
+}
+
+// A finalizer rather than a dependency, so the check runs against the artifact that was actually
+// produced; a failing finalizer still fails the build.
+tasks.matching { it.name == "assembleRelease" || it.name == "bundleRelease" }.configureEach {
+    finalizedBy(verifyReleaseReflectionContract)
 }
 
 /**
