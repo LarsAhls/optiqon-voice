@@ -18,6 +18,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import se.optiqon.voice.R
+import se.optiqon.voice.testing.PrimeTypefaces
 import se.optiqon.voice.testing.captureBaseline
 import se.optiqon.voice.ui.theme.OptiqonVoiceTheme
 
@@ -44,6 +45,7 @@ class SignedOutScreenTest {
     private fun show(name: String, state: AccountUiState.SignedOut) {
         composeRule.setContent {
             OptiqonVoiceTheme {
+                PrimeTypefaces()
                 Box(
                     modifier = Modifier
                         .fillMaxSize()

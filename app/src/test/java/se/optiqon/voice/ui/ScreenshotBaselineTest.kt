@@ -63,6 +63,24 @@ class ScreenshotBaselineTest {
     }
 
     @Test
+    fun `every screen that is shot resolves its typefaces first`() {
+        // Both families ship as one variable file instanced per weight, and the typeface cache
+        // is keyed per process on the resource alone. Whichever weight is asked for first wins
+        // for the rest of the JVM, so without priming the picture depends on what else ran
+        // before it: the two account screens matched in a full suite and were 2197 and 3722
+        // pixels different when their class ran alone. Green here, red there, same code.
+        for (source in testSources()) {
+            val text = source.readText()
+            if (!text.contains("captureBaseline")) continue
+            assertTrue(
+                "${source.name} shoots a screen without calling PrimeTypefaces first, so its " +
+                    "baseline holds only for the running order it was recorded in.",
+                text.contains("PrimeTypefaces()")
+            )
+        }
+    }
+
+    @Test
     fun `every baseline belongs to a screen that is still shot`() {
         // Deliberately a written-down list rather than something derived from the sources: the
         // names reach captureBaseline through helper parameters, so nothing can read them off

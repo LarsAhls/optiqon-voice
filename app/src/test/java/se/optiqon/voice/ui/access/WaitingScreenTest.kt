@@ -14,6 +14,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import se.optiqon.voice.R
 import se.optiqon.voice.domain.access.BlockReason
+import se.optiqon.voice.testing.PrimeTypefaces
 import se.optiqon.voice.testing.captureBaseline
 import se.optiqon.voice.ui.theme.OptiqonVoiceTheme
 
@@ -40,6 +41,7 @@ class WaitingScreenTest {
     private fun show(name: String, reason: BlockReason) {
         composeRule.setContent {
             OptiqonVoiceTheme {
+                PrimeTypefaces()
                 AccountScreenContent(
                     state = AccountUiState.Waiting(email = "ahlstedt.lars@gmail.com", reason = reason),
                     busy = false,

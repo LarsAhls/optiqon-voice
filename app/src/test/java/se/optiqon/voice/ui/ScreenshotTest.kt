@@ -46,6 +46,7 @@ import se.optiqon.voice.domain.transcription.NetworkMonitor
 import se.optiqon.voice.domain.transcription.TranscriptionManager
 import se.optiqon.voice.domain.transcription.WhisperEngine
 import se.optiqon.voice.testing.AccessFixture
+import se.optiqon.voice.testing.PrimeTypefaces
 import se.optiqon.voice.testing.TlsMockServer
 import se.optiqon.voice.testing.captureBaseline
 import se.optiqon.voice.ui.history.HistoryViewModel
@@ -136,6 +137,7 @@ class ScreenshotTest {
     private fun show(content: @Composable () -> Unit) {
         composeRule.setContent {
             OptiqonVoiceTheme {
+                PrimeTypefaces()
                 androidx.compose.foundation.layout.Box(
                     modifier = Modifier
                         .fillMaxSize()
