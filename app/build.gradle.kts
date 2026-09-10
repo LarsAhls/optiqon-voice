@@ -53,7 +53,12 @@ android {
 
     defaultConfig {
         applicationId = "se.optiqon.voice"
-        minSdk = 26
+        // API 28 (Android 9), not 26. APK Signature Scheme v3 — and therefore key rotation —
+        // exists from API 28, so on API 26-27 the signer of an installed app can never change
+        // in an update: the debug key the beta is signed with today would be permanent there.
+        // Decided in sitting 1 (docs/DECISION_SHEET_2026-09-10.md, D8) on the ground that no
+        // tester is on Android 8.x. See docs/BETA_SIGNING_AND_DISTRIBUTION.md.
+        minSdk = 28
         targetSdk = 35
 
         val tag = findProperty("versionTag")?.toString()?.removePrefix("v") ?: ""

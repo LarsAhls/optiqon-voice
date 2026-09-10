@@ -10,7 +10,7 @@ open.** This file is the evidence for D2/D8 and the runbook for G4; it decides n
 | # | Fact | Where |
 |---|---|---|
 | 1 | The repository is public and `debug.keystore` (alias `androiddebugkey`, password `android`) is committed. Its certificate SHA-256 is `234E2833E3E74D721B316C0DB5E87E112B3F74ED5F76D34E5D3208C504429EED`. Every build so far, including the one on Lars's phone, is signed with it. | repo root, `docs/gate-m1/PREFLIGHT.md` |
-| 2 | `minSdk = 26`. APK Signature Scheme v3 (and therefore key rotation) exists from API 28; v3.1 (rotation targeting) from API 33. On API 26–27 the signer of an installed app can never change in an update. | `app/build.gradle.kts`, apksigner docs |
+| 2 | `minSdk = 28` since D8 (raised from 26). APK Signature Scheme v3 (and therefore key rotation) exists from API 28; v3.1 (rotation targeting) from API 33. On API 26–27 the signer of an installed app could never change in an update, which is why that floor was left behind rather than worked around. | `app/build.gradle.kts`, apksigner docs |
 | 3 | `apksigner` 0.9 (build-tools 36.0.0) defaults `--rotation-min-sdk-version` to 33: the rotated key is only used through v3.1 on API 33+, the *old* key keeps signing for everything below. With `--rotation-min-sdk-version 28` the rotated key is used from API 28 through a plain v3 block. | `apksigner sign --help` |
 | 4 | Without `RELEASE_*` configuration, `./gradlew assembleRelease` signs with the debug key. CI is already fail-closed (release workflows require the four secrets plus `RELEASE_CERT_SHA256` and run `verify-apk-signer.sh`). The open path was local. | `.github/workflows/*.yml`, `app/build.gradle.kts` |
 
@@ -46,8 +46,11 @@ Readings:
   `--set-rollback true` when producing the real lineage.
 - Android 8.0/8.1 (API 26–27) cannot be reached by any rotation. There the debug key remains
   the signer of an already installed app forever; a fresh install with the beta key is the
-  only clean state. This is the input to D8 (Android floor for the external beta):
-  **recommended floor Android 9+, signing with `--rotation-min-sdk-version 28`.**
+  only clean state. This was the input to D8 (Android floor for the external beta).
+  **D8 decided 2026-09-10: floor Android 9 (API 28), signing with
+  `--rotation-min-sdk-version 28`.** No tester is on Android 8.x, so the levels rotation cannot
+  reach are now outside the supported range instead of being a permanent signer trap. D2 is
+  therefore rotation in place, with no uninstall.
 
 ## 3. Proven on the real app (B.2, `scripts/signing/rotation-e2e.sh`)
 
