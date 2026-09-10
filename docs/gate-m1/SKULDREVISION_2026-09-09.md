@@ -496,8 +496,8 @@ anropar, och källkodsspärren mot en funktion som tappar ljudet.
 - `RecordingStoppedException`:s text är teknisk engelska, som övriga undantag i kodbasen, och
   hamnar som den är på en historikrad användaren ser. Inte lokaliserad. Samma sak gäller
   `AccessRevokedException`, så detta är konsekvent snarare än nytt.
-- **Nedstängning under transkribering tappar fortfarande ljudet** — uppmätt, oåtgärdat,
-  uppskrivet som fynd 9.
+- **Nedstängning under transkribering tappade fortfarande ljudet** — uppmätt, uppskrivet som
+  fynd 9, och stängt 2026-09-10 på samma sätt.
 
 **Vad som medvetet lämnades.** En `SurvivingScope`-wrapper som hade gjort det till ett
 kompileringsfel att skicka tjänstens egen scope övervägdes och avvisades: den flyttar bara
@@ -511,7 +511,7 @@ revisionen varnade för. Hela sviten: **384 tester, 0 fel, 2 hoppade** (var 378)
 
 ---
 
-### 9. Nedstängning under transkribering tappar ljudet på exakt samma sätt — oklarerat
+### 9. Nedstängning under transkribering tappar ljudet på exakt samma sätt ✅ STÄNGT 2026-09-10
 
 **Nytt fynd, uppmätt under arbetet med fynd 5.** `onDestroy` är nu säker medan tillståndet är
 `Recording`. Det är det inte medan det är `Transcribing` eller `PostProcessing`.
@@ -531,7 +531,56 @@ sådan. Att göra det "på vägen" hade gjort fynd 5:s fix omöjlig att granska.
 
 **Billigaste tillräckliga verifiering.** Samma söm som fynd 5 fick, fast på den vägen: lämna
 WAV:en och `durationMs` till en överlevande scope när nedstängningen kommer, och pröva det med
-samma fixtur. **Effort:** en dag. **Regressionsrisk:** hög — det är appens huvudflöde.
+samma fixtur.
+
+---
+
+#### Vad som gjordes
+
+**Det svåra var inte bevarandet utan äganderätten.** WAV:en raderas av `finally` i exakt den
+koroutin som nedstängningen avbeställer. Ett flaggvärde hade krävt att två sidor kommer överens,
+på vilka trådar de nu råkar ligga. I stället **döps filen om** ut ur den döende koroutinens
+räckhåll (`takeAudioFromCancelledJob` i `UnfinishedRecording.kt`): efteråt är sökvägen den
+känner tom, och ingen behöver komma överens om någonting. Båda sökvägarna ligger i `cacheDir`,
+så det är en katalogoperation och ingen kopiering; `copyTo` bakom `IOException` finns bara för
+fallet som inte kan inträffa, eftersom att tappa en diktering är värre än att kopiera några
+hundra kilobyte.
+
+`preserveUnfinishedRecording` grenar nu på **vilken sorts** oavslutad inspelning den fick:
+finns det PCM är vägen byte för byte lika sträng som förut, annars är WAV:en det användaren sa.
+Tjänsten skriver ned var WAV:en ligger så snart den finns (`processingWav`,
+`processingDurationMs`), `takeUnfinishedRecording()` växlar på tillståndet i stället för att
+bara hantera `Recording`, och jobbets `finally` slutar peka på en fil den är på väg att radera.
+
+**RED uppmätt genom produktionskod innan grenen fanns:** `IllegalArgumentException: Nothing was
+ever handed to preservation; the user's audio was dropped silently.` — medan de fem äldre
+beteendetesterna och källspärren förblev gröna.
+
+**Mutationsbevis: nio mutationer, en i taget, var och en återställd.** Sju dog direkt:
+nya grenen bort, `processingWav = wavFile` bort, `Transcribing`-växlingen bort, `durationMs`
+→ `0L`, fynd 5:s `pcm.length() > 0L`, dess `join()` och dess `NonCancellable` — de tre sista
+bevisar att den nya `when`-formen inte luckrade upp fynd 5:s fix.
+
+**Två mutationer överlevde, och båda var testets fel, inte kodens.**
+
+- Att lämna över ljudet **utan** att flytta det överlevde: bevarandet hann läsa bytes innan den
+  avbeställda förfrågans `finally` raderade dem. Testet mätte den tursamma ordningen av två
+  koroutiner. Fixturen väntar nu tills städningen har körts — värsta fallet, inte det vanliga.
+- En **tom** arbetsfil som lämnas över som om den vore en diktering överlevde också; ingenting
+  nådde den spärren. Ett eget test hävdar nu att överlämningen både rapporterar ingenting och
+  *gör* ingenting, för en misslyckad överlämning med effekt är det sämre av de två.
+
+Efter det dör alla nio.
+
+**Uttryckligen otäckt.** `copyTo`-grenen: den kan bara nås om en omdöpning inom samma katalog
+misslyckas, och då är filsystemet i ett läge testet inte kan framkalla utan att ljuga om det.
+`onDestroy` i sin helhet och tjänstens verkliga livscykel är fortfarande oprövade — samma gräns
+som fynd 5 drog, av samma skäl (ingen `hilt-android-testing` i modulen).
+
+**Effort:** utfört (en halv dag, inte den uppskattade dagen — sömmen från fynd 5 bar det mesta).
+**Regressionsrisk:** uppskattad hög eftersom den rör huvudflödet; det den faktiskt lade i
+huvudflödet är två fälttilldelningar och en nollning. Hela sviten: **386 tester, 0 fel, 2
+hoppade** (var 384). Commitar `7a25616` och `14dbad1`.
 
 ---
 
