@@ -6,7 +6,6 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.test.core.app.ApplicationProvider
-import com.github.takahirom.roborazzi.captureRoboImage
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -15,6 +14,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import se.optiqon.voice.R
 import se.optiqon.voice.domain.access.BlockReason
+import se.optiqon.voice.testing.captureBaseline
 import se.optiqon.voice.ui.theme.OptiqonVoiceTheme
 
 /**
@@ -47,7 +47,7 @@ class WaitingScreenTest {
                 )
             }
         }
-        composeRule.onRoot().captureRoboImage("build/outputs/roborazzi/$name.png")
+        composeRule.onRoot().captureBaseline(name)
     }
 
     @Test

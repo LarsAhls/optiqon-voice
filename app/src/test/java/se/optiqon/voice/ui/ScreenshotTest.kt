@@ -15,7 +15,6 @@ import androidx.compose.ui.test.performClick
 import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
-import com.github.takahirom.roborazzi.captureRoboImage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -48,6 +47,7 @@ import se.optiqon.voice.domain.transcription.TranscriptionManager
 import se.optiqon.voice.domain.transcription.WhisperEngine
 import se.optiqon.voice.testing.AccessFixture
 import se.optiqon.voice.testing.TlsMockServer
+import se.optiqon.voice.testing.captureBaseline
 import se.optiqon.voice.ui.history.HistoryViewModel
 import se.optiqon.voice.ui.home.HomeScreen
 import se.optiqon.voice.ui.home.HomeViewModel
@@ -132,8 +132,8 @@ class ScreenshotTest {
         )
     }
 
-    /** One capture, on the app's own background so the shot is not transparent behind. */
-    private fun capture(name: String, content: @Composable () -> Unit) {
+    /** Draws a screen on the app's own background, so the shot is not transparent behind. */
+    private fun show(content: @Composable () -> Unit) {
         composeRule.setContent {
             OptiqonVoiceTheme {
                 androidx.compose.foundation.layout.Box(
@@ -143,7 +143,21 @@ class ScreenshotTest {
                 ) { content() }
             }
         }
-        composeRule.onRoot().captureRoboImage("build/outputs/roborazzi/$name.png")
+    }
+
+    private fun shoot(name: String) = composeRule.onRoot().captureBaseline(name)
+
+    /**
+     * Draw and shoot, for the screens whose baseline is simply the first frame.
+     *
+     * The tests that have to drive the screen somewhere first call [show] and [shoot]
+     * separately. Shooting on the way there as well as on arrival is not harmless now that the
+     * pictures are compared: both shots go to the same baseline, so the first one is measured
+     * against a picture of the state it has not reached yet and fails.
+     */
+    private fun capture(name: String, content: @Composable () -> Unit) {
+        show(content)
+        shoot(name)
     }
 
     @Test
@@ -175,11 +189,11 @@ class ScreenshotTest {
         // the seeded Standard profile is exactly what a user has after the first run.
         runBlocking { profileRepository().ensureDefaults() }
         val profiles = remember(ProfilesViewModel(profileRepository(), processingRepository()))
-        capture("profiles") { ProfilesScreen(outerPadding = PaddingValues(), viewModel = profiles) }
+        show { ProfilesScreen(outerPadding = PaddingValues(), viewModel = profiles) }
         composeRule.waitUntil(VERIFY_TIMEOUT_MS) {
             composeRule.onAllNodesWithText("Standard").fetchSemanticsNodes().isNotEmpty()
         }
-        composeRule.onRoot().captureRoboImage("build/outputs/roborazzi/profiles.png")
+        shoot("profiles")
     }
 
     @Test
@@ -211,16 +225,16 @@ class ScreenshotTest {
     @Test
     fun `onboarding connect step`() {
         val viewModel = onboardingViewModel()
-        capture("onboarding_2_connect") { onboarding(viewModel) }
+        show { onboarding(viewModel) }
         composeRule.onNodeWithText("Continue").performClick()
         composeRule.onNodeWithText("Continue").performClick()
-        composeRule.onRoot().captureRoboImage("build/outputs/roborazzi/onboarding_2_connect.png")
+        shoot("onboarding_2_connect")
     }
 
     @Test
     fun `onboarding permissions step`() {
         val viewModel = onboardingViewModel()
-        capture("onboarding_3_permissions") { onboarding(viewModel) }
+        show { onboarding(viewModel) }
         composeRule.onNodeWithText("Continue").performClick()
         composeRule.onNodeWithText("Continue").performClick()
 
@@ -238,7 +252,7 @@ class ScreenshotTest {
         composeRule.waitUntil(VERIFY_TIMEOUT_MS) { viewModel.uiState.value.canLeaveConnectStep }
         viewModel.next()
 
-        composeRule.onRoot().captureRoboImage("build/outputs/roborazzi/onboarding_3_permissions.png")
+        shoot("onboarding_3_permissions")
     }
 
     private fun onboardingViewModel(): OnboardingViewModel = remember(

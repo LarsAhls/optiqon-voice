@@ -195,16 +195,34 @@ android {
 }
 
 /**
+ * Record mode writes new baselines; every other run compares against the committed ones and
+ * fails on a difference. It used to be recording unconditionally, which meant the screenshot
+ * tests wrote a fresh picture on every run and compared it to nothing — they could not fail on
+ * a visual regression, and did not: two layout defects on the feedback screen passed a green
+ * suite and were found on a photograph of a phone.
+ *
+ * Re-record with `./gradlew testDebugUnitTest -Proborazzi.record`, then look at the diff in
+ * `git status` before committing it. That review by eye is the only thing standing between a
+ * baseline and a regression blessed as the new truth.
+ */
+val recordingScreenshots = providers.gradleProperty("roborazzi.record").isPresent
+
+/**
  * The benchmark reads its endpoint, key and model list from the environment and skips
  * itself when they are absent, so ordinary builds never touch the network. Values are
  * forwarded through providers so the configuration cache stays valid.
  */
 tasks.withType<Test>().configureEach {
     systemProperty("robolectric.graphicsMode", "NATIVE")
-    // Roborazzi is used without its Gradle plugin, so the task type it would otherwise
-    // set has to be declared here. Recording is the mode the screenshots are for: the
-    // baselines are reviewed by eye against the design handoff, not diffed by the build.
-    systemProperty("roborazzi.test.record", "true")
+    // Roborazzi is used without its Gradle plugin, so the modes it would otherwise derive from
+    // its own tasks have to be set here.
+    systemProperty("roborazzi.test.record", recordingScreenshots.toString())
+    systemProperty("roborazzi.test.verify", (!recordingScreenshots).toString())
+    // The baselines are neither sources nor test resources, so nothing else tells Gradle that
+    // editing one should re-run the comparison. Without this an edited picture is UP-TO-DATE
+    // and stays green — a quieter version of the same defect.
+    inputs.dir(layout.projectDirectory.dir("src/test/screenshots"))
+        .withPropertyName("screenshotBaselines")
     testLogging {
         showStandardStreams = true
         events("passed", "skipped", "failed")
