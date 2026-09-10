@@ -5,10 +5,7 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteDatabase.CONFLICT_ABORT
 import androidx.sqlite.db.SupportSQLiteDatabase
-import androidx.sqlite.db.SupportSQLiteOpenHelper
-import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.core.app.ApplicationProvider
-import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -19,7 +16,6 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import se.optiqon.voice.data.storage.StorageRoot
 import se.optiqon.voice.di.DatabaseModule
-import java.io.File
 
 /**
  * Mission L1, safety invariant 1: a build whose Room version is *lower* than the file it opens
@@ -129,51 +125,8 @@ class DowngradeGuardTest {
         db.rawQuery("SELECT COUNT(*) FROM $table", null).use { it.moveToFirst(); it.getInt(0) }
 
     /** The current (version 8) schema, stamped as version 9, as a newer build would leave it. */
-    private fun createNewerFile(fill: (SupportSQLiteDatabase) -> Unit) {
-        val schema = JSONObject(schemaFile(8).readText()).getJSONObject("database")
-        val entities = schema.getJSONArray("entities")
-
-        val helper = FrameworkSQLiteOpenHelperFactory().create(
-            SupportSQLiteOpenHelper.Configuration.builder(context)
-                .name(name)
-                .callback(object : SupportSQLiteOpenHelper.Callback(9) {
-                    override fun onCreate(db: SupportSQLiteDatabase) {
-                        for (i in 0 until entities.length()) {
-                            val entity = entities.getJSONObject(i)
-                            val table = entity.getString("tableName")
-                            db.execSQL(entity.getString("createSql").replace(TABLE_NAME, table))
-                            val indices = entity.optJSONArray("indices") ?: continue
-                            for (j in 0 until indices.length()) {
-                                db.execSQL(
-                                    indices.getJSONObject(j).getString("createSql")
-                                        .replace(TABLE_NAME, table)
-                                )
-                            }
-                        }
-                        db.execSQL(
-                            "CREATE TABLE IF NOT EXISTS room_master_table " +
-                                "(id INTEGER PRIMARY KEY, identity_hash TEXT)"
-                        )
-                        db.execSQL(
-                            "INSERT OR REPLACE INTO room_master_table (id, identity_hash) " +
-                                "VALUES(42, '${schema.getString("identityHash")}')"
-                        )
-                    }
-
-                    override fun onUpgrade(db: SupportSQLiteDatabase, old: Int, new: Int) = Unit
-                })
-                .build()
-        )
-
-        helper.writableDatabase.use(fill)
-        helper.close()
-    }
-
-    private fun schemaFile(version: Int): File {
-        val relative = "schemas/se.optiqon.voice.data.db.OptiqonVoiceDatabase/$version.json"
-        return listOf(File(relative), File("app/$relative")).firstOrNull { it.isFile }
-            ?: error("Exported schema $version.json not found from ${File(".").absolutePath}")
-    }
+    private fun createNewerFile(fill: (SupportSQLiteDatabase) -> Unit) =
+        ExportedSchema.createDatabase(context, name, version = 8, stampedVersion = 9, fill = fill)
 
     private fun contentValues(vararg pairs: Pair<String, Any?>) = ContentValues().apply {
         pairs.forEach { (key, value) ->
@@ -185,9 +138,5 @@ class DowngradeGuardTest {
                 else -> error("Unsupported column type for $key")
             }
         }
-    }
-
-    private companion object {
-        const val TABLE_NAME = "\${TABLE_NAME}"
     }
 }

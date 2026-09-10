@@ -7,16 +7,24 @@ skrevs samma natt och rättades direkt; allt annat är oförändrat.
 
 Rankningen är efter **förväntad framtida kostnad**, inte efter hur illa koden ser ut.
 
+**Uppdatering 2026-09-10:** fynd 1 är åtgärdat och stängt, och dess rubrik rättad — den påstod "noll migrationstester", men steget 7→8 var redan täckt. Detaljer under fyndet.
+
 ---
 
 ## Fix now
 
-### 1. Åtta schemaversioner, sju handskrivna migrationer, noll migrationstester
+### 1. Åtta schemaversioner, sju handskrivna migrationer — sex av stegen otestade ✅ STÄNGT 2026-09-10
 
-**Evidens.** `OptiqonVoiceDatabase.kt:27` står på `version = 8`. `DatabaseModule.kt:25-192`
-innehåller `migration1To2` … `migration7To8`, alla handskrivna SQL. `app/schemas/` har alla åtta
-JSON-scheman exporterade. `room.testing` är redan deklarerad (`app/build.gradle.kts:309`).
-Ingenting i `app/src/test` nämner `MigrationTestHelper`, och `app/src/androidTest` finns inte.
+**Rättelse.** Rubriken löd först "noll migrationstester". Det var fel, och felet var mitt:
+`OutboxMigrationTest` täckte redan steget 7→8 — datarräddning, tom outbox och att den migrerade
+filen verkligen står på version 8 — och `DowngradeGuardTest` täckte nedgraderingsspärren. Det
+som saknades var de **sex stegen före**, 1→2 till 6→7, samt hela kedjan från en version 1-fil.
+Rättat här så att nästa läsare inte planerar om arbete som redan var gjort.
+
+**Evidens (som den löd vid revisionen).** `OptiqonVoiceDatabase.kt:27` står på `version = 8`.
+`DatabaseModule.kt:25-192` innehåller `migration1To2` … `migration7To8`, alla handskrivna SQL.
+`app/schemas/` har alla åtta JSON-scheman exporterade. `room.testing` är redan deklarerad
+(`app/build.gradle.kts:309`). `app/src/androidTest` finns inte.
 
 **Allvarlighet / sannolikhet:** hög / medel. **Faktisk defekt eller latent risk:** latent risk.
 
@@ -25,13 +33,52 @@ tolv dikteringar, profiler och prompts. En felaktig migration tappar den histori
 kastar dessutom appen i ett tillstånd användaren inte kan ta sig ur utan att avinstallera. Det
 är exakt den skada som inte går att ångra i efterhand.
 
-**Billigaste tillräckliga verifiering.** `MigrationTestHelper` mot de åtta exporterade
-schemana: skapa v1, migrera hela vägen till v8, läs tillbaka en rad per tabell. Robolectric
-räcker, ingen enhet behövs. Det är just för att schemana redan är exporterade som testet är
-billigt.
+**Åtgärd.** `MigrationChainTest` (5 tester) plus två utbrutna testhjälpare,
+`ExportedSchema` och `DatabaseStructure`:
 
-**Rekommendation.** Bygg den. **Effort:** en halv dag. **Regressionsrisk:** ingen — testet rör
-ingen produktionskod.
+| Test | Vad det spärrar |
+|---|---|
+| `every step lands exactly on the schema its own version file describes` | Varje steg 1→2 … 7→8 körs på en fil byggd ur `N.json` och jämförs strukturellt mot en referens byggd ur `(N+1).json` — kolumntyper, NOT NULL, primärnycklar, index |
+| `a dictation written by version 1 survives every step to version 8` | Hela kedjan med rader i; avslutas genom Room, så Room:s egen schemavalidering mot de kompilerade entiteterna får sista ordet |
+| `the lifetime counters are seeded from the rows a version 6 database already had` | 6→7:s aritmetik: bara `SUCCESS` räknas, summor stämmer, `firstDictationAt` = äldsta *lyckade* |
+| `the counters start at zero when there is nothing to seed them from` | Tom historik ger en rad med nollor och `firstDictationAt IS NULL`, inte ingen rad |
+| `every version from 1 to the one the database declares has a migration and a schema` | En framtida versionshöjning utan migration faller här; versionen läses ur den riktiga databasen, inte ur annoteringen (Room har binär retention) |
+
+**Varför inte `MigrationTestHelper`.** Den läser schemana genom asset-hanteraren, alltså ur den
+byggda appens assets. För enhetstester är det debug-variantens assets, så varje debug-install
+skulle bära appens hela schemahistorik. Drivrutinsvarianten av samma klass går inte heller:
+projektets migrationer implementerar `migrate(SupportSQLiteDatabase)`, och Room 2.7:s
+drivrutinsväg kräver `migrate(SQLiteConnection)`. Schemana ligger redan på disk i checkouten och
+läses därifrån, vilket är samma mekanism `OutboxMigrationTest` redan använde.
+
+**Bevis att testerna kan gå sönder.** Fem avsiktliga mutationer i `DatabaseModule`, en åt gången,
+varje gång fångad av exakt det avsedda testet:
+
+| Mutation | Fångades av |
+|---|---|
+| `historyVisible` läggs till med `DEFAULT 0` i stället för `1` | kedjetestet (raden försvinner ur historiken) — **inte** strukturtestet, som avsett |
+| 6→7 summerar `WHERE status IS NOT NULL` | aritmetiktestet |
+| 1→2 skapar indexet under fel namn | strukturtestet |
+| 4→5 lägger till felstavad kolumn | strukturtestet + kedjetestet |
+| `migration7To8` tas ur `ALL_MIGRATIONS` | versionsspärren + två till |
+
+**Om defaultvärden.** SQLite kräver ett `DEFAULT` när en NOT NULL-kolumn läggs till i en tabell
+som redan har rader, så varje kolumn en migration lägger till bär ett default som ingen entitet
+deklarerar. En migrerad och en nyskapad databas av samma version skiljer sig därför permanent
+där. Room:s egen validator jämför default bara där entiteten deklarerar ett; strukturjämförelsen
+gör likadant, och de default som faktiskt avgör vad testaren ser pinnas i stället genom beteende
+— en version 1-rad migreras och läses tillbaka. Mutationen `DEFAULT 0` ovan visar att den
+spärren håller.
+
+**Sidoeffekt.** Fixturkoden som bygger en databas ur ett exporterat schema fanns i två kopior
+(`OutboxMigrationTest`, `DowngradeGuardTest`). Den ligger nu i `ExportedSchema` och båda testerna
+använder den — en tredje kopia hade varit värre än att röra gröna tester. Båda är verifierade
+gröna efteråt.
+
+**Effort:** utfört. **Regressionsrisk:** ingen produktionskod ändrad — enbart `app/src/test`.
+Hela sviten: **363 tester, 0 fel** (var 358).
+
+---
 
 ### 2. `runCatching` sväljer `CancellationException` och räknar avbrott som serverfel
 

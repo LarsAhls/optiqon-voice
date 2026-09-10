@@ -5,12 +5,9 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase.CONFLICT_ABORT
 import androidx.room.Room
 import androidx.sqlite.db.SupportSQLiteDatabase
-import androidx.sqlite.db.SupportSQLiteOpenHelper
-import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
-import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -20,7 +17,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import se.optiqon.voice.di.DatabaseModule
-import java.io.File
 
 /**
  * The negative tests §3.23 and §3.24: upgrading to the build that introduces accounts must not
@@ -53,7 +49,7 @@ class OutboxMigrationTest {
 
     @Test
     fun `upgrading from 7 to 8 keeps profiles, history and the rest of the tester's data`() = runTest {
-        createVersion7 { db ->
+        createVersion7 { db: SupportSQLiteDatabase ->
             db.insert(
                 "profiles",
                 CONFLICT_ABORT,
@@ -107,7 +103,7 @@ class OutboxMigrationTest {
 
     @Test
     fun `the outbox arrives empty, so no old row is attributed to a new account`() = runTest {
-        createVersion7 { db ->
+        createVersion7 { db: SupportSQLiteDatabase ->
             db.insert(
                 "dictations",
                 CONFLICT_ABORT,
@@ -135,7 +131,7 @@ class OutboxMigrationTest {
 
     @Test
     fun `the migrated database really is at version 8 and accepts outbox rows`() = runTest {
-        createVersion7 { }
+        createVersion7()
 
         val db = openAtVersion8()
         db.outboxDao().insert(
@@ -153,61 +149,16 @@ class OutboxMigrationTest {
         db.close()
     }
 
+    /** Writes the version 7 file exactly as the previous release left it, then fills it. */
+    private fun createVersion7(fill: (SupportSQLiteDatabase) -> Unit = {}) =
+        ExportedSchema.createDatabase(context, name, version = 7, fill = fill)
+
     /** Opening through Room runs the real migration chain and validates the result. */
     private fun openAtVersion8(): OptiqonVoiceDatabase =
         Room.databaseBuilder(context, OptiqonVoiceDatabase::class.java, name)
             .addMigrations(*DatabaseModule.ALL_MIGRATIONS)
             .build()
             .also { assertNotNull(it.openHelper.writableDatabase) }
-
-    /** Writes the version 7 file exactly as the previous release left it, then fills it. */
-    private fun createVersion7(fill: (SupportSQLiteDatabase) -> Unit) {
-        val schema = JSONObject(schemaFile(7).readText()).getJSONObject("database")
-        val entities = schema.getJSONArray("entities")
-
-        val helper = FrameworkSQLiteOpenHelperFactory().create(
-            SupportSQLiteOpenHelper.Configuration.builder(context)
-                .name(name)
-                .callback(object : SupportSQLiteOpenHelper.Callback(7) {
-                    override fun onCreate(db: SupportSQLiteDatabase) {
-                        for (i in 0 until entities.length()) {
-                            val entity = entities.getJSONObject(i)
-                            val table = entity.getString("tableName")
-                            db.execSQL(entity.getString("createSql").replace(TABLE_NAME, table))
-                            val indices = entity.optJSONArray("indices") ?: continue
-                            for (j in 0 until indices.length()) {
-                                db.execSQL(
-                                    indices.getJSONObject(j).getString("createSql")
-                                        .replace(TABLE_NAME, table)
-                                )
-                            }
-                        }
-                        db.execSQL(
-                            "CREATE TABLE IF NOT EXISTS room_master_table " +
-                                "(id INTEGER PRIMARY KEY, identity_hash TEXT)"
-                        )
-                        db.execSQL(
-                            "INSERT OR REPLACE INTO room_master_table (id, identity_hash) " +
-                                "VALUES(42, '${schema.getString("identityHash")}')"
-                        )
-                    }
-
-                    override fun onUpgrade(db: SupportSQLiteDatabase, old: Int, new: Int) = Unit
-                })
-                .build()
-        )
-
-        helper.writableDatabase.use(fill)
-        helper.close()
-    }
-
-    private fun schemaFile(version: Int): File {
-        val relative = "schemas/se.optiqon.voice.data.db.OptiqonVoiceDatabase/$version.json"
-        // Depending on how the tests are launched the working directory is either the module
-        // or the root of the checkout.
-        return listOf(File(relative), File("app/$relative")).firstOrNull { it.isFile }
-            ?: error("Exported schema $version.json not found from ${File(".").absolutePath}")
-    }
 
     private fun contentValues(vararg pairs: Pair<String, Any?>) = ContentValues().apply {
         pairs.forEach { (key, value) ->
@@ -219,9 +170,5 @@ class OutboxMigrationTest {
                 else -> error("Unsupported column type for $key")
             }
         }
-    }
-
-    private companion object {
-        const val TABLE_NAME = "\${TABLE_NAME}"
     }
 }
