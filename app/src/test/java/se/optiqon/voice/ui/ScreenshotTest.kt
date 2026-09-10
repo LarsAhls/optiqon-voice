@@ -190,7 +190,7 @@ class ScreenshotTest {
         // The list, not the empty state: what this baseline is for is the profile card, and
         // the seeded Standard profile is exactly what a user has after the first run.
         runBlocking { profileRepository().ensureDefaults() }
-        val profiles = remember(ProfilesViewModel(profileRepository(), processingRepository()))
+        val profiles = remember(ProfilesViewModel(profileRepository(), processingRepository(), preferences))
         show { ProfilesScreen(outerPadding = PaddingValues(), viewModel = profiles) }
         composeRule.waitUntil(VERIFY_TIMEOUT_MS) {
             composeRule.onAllNodesWithText("Standard").fetchSemanticsNodes().isNotEmpty()

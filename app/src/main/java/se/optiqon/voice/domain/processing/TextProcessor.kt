@@ -7,6 +7,9 @@ import se.optiqon.voice.data.api.model.ChatCompletionRequest
 import se.optiqon.voice.data.api.model.ChatMessage
 import se.optiqon.voice.data.preferences.PreferencesDataStore
 import se.optiqon.voice.data.repository.ProcessingRepository
+import se.optiqon.voice.domain.capability.CapabilityEnvironment
+import se.optiqon.voice.domain.capability.ProfileCapabilities
+import se.optiqon.voice.domain.capability.ProfileCapability
 import se.optiqon.voice.domain.model.AppContext
 import se.optiqon.voice.domain.model.Profile
 import kotlinx.coroutines.CancellationException
@@ -41,7 +44,14 @@ class TextProcessor @Inject constructor(
 
         return try {
             val prefs = preferencesDataStore.preferences.first()
-            if (!profile.llmEnabled || prefs.llmBaseUrl.isBlank() || prefs.llmApiKey.isBlank()) {
+            // The same evaluation the profile card prints, rather than a second copy of the same
+            // three clauses. They disagreed before: the card said "no cleanup" while the rules above
+            // had already run, and said "Cleanup on" for a profile with no key to call.
+            val environment = CapabilityEnvironment(
+                llmBaseUrl = prefs.llmBaseUrl,
+                llmApiKey = prefs.llmApiKey
+            )
+            if (!ProfileCapabilities.state(ProfileCapability.POST_PROCESSING, profile, environment).isAvailable) {
                 return ruleProcessedText
             }
 

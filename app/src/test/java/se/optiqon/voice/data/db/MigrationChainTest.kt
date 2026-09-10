@@ -22,9 +22,9 @@ import se.optiqon.voice.di.DatabaseModule
 
 /**
  * The migrations are the one part of this app that can destroy data a tester cannot get back.
- * Eight schema versions shipped with seven hand-written migrations, and until now only the last
- * step — 7 to 8 — had a test (see [OutboxMigrationTest]). The six steps before it were carried by
- * nothing but the fact that nobody had reported losing anything.
+ * Nine schema versions shipped with eight hand-written migrations. When this test was written only
+ * the last step of the day — 7 to 8 — had one (see [OutboxMigrationTest]); the six before it were
+ * carried by nothing but the fact that nobody had reported losing anything.
  *
  * This is the missing half:
  *
@@ -32,7 +32,7 @@ import se.optiqon.voice.di.DatabaseModule
  *    it, and the result is compared against the schema exported for the version after it, so a
  *    migration that lands on a different column type, default, primary key or index fails here
  *    rather than on a phone;
- *  - a database written by version 1 is carried the whole way to 8 with rows in it, because a
+ *  - a database written by version 1 is carried the whole way to 9 with rows in it, because a
  *    chain of individually correct steps can still lose data in the middle;
  *  - the only migration that moves data rather than shape — 6 to 7, which seeds the lifetime
  *    counters — is checked on its arithmetic, not just on its DDL.
@@ -74,7 +74,7 @@ class MigrationChainTest {
     }
 
     @Test
-    fun `a dictation written by version 1 survives every step to version 8`() {
+    fun `a dictation written by version 1 survives every step to version 9`() {
         val name = nameFor("chain-from-1")
         ExportedSchema.createDatabase(context, name, 1) { db ->
             // Version 1 knew nothing about status or visibility; those columns arrive at 4, and
@@ -129,7 +129,7 @@ class MigrationChainTest {
             // Migration 3 to 4 retires the old dictionary. Its rows are meant to go; what must
             // not happen is the table surviving as a ghost that later versions still read.
             assertFalse(
-                "dictionary_words must be gone by version 8",
+                "dictionary_words must be gone by version 9",
                 tableExists(raw, "dictionary_words")
             )
         } finally {
@@ -285,6 +285,6 @@ class MigrationChainTest {
     }
 
     private companion object {
-        const val CURRENT_VERSION = 8
+        const val CURRENT_VERSION = 9
     }
 }

@@ -55,9 +55,16 @@ import androidx.compose.ui.unit.dp
 import androidx.activity.compose.BackHandler
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import se.optiqon.voice.domain.capability.CapabilityEnvironment
+import se.optiqon.voice.domain.capability.CapabilityState
+import se.optiqon.voice.domain.capability.ProfileCapabilities
+import se.optiqon.voice.domain.capability.ProfileCapability
 import se.optiqon.voice.domain.model.OutputStyle
 import se.optiqon.voice.domain.model.PostProcessingPrompt
 import se.optiqon.voice.domain.model.Profile
+import se.optiqon.voice.domain.model.ProfileKind
+import se.optiqon.voice.domain.model.ProfileKindPreset
+import se.optiqon.voice.domain.model.ProfileKinds
 import se.optiqon.voice.domain.model.RewriteMode
 import se.optiqon.voice.domain.model.SummarizeMode
 import se.optiqon.voice.domain.model.TextReplacementRule
@@ -97,6 +104,7 @@ fun ProfilesScreen(
     when (val currentMode = mode) {
         ProfilesMode.List -> ProfilesListScreen(
             profiles = uiState.profiles,
+            environment = uiState.environment,
             onActivate = viewModel::activate,
             onEdit = { mode = ProfilesMode.Edit(it) },
             onDuplicate = viewModel::duplicate,
@@ -141,6 +149,7 @@ fun ProfilesScreen(
 @Composable
 private fun ProfilesListScreen(
     profiles: List<Profile>,
+    environment: CapabilityEnvironment,
     onActivate: (Long) -> Unit,
     onEdit: (Profile) -> Unit,
     onDuplicate: (Profile) -> Unit,
@@ -186,6 +195,7 @@ private fun ProfilesListScreen(
             items(profiles, key = { it.id }) { profile ->
                 ProfileCard(
                     profile = profile,
+                    environment = environment,
                     onActivate = { onActivate(profile.id) },
                     onEdit = { onEdit(profile) },
                     onDuplicate = { onDuplicate(profile) },
@@ -212,6 +222,7 @@ private fun ProfilesListScreen(
 @Composable
 private fun ProfileCard(
     profile: Profile,
+    environment: CapabilityEnvironment,
     onActivate: () -> Unit,
     onEdit: () -> Unit,
     onDuplicate: () -> Unit,
@@ -250,7 +261,7 @@ private fun ProfileCard(
                         if (profile.isActive) StatusPill("In use")
                     }
                     Text(
-                        text = profileSummary(profile),
+                        text = profileSummary(profile, environment),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -262,7 +273,7 @@ private fun ProfileCard(
 
             if (profile.isActive) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    profileChips(profile).forEach { chip -> ProfileChipLabel(chip) }
+                    profileChips(profile, environment).forEach { chip -> ProfileChipLabel(chip) }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     TextButton(onClick = onDuplicate) { Text("Duplicate") }
@@ -316,9 +327,32 @@ private fun ProfileChipLabel(text: String) {
     )
 }
 
-/** Plain language, because "FIX / whisper-large-v3" tells you nothing about what you will get. */
-private fun profileSummary(profile: Profile): String {
-    if (!profile.llmEnabled) return "Transcribe only, no cleanup"
+/**
+ * Plain language, because "FIX / whisper-large-v3" tells you nothing about what you will get.
+ *
+ * Every branch is decided by [ProfileCapabilities] rather than by `llmEnabled`, which is what used
+ * to make this line wrong twice over: it promised "Transcribe only, no cleanup" for a profile whose
+ * replacement rules run before the cleanup toggle is even read, and it said nothing at all when the
+ * toggle was on but no provider key existed to call. When a capability is off, the card prints the
+ * reason — the reason is the whole point of having evaluated it.
+ */
+internal fun profileSummary(profile: Profile, environment: CapabilityEnvironment): String {
+    val states = ProfileCapabilities.evaluate(profile, environment)
+    val postProcessing = states.getValue(ProfileCapability.POST_PROCESSING)
+    val rules = states.getValue(ProfileCapability.REPLACEMENT_RULES)
+
+    if (postProcessing is CapabilityState.Unavailable) {
+        // Rules without cleanup is still a transformation, and the old text denied it outright.
+        if (rules.isAvailable) return "Replacement rules only · ${postProcessing.reason}"
+        // "Cleanup is off" was a deliberate choice, so it reads as the settled sentence it always
+        // was. Any other reason is something the tester has not finished doing, and is named.
+        return if (profile.llmEnabled) {
+            "Transcribe only · ${postProcessing.reason}"
+        } else {
+            "Transcribe only, no cleanup"
+        }
+    }
+
     val rewrite = when (profile.rewriteMode) {
         RewriteMode.NONE -> "Kept word for word"
         RewriteMode.FIX -> "Removes filler, fixes slips"
@@ -333,11 +367,25 @@ private fun profileSummary(profile: Profile): String {
     return listOfNotNull(rewrite, summarize, style).joinToString(" · ")
 }
 
-private fun profileChips(profile: Profile): List<String> {
+internal fun profileChips(profile: Profile, environment: CapabilityEnvironment): List<String> {
+    val states = ProfileCapabilities.evaluate(profile, environment)
     val language = profile.language?.uppercase() ?: "Auto"
-    val cleanup = if (profile.llmEnabled) "Cleanup on" else "Cleanup off"
-    val emoji = if (profile.emojiAllowed) "Emoji ok" else null
-    return listOfNotNull(language, cleanup, emoji)
+    val kind = ProfileKinds.of(profile.profileKind)
+        .takeIf { it.kind != ProfileKind.GENERAL }
+        ?.label
+    val cleanup = when {
+        states.getValue(ProfileCapability.POST_PROCESSING).isAvailable -> "Cleanup on"
+        // Not "Cleanup off": the tester turned it on, and a chip that contradicts their own switch
+        // reads as a bug in the app rather than as something left to finish in Settings.
+        profile.llmEnabled -> "Cleanup needs setup"
+        else -> "Cleanup off"
+    }
+    val rules = "Rules on".takeIf { states.getValue(ProfileCapability.REPLACEMENT_RULES).isAvailable }
+    // Emoji is an instruction inside the system prompt, so it reaches nothing without the pass.
+    val emoji = "Emoji ok".takeIf {
+        profile.emojiAllowed && states.getValue(ProfileCapability.POST_PROCESSING).isAvailable
+    }
+    return listOfNotNull(language, kind, cleanup, rules, emoji)
 }
 
 @Composable
@@ -376,6 +424,7 @@ private fun ProfileEditScreen(
     var llmEnabled by rememberSaveable(profile.id) { mutableStateOf(profile.llmEnabled) }
     var llmModel by rememberSaveable(profile.id) { mutableStateOf(profile.llmModel) }
     var profilePrompt by rememberSaveable(profile.id) { mutableStateOf(profile.profilePrompt) }
+    var profileKindName by rememberSaveable(profile.id, profile.profileKind) { mutableStateOf(profile.profileKind.name) }
     var outputStyleName by rememberSaveable(profile.id, profile.outputStyle) { mutableStateOf(profile.outputStyle.name) }
     var rewriteModeName by rememberSaveable(profile.id, profile.rewriteMode) { mutableStateOf(profile.rewriteMode.name) }
     var summarizeModeName by rememberSaveable(profile.id, profile.summarizeMode) { mutableStateOf(profile.summarizeMode.name) }
@@ -383,6 +432,7 @@ private fun ProfileEditScreen(
     var selectedRuleIds by remember(profile.id, profile.selectedRuleIds) { mutableStateOf(profile.selectedRuleIds) }
     var selectedPromptIds by remember(profile.id, profile.selectedPromptIds) { mutableStateOf(profile.selectedPromptIds) }
 
+    val profileKind = enumValueOrDefault(profileKindName, ProfileKind.GENERAL)
     val outputStyle = enumValueOrDefault(outputStyleName, OutputStyle.STANDARD)
     val rewriteMode = enumValueOrDefault(rewriteModeName, RewriteMode.FIX)
     val summarizeMode = enumValueOrDefault(summarizeModeName, SummarizeMode.NONE)
@@ -397,6 +447,7 @@ private fun ProfileEditScreen(
         llmEnabled = llmEnabled,
         llmModel = llmModel,
         profilePrompt = profilePrompt,
+        profileKind = profileKind,
         outputStyle = outputStyle,
         rewriteMode = rewriteMode,
         summarizeMode = summarizeMode,
@@ -444,6 +495,33 @@ private fun ProfileEditScreen(
                         language = it.lowercase().filter(Char::isLetter).take(3)
                     })
                 }
+            }
+            item {
+                SectionTitle("Profile Kind")
+                SettingsGroup {
+                    ProfileKindPicker(
+                        selected = profileKind,
+                        onSelect = { preset ->
+                            profileKindName = preset.kind.name
+                            // Applied here and only here: an explicit tap, on a screen that shows
+                            // the style rows this touches a finger's width below, before anything is
+                            // saved. A stored profile is never re-styled behind the tester's back,
+                            // and neither is one the migration touched.
+                            outputStyleName = preset.suggested.outputStyle.name
+                            rewriteModeName = preset.suggested.rewriteMode.name
+                            summarizeModeName = preset.suggested.summarizeMode.name
+                            emojiAllowed = preset.suggested.emojiAllowed
+                        }
+                    )
+                }
+                Text(
+                    text = "The kind tells the cleanup what you are writing, instead of it guessing " +
+                        "from whichever app is in front. Picking one also sets the style below; " +
+                        "change it afterwards if you want something else.",
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
             item {
                 SectionTitle("Post-Processing Settings")
@@ -684,6 +762,30 @@ private fun ToggleTextRow(title: String, selected: Boolean, onToggle: () -> Unit
     }
 }
 
+/**
+ * Reuses [StyleChoiceRow] rather than a dropdown: six kinds, each needing a sentence to be anything
+ * other than a guess, and the same row the style screen already uses to explain a choice.
+ */
+@Composable
+private fun ProfileKindPicker(
+    selected: ProfileKind,
+    onSelect: (ProfileKindPreset) -> Unit
+) {
+    Column {
+        ProfileKinds.ALL.forEach { preset ->
+            StyleChoiceRow(
+                option = StyleOption(
+                    value = preset.kind.name,
+                    title = preset.label,
+                    subtitle = preset.description
+                ),
+                selected = preset.kind == selected,
+                onSelect = { onSelect(preset) }
+            )
+        }
+    }
+}
+
 @Composable
 private fun LanguageQuickPicker(
     selected: String,
@@ -883,7 +985,7 @@ private fun ToggleRow(title: String, checked: Boolean, onCheckedChange: (Boolean
 
 private fun Set<Long>.toggle(id: Long): Set<Long> = if (id in this) this - id else this + id
 
-private fun styleSummary(
+internal fun styleSummary(
     outputStyle: OutputStyle,
     rewriteMode: RewriteMode,
     summarizeMode: SummarizeMode,

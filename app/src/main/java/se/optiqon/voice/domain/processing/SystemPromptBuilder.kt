@@ -4,6 +4,8 @@ import se.optiqon.voice.domain.model.AppContext
 import se.optiqon.voice.domain.model.OutputStyle
 import se.optiqon.voice.domain.model.PostProcessingPrompt
 import se.optiqon.voice.domain.model.Profile
+import se.optiqon.voice.domain.model.ProfileKind
+import se.optiqon.voice.domain.model.ProfileKinds
 import se.optiqon.voice.domain.model.RewriteMode
 import se.optiqon.voice.domain.model.SummarizeMode
 
@@ -17,6 +19,10 @@ import se.optiqon.voice.domain.model.SummarizeMode
  * under an explicit precedence header. Without that, a per-app hint like "use a
  * professional tone with greetings" silently competes with an explicit "all lowercase,
  * no punctuation" style and the model is left to guess.
+ *
+ * Tone comes from one of two places, never both. A profile with a declared
+ * [ProfileKind] states its tone outright; only [ProfileKind.GENERAL] falls back to guessing from
+ * the foreground app's name, which is what the field exists to stop having to do.
  */
 object SystemPromptBuilder {
 
@@ -48,8 +54,9 @@ object SystemPromptBuilder {
         profile.language?.takeIf(String::isNotBlank)?.let {
             guidance += "The user is dictating in: $it. Handle speech disfluencies for this language."
         }
+        declaredToneSection(profile)?.let { guidance += it }
         if (appContext != null && appContext.hasData) {
-            guidance += buildAppContextSection(appContext)
+            guidance += buildAppContextSection(profile, appContext)
         }
         guidance += prompts
             .filterNot(PostProcessingPrompt::builtIn)
@@ -65,11 +72,31 @@ object SystemPromptBuilder {
         return sections.joinToString("\n")
     }
 
-    private fun buildAppContextSection(appContext: AppContext): String {
+    /**
+     * The tone the profile declares, or null when it declares none.
+     *
+     * Emitted as its own section rather than inside the app context block, because it holds whether
+     * or not an app is known — a declared kind is exactly the case where the app should stop
+     * deciding. [ProfileKind.GENERAL] and [ProfileKind.VERBATIM] both return null here and are told
+     * apart by what happens next: GENERAL still reaches the app guess below, VERBATIM reaches
+     * nothing.
+     */
+    internal fun declaredToneSection(profile: Profile): String? {
+        if (profile.profileKind == ProfileKind.GENERAL) return null
+        val hint = ProfileKinds.of(profile.profileKind).toneHint ?: return null
+        return "Tone:\n- $hint"
+    }
+
+    private fun buildAppContextSection(profile: Profile, appContext: AppContext): String {
         val lines = mutableListOf<String>()
         appContext.displayName?.let { lines += "- Target app: $it" }
         appContext.packageName?.takeIf { it.isNotBlank() }?.let { lines += "- Target package: $it" }
-        inferStyleForApp(appContext)?.let { lines += "- App style hint: $it" }
+        // Guessing from the app name is the fallback, not the rule: a profile that has declared its
+        // kind has already answered this question, and letting the guess speak too would put two
+        // tone instructions in the same prompt.
+        if (profile.profileKind == ProfileKind.GENERAL) {
+            inferStyleForApp(appContext)?.let { lines += "- App style hint: $it" }
+        }
         lines += "- Treat the app hint as a preference only; the output rules below always win."
         return "Context:\n${lines.joinToString("\n")}"
     }

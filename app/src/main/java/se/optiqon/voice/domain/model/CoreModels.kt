@@ -12,6 +12,7 @@ data class Profile(
     val llmEnabled: Boolean = false,
     val llmModel: String = "gpt-4o-mini",
     val profilePrompt: String = "",
+    val profileKind: ProfileKind = ProfileKind.GENERAL,
     val outputStyle: OutputStyle = OutputStyle.STANDARD,
     val rewriteMode: RewriteMode = RewriteMode.FIX,
     val summarizeMode: SummarizeMode = SummarizeMode.NONE,

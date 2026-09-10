@@ -5,6 +5,7 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 import se.optiqon.voice.domain.model.OutputStyle
 import se.optiqon.voice.domain.model.Profile
+import se.optiqon.voice.domain.model.ProfileKind
 import se.optiqon.voice.domain.model.RewriteMode
 import se.optiqon.voice.domain.model.SummarizeMode
 
@@ -18,6 +19,7 @@ data class ProfileEntity(
     val llmEnabled: Boolean = false,
     val llmModel: String = "gpt-4o-mini",
     val profilePrompt: String = "",
+    val profileKind: String = ProfileKind.GENERAL.name,
     val outputStyle: String = OutputStyle.STANDARD.name,
     val rewriteMode: String = RewriteMode.FIX.name,
     val summarizeMode: String = SummarizeMode.NONE.name,
@@ -36,6 +38,7 @@ data class ProfileEntity(
         llmEnabled = llmEnabled,
         llmModel = llmModel,
         profilePrompt = profilePrompt,
+        profileKind = enumValueOrDefault(profileKind, ProfileKind.GENERAL),
         outputStyle = enumValueOrDefault(outputStyle, OutputStyle.STANDARD),
         rewriteMode = enumValueOrDefault(rewriteMode, RewriteMode.FIX),
         summarizeMode = enumValueOrDefault(summarizeMode, SummarizeMode.NONE),
@@ -54,6 +57,7 @@ fun Profile.toEntity(now: Long = System.currentTimeMillis()): ProfileEntity = Pr
     llmEnabled = llmEnabled,
     llmModel = llmModel.trim().ifBlank { "gpt-4o-mini" },
     profilePrompt = profilePrompt.trim(),
+    profileKind = profileKind.name,
     outputStyle = outputStyle.name,
     rewriteMode = rewriteMode.name,
     summarizeMode = summarizeMode.name,

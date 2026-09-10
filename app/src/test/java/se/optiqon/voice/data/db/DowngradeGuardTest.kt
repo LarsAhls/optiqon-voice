@@ -27,9 +27,13 @@ import se.optiqon.voice.di.DatabaseModule
  * it cannot migrate to is an `IllegalStateException` from `RoomOpenHelper`, and the file is
  * left as it was.
  *
- * The "newer" file is the current version 8 schema with `user_version` set to 9. There is no
- * version 9 schema (that number is reserved for a later mission), and this test must not
+ * The "newer" file is the current version 9 schema with `user_version` set to 10. There is no
+ * version 10 schema (that number is reserved for a later mission), and this test must not
  * invent one — what it proves is the *guard*, not a migration.
+ *
+ * Re-based 9/10 by Mission 2 (Room 8 → 9). The numbers are not decoration: left at 8/9, Room would
+ * see `user_version` equal to its own version, skip migration entirely and fail on the identity
+ * hash instead — so [fail] below would never be reached and the guard would be proven by nothing.
  */
 @RunWith(RobolectricTestRunner::class)
 class DowngradeGuardTest {
@@ -63,6 +67,9 @@ class DowngradeGuardTest {
                     "llmEnabled" to 1,
                     "llmModel" to "claude",
                     "profilePrompt" to "Skriv kort.",
+                    // NOT NULL with no SQL default in the fresh v9 `CREATE TABLE`: the DEFAULT in
+                    // `migration8To9` applies to the ALTER, not to the table a new install writes.
+                    "profileKind" to "GENERAL",
                     "selectedRuleIds" to "",
                     "selectedPromptIds" to "",
                     "createdAt" to 1L,
@@ -94,11 +101,11 @@ class DowngradeGuardTest {
         val db = DatabaseModule.provideDatabase(context, root)
         try {
             db.openHelper.writableDatabase
-            fail("a version 9 file must not be opened by a version 8 build")
+            fail("a version 10 file must not be opened by a version 9 build")
         } catch (expected: IllegalStateException) {
-            // Room: "A migration from 9 to 8 was required but not found" — the documented
+            // Room: "A migration from 10 to 9 was required but not found" — the documented
             // fail-closed path, now that the destructive fallback is gone.
-            assertTrue(expected.message.orEmpty(), expected.message.orEmpty().contains("9 to 8"))
+            assertTrue(expected.message.orEmpty(), expected.message.orEmpty().contains("10 to 9"))
         } finally {
             db.close()
         }
@@ -108,7 +115,7 @@ class DowngradeGuardTest {
             context.getDatabasePath(name).path, null, SQLiteDatabase.OPEN_READONLY
         )
         raw.use {
-            assertEquals(9, it.version)
+            assertEquals(10, it.version)
             assertEquals(1, count(it, "profiles"))
             assertEquals(1, count(it, "dictations"))
             val tables = it.rawQuery(
@@ -124,9 +131,9 @@ class DowngradeGuardTest {
     private fun count(db: SQLiteDatabase, table: String): Int =
         db.rawQuery("SELECT COUNT(*) FROM $table", null).use { it.moveToFirst(); it.getInt(0) }
 
-    /** The current (version 8) schema, stamped as version 9, as a newer build would leave it. */
+    /** The current (version 9) schema, stamped as version 10, as a newer build would leave it. */
     private fun createNewerFile(fill: (SupportSQLiteDatabase) -> Unit) =
-        ExportedSchema.createDatabase(context, name, version = 8, stampedVersion = 9, fill = fill)
+        ExportedSchema.createDatabase(context, name, version = 9, stampedVersion = 10, fill = fill)
 
     private fun contentValues(vararg pairs: Pair<String, Any?>) = ContentValues().apply {
         pairs.forEach { (key, value) ->
