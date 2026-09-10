@@ -27,10 +27,11 @@ interface Clock {
 /**
  * How long an approved verdict survives without server contact.
  *
- * 72 hours is the value Mission 1 tests against and the value proposed to Lars; it is not an
- * approved live policy, which is why it sits in configuration rather than in an `if` somewhere.
+ * 72 hours is the beta policy, decided 2026-09-09 (D6), for at most ten known testers. It sits
+ * in configuration rather than in an `if` somewhere so that a wider release can carry a
+ * different number without touching the code that enforces it.
  */
-data class AccessConfig(val graceMs: Long = AccessGate.PROPOSED_GRACE_MS)
+data class AccessConfig(val graceMs: Long = AccessGate.BETA_GRACE_MS)
 
 /**
  * Joins "who is signed in" with "what the server last said about them" and publishes the

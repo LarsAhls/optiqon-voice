@@ -52,7 +52,7 @@ object AccessModule {
             .build()
     }
 
-    /** The proposed 72 h test value; see [AccessConfig]. */
+    /** The decided 72 h beta grace; see [AccessConfig]. */
     @Provides
     @Singleton
     fun provideAccessConfig(): AccessConfig = AccessConfig()

@@ -14,7 +14,7 @@ import org.junit.Test
 class AccessGateTest {
 
     private val uid = "uid-a"
-    private val grace = AccessGate.PROPOSED_GRACE_MS
+    private val grace = AccessGate.BETA_GRACE_MS
 
     /** A verdict recorded `ageMs` ago, on both clocks, as seen from [NOW_WALL]/[NOW_ELAPSED]. */
     private fun snapshot(

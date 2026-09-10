@@ -13,11 +13,12 @@ package se.optiqon.voice.domain.access
 object AccessGate {
 
     /**
-     * The value Mission 1 tests against. §4 of the plan lists the live policy as an open Lars
-     * decision, so this lives in configuration and is passed in, never read as a constant from
-     * the call sites that enforce it.
+     * The beta policy: Lars decided D6 = 72 h on 2026-09-09, for a closed group of at most ten
+     * known testers. It is still passed in through [AccessConfig] rather than read here by the
+     * call sites that enforce it, because a wider release is expected to want a different value
+     * and the enforcement path should not have to change when it does.
      */
-    const val PROPOSED_GRACE_MS: Long = 72L * 60L * 60L * 1000L
+    const val BETA_GRACE_MS: Long = 72L * 60L * 60L * 1000L
 
     /**
      * @param snapshot the last server verdict we hold, or null if we have never had one
