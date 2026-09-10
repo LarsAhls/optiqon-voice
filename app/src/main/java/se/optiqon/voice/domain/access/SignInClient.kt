@@ -43,4 +43,19 @@ interface SignInClient {
 
     /** The project has not enabled email-link sign-in (Firebase `OPERATION_NOT_ALLOWED`). */
     class EmailLinkNotEnabled : Exception("Email-link sign-in is not enabled for this project")
+
+    /**
+     * The Google route failed and the device has no network.
+     *
+     * Its own type because the platform cannot be asked which it was. Credential Manager reports
+     * every unfinished sheet as a cancellation — including the case where Play services opened
+     * the sheet, could not reach Google's token endpoint, and closed it again. The raw message
+     * for that is "Activity is cancelled by the user", which blames the one person who did
+     * nothing wrong. Connectivity is therefore read at the failure and the verdict taken from
+     * there, the same way [RefreshOutcome.NoNetwork] is decided in `RegistrationRepository`.
+     */
+    class Offline : Exception("No connection, so signing in could not be completed")
+
+    /** The sign-in sheet closed without a credential while the device was online. */
+    class Cancelled : Exception("Sign-in was not completed")
 }

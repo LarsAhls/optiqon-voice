@@ -37,6 +37,17 @@ Fix as part of Mission 2's capability work — that mission replaces exactly thi
 decision with one evaluated answer, so fixing it separately would mean writing a fifth copy.
 See [`docs/MISSION_2_SPEC.md`](docs/MISSION_2_SPEC.md).
 
+### Open — sign-out leaves the Credential Manager state behind
+
+`FirebaseAuthGateway.signOut` calls `auth.signOut()` and flushes the access state; nothing in
+`app/src/main/java/` calls `CredentialManager.clearCredentialState()`. Google's own guidance is
+to clear it on sign-out so the next sheet asks which account rather than resuming the last one.
+
+No observed symptom yet. It was noticed while tracing the "Activity is cancelled by the user"
+report of 2026-09-10, which turned out to be airplane mode and not this — which is why it was
+left out of that fix rather than folded into it. Trigger: the next mission that touches the
+account screens, or the first report of sign-in reusing an account the user did not pick.
+
 ### Repo migration note
 
 If OPTIQON Voice is moved into a new `LarsAhls/optiqon-voice` repository instead of renaming
