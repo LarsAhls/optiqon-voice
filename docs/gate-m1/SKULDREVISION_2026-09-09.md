@@ -586,7 +586,7 @@ hoppade** (var 384). Commitar `7a25616` och `14dbad1`.
 
 ## Fix when touched
 
-### 6. Två tjänster kopplade genom processglobala `companion object`-fält
+### 6. Två tjänster kopplade genom processglobala `companion object`-fält ✅ STÄNGT 2026-09-10 (F15 rättad; enhetsverifiering kvarstår hos Lars)
 
 **Evidens.** `TextInjectorService.kt:96-104` håller `instance`, `keyboardListener`,
 `isKeyboardVisible` och `focusedAppPackage` som föränderliga companion-fält.
@@ -608,6 +608,57 @@ tangentbordshändelser.
 faktiskt kommer tillbaka (`onServiceConnected`) och göra registret till en enda ägd punkt i
 stället för fyra fria fält. **Effort:** en dag. **Regressionsrisk:** medel — kräver enhet med
 tillgänglighetstjänsten av/på, alltså Lars.
+
+#### Vad som gjordes
+
+**Rekommendationen följdes, båda halvorna.** `KeyboardLink` är registret som en enda ägd punkt,
+och återanslutningen sitter nu i `onServiceConnected()` — där tjänsten faktiskt kommer tillbaka.
+
+**Felet var ägandeskap, inte globalitet.** Två tjänster med skilda livscykler måste mötas
+någonstans, och ett processglobalt fält är det enda Android erbjuder dem. Det som gick sönder var
+att *ingen ägde* mötesplatsen: vem som helst med en referens kunde skriva den, och
+`TextInjectorService.onDestroy()` gjorde det — nollade den lyssnare som
+`BubbleService.onStartCommand()` hade registrerat, och lämnade en levande bubbla döv utan att någon
+kod någonstans skulle registrera den igen. Det är F15.
+
+Nu tillhör registreringen den som gjorde den: `listen()` och `stopListening()` är bubblans, och
+ingenting tillgänglighetstjänsten gör rör dem. Vad tillgänglighetstjänsten äger är *tangentbordet*
+— den är det enda som kan se fönsterlistan — så `accessibilityConnected()` och
+`accessibilityGone()` handlar om tangentbordet, aldrig om vem som lyssnar efter det.
+`stopListening()` tar dessutom lyssnaren som argument och nollar bara om den fortfarande är den
+registrerade: `START_STICKY`-omstarter överlappar, så den avgående instansens `onDestroy()` kan
+köra efter att efterträdaren registrerat sig, och ovillkorlig nollning där hade återskapat F15 med
+tjänsterna ombytta. Det är mutation 5.
+
+**Livscykelmatrisen renderas i test**, precis som den billigaste tillräckliga verifieringen sade:
+`KeyboardLinkLifecycleTest` river och återansluter tillgänglighetstjänsten utan att röra
+`BubbleService` och hävdar att bubblan fortfarande får tangentbordshändelser. Dessutom: ett
+tangentbord kan inte stå uppe medan tjänsten som ser det är borta, återkomst säger sanningen
+istället för att lita på cachen, ingen lyssnare är inte ett fel, och rapportregeln från
+`KeyboardVisibilityReportTest` gäller fortfarande.
+
+**RED uppmätt:** 5 av 11 tester faller mot den gamla formen. Fyra av dem är kopplingsspärrar som
+läser källan — ingen enhetstest här kan starta någon av tjänsterna (den ena är en
+`@AndroidEntryPoint` som lägger overlays på skärmen, och modulen saknar `hilt-android-testing`), så
+att tjänsterna verkligen går genom den ägda punkten måste läsas, inte köras. **Tio mutationer, en i
+taget, var och en återställd:** F15 själv återinförd (avgången nollar registreringen), återkomsten
+tystad, `accessibilityGone()` tömd, `accessibilityGone()` utan besked till lyssnaren, ovillkorlig
+nollning vid avregistrering, avregistrering utan verkan, återkomst som sätter flaggan men inget
+säger, rapportregeln slopad, och bubblan som varken registrerar eller avregistrerar sig. **Alla tio
+dör, var och en på exakt den spärr den riktar sig mot.**
+
+**Vad detta inte bevisar.** Att det fungerar på enhet. Testerna spelar matrisen mot länken, inte
+mot Android: att `onServiceConnected()` verkligen körs när användaren slår på tjänsten igen, och
+att `windows` då svarar rätt, kan bara en enhet visa. **Det steget kvarstår hos Lars** — slå av och
+på tillgänglighetstjänsten, tryck i ett textfält, se att bubblan kommer.
+
+**De två återstående companion-fälten rördes inte.** `instance` läses genom `TextInjectionBridge`,
+som redan är en ägd söm, och `focusedAppPackage` läses bara inifrån `TextInjectorService` självt.
+Ingen av dem har F15:s form — ingen annan tjänst nollar dem — så de bröts inte ut på spekulation.
+
+**Effort:** utfört (uppskattat en dag; blev mindre, eftersom bara en av fyra fält faktiskt bar
+defekten). **Regressionsrisk:** medel kvarstår till enhetsverifieringen är gjord. Hela sviten:
+**400 tester, 0 fel, 2 hoppade** (var 389). Commit `2b4c61a`.
 
 ### 7. `BubbleService` bär för mycket, och defekterna samlas där
 
