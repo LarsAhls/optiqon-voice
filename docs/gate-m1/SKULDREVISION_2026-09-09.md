@@ -239,6 +239,8 @@ rapporterar nu 0 skilda pixlar.
 kan svara på: Linux avviker från de Windows-inspelade bilderna med **2–36 pixlar av 376 980**,
 allt i glyfkanter. Jämförelsen tillåter nu 75 — dubbelt den värsta plattformsskillnaden och en
 fjärdedel av den minsta uppmätta regressionen. Båda talen står i koden bredvid konstanten.
+CI-körning  är grön på ubuntu mot de Windows-inspelade bilderna, så tröskeln är
+verifierad över plattformsgränsen och inte bara räknad.
 
 **Bevis att testerna kan gå sönder.** Åtta avsiktliga mutationer i tio körningar, en åt
 gången, varje gång återställd:
