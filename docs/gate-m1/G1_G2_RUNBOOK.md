@@ -114,9 +114,9 @@ Then the two manual checks the script only reminds about:
 
 ## What G1+G2 do not do
 
-- No installation on the phone, no bootstrap run, no Firestore write. Those are G3, which
-  needs D6 first: the offline grace is the code constant `PROPOSED_GRACE_MS` (72 h) in
-  `AccessGate.kt`; a different value is a one-constant edit before the G3 build.
+- No installation on the phone, no bootstrap run, no Firestore write. Those are G3. D6 is
+  settled (72 h, decided 2026-09-09); the offline grace is the code constant `BETA_GRACE_MS`
+  in `AccessGate.kt`, and a different value would be a one-constant edit before the G3 build.
 - No SHA registration beyond what already exists (debug SHAs registered earlier); the beta
   key SHA is a G4 step.
 - No custom domain.

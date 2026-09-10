@@ -436,8 +436,8 @@ initialised, Hosting still 0 releases (`/.well-known/assetlinks.json` → 404, `
 **Not approved:** G3 (smoke on the device, [`gate-m1/G3_SMOKE_TEMPLATE.md`](gate-m1/G3_SMOKE_TEMPLATE.md)),
 signing rotation / real beta key (G4, after D2 and D8 —
 [`BETA_SIGNING_AND_DISTRIBUTION.md`](BETA_SIGNING_AND_DISTRIBUTION.md)), distribution (D3),
-merge of PR #3. Open decisions: D2 (method for the existing installation), D6 (grace value =
-code constant `PROPOSED_GRACE_MS`, needed before G3), D8 (Android floor), plus D3/D5/D2b/D7.
+merge of PR #3. Open decisions: D2 (method for the existing installation), D8 (Android floor),
+plus D3/D5/D2b/D7. D6 was settled on 2026-09-09 — see the decision entry below.
 What is still unproven is listed in [`BACKEND_OPEN_CONTRACTS.md`](BACKEND_OPEN_CONTRACTS.md) F5.
 
 ## Update 2026-09-09 (G1+G2 run) — Authentication live, first Hosting release
@@ -462,11 +462,14 @@ merge of PR #3. The old project `optioqon-voice` was not opened.
 Lars decided **D6 = 72 h**, the proposed value. This is the last decision G3 was waiting on.
 
 **No code change follows.** The value was already the constant
-`AccessGate.PROPOSED_GRACE_MS` (`72L * 60L * 60L * 1000L`), reached through
+`AccessGate.BETA_GRACE_MS` (`72L * 60L * 60L * 1000L`), reached through
 `AccessConfig.graceMs`, and every test that pins a grace value already pins this one. G3 can
-be built from the current head without touching app code. The KDoc in `AccessGate.kt` and
-`AccessRepository.kt` still calls 72 h "proposed" rather than "decided" — wording only, worth
-folding into the G3 box rather than spending a build on now.
+be built from the current head without touching app code.
+
+**Wording folded in 2026-09-10.** The constant was named `PROPOSED_GRACE_MS` and the KDoc in
+`AccessGate.kt`, `AccessRepository.kt` and `AccessModule.kt` still called 72 h "proposed" and
+"not an approved live policy". Renamed to `BETA_GRACE_MS` and reworded to match the decision.
+No behaviour change; the literal is untouched.
 
 **What D6 governs and what it does not.** It governs how long an *already approved* device may
 keep dictating without reaching the server. It does not govern cloud access: `firestore.rules`
