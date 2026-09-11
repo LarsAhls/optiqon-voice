@@ -1,0 +1,6 @@
+#!/bin/sh
+# Versioned so the gate is reviewable in the PR instead of living in an unversioned .git/hooks/.
+# Activated by `core.hooksPath=.githooks`, which git cannot version -- run scripts/install-hooks.sh
+# once per clone. `core.hooksPath` lives in the shared config, so every worktree of a clone that
+# has run it is covered, including worktrees created later.
+exec sh "$(git rev-parse --show-toplevel)/scripts/verify-fast.sh"
