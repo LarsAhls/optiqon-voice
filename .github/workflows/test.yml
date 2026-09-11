@@ -33,8 +33,48 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      # Piped into a log so the next step can read the task outcome. `pipefail` is not on by
+      # default in an Actions `run:`, and without it `tee` would swallow a failing gradlew.
       - name: Run unit tests
-        run: ./gradlew testDebugUnitTest
+        run: |
+          set -o pipefail
+          ./gradlew testDebugUnitTest --console=plain 2>&1 | tee gradle-test.log
+
+      # Green has twice meant "nothing ran" here: Gradle served the test task from the cache after
+      # a change the task did not declare as an input. setup-gradle restores the build cache
+      # between runs and org.gradle.caching is on, so FROM-CACHE is reachable in CI too -- a fresh
+      # checkout is not a fresh build. Gradle prints the outcome beside the task name, and a task
+      # that really ran prints the name alone. Anything else is a result borrowed from an earlier
+      # commit, and it is refused.
+      #
+      # This proves the assertions executed against this checkout. It does not prove the task
+      # declares every input it reads; nothing cheap does. It makes that mistake loud instead of
+      # silent, which is precisely what the two incidents lacked.
+      - name: Prove the suite ran on this commit
+        run: |
+          outcome=$(grep -E '^> Task :app:testDebugUnitTest( |$)' gradle-test.log | tail -1)
+          echo "outcome line: ${outcome:-<none>}"
+          if [ "$outcome" != '> Task :app:testDebugUnitTest' ]; then
+            echo "::error::The test task did not execute -- its result came from the cache or was up to date. A green run that never ran is worse than a red one."
+            exit 1
+          fi
+
+      # Secondary, and weaker on purpose: this would not have caught either of the two incidents,
+      # because a cached run reports the right count. It catches a different thing -- a whole test
+      # class dropped from the run by a filter, a rename or an exclusion.
+      - name: Check the suite did not shrink
+        env:
+          FLOOR: 463
+        run: |
+          total=$(cat app/build/test-results/testDebugUnitTest/*.xml \
+                  | grep -o 'tests="[0-9]*"' \
+                  | grep -o '[0-9]*' \
+                  | awk '{s+=$1} END {print s+0}')
+          echo "tests executed: $total (floor: $FLOOR)"
+          if [ "$total" -lt "$FLOOR" ]; then
+            echo "::error::$total tests ran, fewer than the $FLOOR this suite had. Tests were removed or silently excluded. Lower the floor only in the commit that removes them."
+            exit 1
+          fi
 
       - name: Upload test report
         if: always()
@@ -77,3 +117,52 @@ jobs:
 
       - name: Run Firestore rules and bootstrap tests against the emulator
         run: npm run test:rules
+
+  # The commit gate, enforced where it cannot be skipped. .githooks/pre-commit only runs in a clone
+  # that has executed scripts/install-hooks.sh -- git cannot version core.hooksPath -- so by itself
+  # it is an opt-in gate. This job is the part that is not optional.
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run the commit gate over every tracked file
+        run: sh scripts/verify-fast.sh --all
+
+  # Android Lint has been configured and never invoked, so its whole class of findings -- API
+  # misuse, deprecated calls, manifest and security checks -- has no coverage at all. It starts
+  # report-only against a committed baseline: the baseline absorbs the existing debt, and the job
+  # is not allowed to fail a push while we learn what it says. Deleting the continue-on-error line
+  # below is the entirety of making it blocking.
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Run Android Lint
+        continue-on-error: true
+        run: ./gradlew lintDebug
+
+      - name: Upload lint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-report
+          path: app/build/reports/lint-results-debug.html
+          if-no-files-found: ignore
+          retention-days: 7

@@ -81,6 +81,14 @@ guard. If you add one, prove it — break the input on purpose, watch the run go
 `.githooks/pre-commit`. It is not a substitute for the suite — see the header of that script for
 what it does and does not cover.
 
+The hook is **opt-in per clone**, because git cannot version `core.hooksPath`. Run
+`sh scripts/install-hooks.sh` once after cloning; every worktree of that clone is then covered,
+including ones created later. Check it with `git config --get core.hooksPath` — empty means you
+are committing with no gate at all. CI runs the same script over every tracked file, so a clone
+that skipped this is caught at push rather than never.
+
+Never `--no-verify`, and never anything equivalent. If the gate is wrong, fix the gate.
+
 ### What a run does not prove
 
 Say it out loud in the report, every time. Concretely:
