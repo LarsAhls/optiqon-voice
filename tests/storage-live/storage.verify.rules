@@ -1,0 +1,141 @@
+rules_version = '2';
+
+// F-a — Storage rules deployed ONLY to the ephemeral verification project
+// `optiqon-rules-verify-20260911`. Never to production.
+//
+// The contract block below is `storage.future.rules` lines 21-88 VERBATIM. It is copied,
+// never edited: the point of F-a is to measure the approved rule, so weakening it to get a
+// green result would answer a question nobody asked. A preflight diff (plan §8, P3) proves
+// the block is byte-identical.
+//
+// The probe blocks are carried over from PR-0 unchanged. Against the emulator they all
+// passed, which is precisely the failure PR-0 reported: the emulator enforces no
+// cross-service document ceiling at all. Here they run against a real Rules engine:
+//
+//   probe-2doc-manycalls  2 distinct documents, 8 calls   expected PASS
+//   probe-3doc            3 distinct documents, 3 calls   expected DENY
+//   probe-5doc            5 distinct documents, 5 calls   expected DENY (control)
+//
+// This file is reachable only through `tests/storage-live/firebase.verify.json`, which
+// names an explicit --project. The repository's `firebase.json` still has no "storage" key.
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    match /case-attachments/{ownerUid}/{caseId}/{aid} {
+
+      // Document 1 of 2 on every path.
+      function att() {
+        return firestore.get(/databases/(default)/documents/cases/$(caseId)/attachments/$(aid)).data;
+      }
+
+      // Document 2 on the owner paths. Keyed by the *path* segment, which has already
+      // been compared against the token uid before this is ever reached.
+      function owner() {
+        return firestore.get(/databases/(default)/documents/users/$(ownerUid)).data;
+      }
+
+      // Document 2 on the admin path: the calling principal's own users/ document.
+      function me() {
+        return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
+      }
+
+      // Mirrors firestore.rules:51-56 isApproved(), minus signedIn().
+      function liveOwner() {
+        return request.auth.token.email_verified == true
+          && owner().status == 'approved'
+          && owner().email == request.auth.token.email;
+      }
+
+      // Carries both limbs of firestore.rules:68-70 isReader() out of one document.
+      // `adminActive` is in positive form on purpose: a missing field makes the
+      // expression error, and an errored condition denies. An incomplete mirror fails
+      // closed, never open.
+      function liveAdmin() {
+        return request.auth.token.email_verified == true
+          && me().status == 'approved'
+          && me().email == request.auth.token.email
+          && me().adminActive == true
+          && (!('adminActiveUntil' in me()) || me().adminActiveUntil > request.time);
+      }
+
+      // OWNER READ — distinct documents: users/{ownerUid}, attachment. (2 of 2)
+      allow read: if request.auth != null
+        && request.auth.uid == ownerUid
+        && liveOwner()
+        && !('deleteRequestedAt' in att());
+
+      // ADMIN READ — distinct documents: users/{request.auth.uid}, attachment. (2 of 2)
+      // Kept as its own allow statement so the two liveness sources are never paid for
+      // in the same evaluation, and so each path can be tested on its own.
+      allow read: if request.auth != null
+        && request.auth.token.admin == true
+        && liveAdmin()
+        && !('deleteRequestedAt' in att());
+
+      // OWNER CREATE — distinct documents: users/{ownerUid}, attachment. (2 of 2)
+      allow create: if request.auth != null
+        && request.auth.uid == ownerUid
+        && liveOwner()
+        && resource == null
+        && att().ownerUid == ownerUid
+        && att().caseId == caseId
+        && !('deleteRequestedAt' in att())
+        && request.resource.size <= att().maxBytes
+        && request.resource.size <= 2097152
+        && request.resource.contentType.matches('image/(png|jpeg|webp)');
+
+      allow update, delete: if false;
+    }
+
+    // ---------------------------------------------------------------- spike probes
+    //
+    // Not part of the contract. These exist only so PR-0 can measure how the rules
+    // engine counts cross-service document access, rather than assuming it. They are
+    // unreachable in production because this file is never deployed, and they are
+    // removed together with the rest of the spike if the design changes.
+
+    // Two distinct documents, read many times over: users/ four times, attachment four
+    // times. If access is counted per distinct document this succeeds; if it is counted
+    // per call, eight accesses blow any budget and it fails.
+    match /probe-2doc-manycalls/{ownerUid}/{caseId}/{aid} {
+      function att() {
+        return firestore.get(/databases/(default)/documents/cases/$(caseId)/attachments/$(aid)).data;
+      }
+      function owner() {
+        return firestore.get(/databases/(default)/documents/users/$(ownerUid)).data;
+      }
+      allow read: if owner().status == 'approved'
+        && owner().email == request.auth.token.email
+        && owner().uid == ownerUid
+        && owner().displayName is string
+        && att().ownerUid == ownerUid
+        && att().caseId == caseId
+        && att().maxBytes is number
+        && !('deleteRequestedAt' in att());
+    }
+
+    // Three distinct documents, one call each. The control: if this is denied while the
+    // eight-call/two-document probe above succeeds, the ceiling is real and it is
+    // measured in distinct documents.
+    match /probe-3doc/{ownerUid}/{caseId}/{aid} {
+      allow read: if firestore.get(/databases/(default)/documents/users/$(ownerUid)).data.status == 'approved'
+        && firestore.get(/databases/(default)/documents/cases/$(caseId)/attachments/$(aid)).data.ownerUid == ownerUid
+        && firestore.get(/databases/(default)/documents/config/limits).data.uploadsEnabled == true;
+    }
+
+    // Five distinct documents, one call each. If even this is allowed, the emulator
+    // enforces no ceiling whatsoever, and neither the ceiling nor dedupe can be
+    // measured here at all.
+    match /probe-5doc/{ownerUid}/{caseId}/{aid} {
+      allow read: if firestore.get(/databases/(default)/documents/users/$(ownerUid)).data.status == 'approved'
+        && firestore.get(/databases/(default)/documents/cases/$(caseId)/attachments/$(aid)).data.ownerUid == ownerUid
+        && firestore.get(/databases/(default)/documents/config/limits).data.uploadsEnabled == true
+        && firestore.get(/databases/(default)/documents/config/counters).data.approvedUsers is number
+        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.status == 'approved';
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
