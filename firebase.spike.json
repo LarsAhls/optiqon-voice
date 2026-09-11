@@ -1,0 +1,21 @@
+{
+  "_comment": "Emulator-only config for the Mission D storage spike (PR-0). Kept out of firebase.json on purpose: the Storage emulator refuses to start without a storage.rules entry, and adding that entry to firebase.json would make an ordinary `firebase deploy` capable of publishing storage.future.rules. This file is never passed to a deploy.",
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "storage": {
+    "rules": "storage.future.rules"
+  },
+  "emulators": {
+    "firestore": {
+      "port": 8080
+    },
+    "storage": {
+      "port": 9199
+    },
+    "ui": {
+      "enabled": false
+    },
+    "singleProjectMode": true
+  }
+}
