@@ -51,10 +51,13 @@ jobs:
       # declares every input it reads; nothing cheap does. It makes that mistake loud instead of
       # silent, which is precisely what the two incidents lacked.
       #
-      # Fail-closed has a cost: re-running this job on an unchanged commit produces FROM-CACHE and
-      # is refused, although that cached result is perfectly good. The check cannot tell a cache
-      # hit with complete inputs from one without, and the second kind is what has bitten us. Push
-      # an empty commit instead of relaxing this.
+      # Fail-closed has a cost, but a smaller one than expected -- it was measured rather than
+      # guessed. Re-running this job on an unchanged commit still executes the task, because
+      # `setup-gradle` restores the cache read-only off the default branch ("Cache is read-only:
+      # will not save state for use in subsequent builds"), so nothing a branch build produces is
+      # ever stored. The refusal can therefore only bite on `main`, where the cache is written. If
+      # it does, push an empty commit: the check cannot tell a cache hit with complete inputs from
+      # one without, and the second kind is what has bitten us twice.
       - name: Prove the suite ran on this commit
         run: |
           outcome=$(grep -E '^> Task :app:testDebugUnitTest( |$)' gradle-test.log | tail -1)

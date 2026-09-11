@@ -76,12 +76,19 @@ already seen, and it handed back a cached *result* — a correct cache hit, and 
 live demonstration of the shape of both recorded incidents. It is exactly the outcome CI now
 refuses.
 
-**The caveat that follows from run 4.** Re-running the CI job on an unchanged commit will produce
-`FROM-CACHE` and the freshness step will fail it, even though that cached result is legitimate.
-This is deliberate and fail-closed: the check cannot distinguish a cache hit whose inputs were
-complete from one whose inputs were not, and the second kind is the one that has actually bitten
-us. If a re-run is needed, push an empty commit or clear the Actions cache rather than relaxing
-the check.
+**The caveat that follows from run 4 -- and what measuring it actually showed.** The prediction
+was that re-running the CI job on an unchanged commit would produce `FROM-CACHE` and be refused,
+even though that cached result is legitimate. Re-running job `unit-tests` on this PR falsified it:
+the task executed again and the job passed. The reason is in that run's own log --
+`Cache is read-only: will not save state for use in subsequent builds` -- because
+`gradle/actions/setup-gradle` writes the cache only from the default branch. A branch build reads
+a cache it can never contribute to, so no entry for its own test task exists to be served back.
+
+The refusal can therefore only bite on `main`. It stays fail-closed there on purpose: the check
+cannot distinguish a cache hit whose inputs were complete from one whose inputs were not, and the
+second kind is what bit this repository twice. If it fires, push an empty commit rather than
+relaxing the check. Stated as a measurement, not as a prediction, because the prediction was
+wrong.
 
 ## Android Lint
 
