@@ -3,7 +3,6 @@ package se.optiqon.voice.ui.profiles
 import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import se.optiqon.voice.data.preferences.PreferencesDataStore
 import se.optiqon.voice.data.repository.ProcessingRepository
 import se.optiqon.voice.data.repository.ProfileRepository
 import se.optiqon.voice.domain.capability.CapabilityEnvironment
@@ -34,23 +33,21 @@ data class ProfilesUiState(
 @HiltViewModel
 class ProfilesViewModel @Inject constructor(
     private val profileRepository: ProfileRepository,
-    processingRepository: ProcessingRepository,
-    preferences: PreferencesDataStore
+    processingRepository: ProcessingRepository
 ) : ViewModel() {
     val uiState: StateFlow<ProfilesUiState> = combine(
         profileRepository.profiles,
         processingRepository.rules,
         processingRepository.prompts,
-        preferences.preferences
-    ) { profiles, rules, prompts, prefs ->
+        // The provider settings arrive through the repository that already owns them, so this
+        // constructor keeps the three parameters the screenshot baseline constructs it with.
+        profileRepository.capabilityEnvironment
+    ) { profiles, rules, prompts, environment ->
         ProfilesUiState(
             profiles = profiles,
             rules = rules,
             prompts = prompts,
-            environment = CapabilityEnvironment(
-                llmBaseUrl = prefs.llmBaseUrl,
-                llmApiKey = prefs.llmApiKey
-            )
+            environment = environment
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ProfilesUiState())
 

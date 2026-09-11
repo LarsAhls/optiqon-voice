@@ -18,7 +18,7 @@ import se.optiqon.voice.domain.model.ProfileKind
  */
 class ProfileCapabilitiesTest {
 
-    private val configured = CapabilityEnvironment(llmBaseUrl = "https://api.example/v1", llmApiKey = "sk-test")
+    private val configured = CapabilityEnvironment.from(llmBaseUrl = "https://api.example/v1", llmApiKey = "sk-test")
 
     private fun profile(
         llmEnabled: Boolean = false,
@@ -43,7 +43,7 @@ class ProfileCapabilitiesTest {
 
     @Test
     fun `a missing provider address is named as the reason`() {
-        val environment = CapabilityEnvironment(llmBaseUrl = "", llmApiKey = "sk-test")
+        val environment = CapabilityEnvironment.from(llmBaseUrl = "", llmApiKey = "sk-test")
         val state = state(ProfileCapability.POST_PROCESSING, profile(llmEnabled = true), environment)
         assertEquals(ProfileCapabilities.REASON_NO_PROVIDER_URL, reasonOf(state))
     }
@@ -51,7 +51,7 @@ class ProfileCapabilitiesTest {
     /** Defect case 1: the old card said "Cleanup on" here, for a profile that cannot call anything. */
     @Test
     fun `a toggle with no api key is unavailable and says which setting is missing`() {
-        val environment = CapabilityEnvironment(llmBaseUrl = "https://api.example/v1", llmApiKey = "")
+        val environment = CapabilityEnvironment.from(llmBaseUrl = "https://api.example/v1", llmApiKey = "")
         val state = state(ProfileCapability.POST_PROCESSING, profile(llmEnabled = true), environment)
         assertEquals(ProfileCapabilities.REASON_NO_API_KEY, reasonOf(state))
     }
@@ -64,7 +64,7 @@ class ProfileCapabilitiesTest {
     @Test
     fun `blank is not the same as absent, but is treated the same`() {
         // DataStore hands back whatever was typed; a field of spaces is an unconfigured provider.
-        val environment = CapabilityEnvironment(llmBaseUrl = "   ", llmApiKey = "  ")
+        val environment = CapabilityEnvironment.from(llmBaseUrl = "   ", llmApiKey = "  ")
         val state = state(ProfileCapability.POST_PROCESSING, profile(llmEnabled = true), environment)
         assertEquals(ProfileCapabilities.REASON_NO_PROVIDER_URL, reasonOf(state))
     }
@@ -100,7 +100,7 @@ class ProfileCapabilitiesTest {
     fun `style controls resolve identically to post-processing in every case`() {
         val environments = listOf(
             CapabilityEnvironment.EMPTY,
-            CapabilityEnvironment(llmBaseUrl = "https://api.example/v1", llmApiKey = ""),
+            CapabilityEnvironment.from(llmBaseUrl = "https://api.example/v1", llmApiKey = ""),
             configured
         )
         for (environment in environments) {
@@ -186,7 +186,25 @@ class ProfileCapabilitiesTest {
     fun `hasProvider is the conjunction the post-processing rule relies on`() {
         assertTrue(configured.hasProvider)
         assertFalse(CapabilityEnvironment.EMPTY.hasProvider)
-        assertFalse(CapabilityEnvironment(llmBaseUrl = "https://api.example/v1", llmApiKey = " ").hasProvider)
-        assertFalse(CapabilityEnvironment(llmBaseUrl = " ", llmApiKey = "sk-test").hasProvider)
+        assertFalse(CapabilityEnvironment.from(llmBaseUrl = "https://api.example/v1", llmApiKey = " ").hasProvider)
+        assertFalse(CapabilityEnvironment.from(llmBaseUrl = " ", llmApiKey = "sk-test").hasProvider)
+    }
+
+    /**
+     * The environment is carried by a data class that the UI state also is, so anything that
+     * prints state — a crash log, a Compose dump, a failing assertion — prints this. The key is
+     * therefore not in the type: [CapabilityEnvironment.from] reduces it to a boolean at the one
+     * place it is still known, and this pins that there is no second place.
+     */
+    @Test
+    fun `a rendered environment cannot contain the api key`() {
+        val secret = "sk-live-must-never-be-printed"
+        val environment = CapabilityEnvironment.from(llmBaseUrl = "https://api.example/v1", llmApiKey = secret)
+
+        assertTrue("the fact about the key is what the rules need", environment.hasProvider)
+        assertFalse(
+            "toString() of the environment leaked the provider key",
+            environment.toString().contains(secret)
+        )
     }
 }

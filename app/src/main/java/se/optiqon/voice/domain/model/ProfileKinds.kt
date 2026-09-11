@@ -28,6 +28,10 @@ enum class ProfileKind {
  * action on a screen that shows the style controls right below the picker, so the change is visible
  * and can be undone before saving — it is never applied to a stored profile behind the user's back,
  * and never by the migration, which leaves every existing row on [ProfileKind.GENERAL].
+ *
+ * Only two kinds suggest anything at all: [ProfileKinds.NOTES] condenses lightly, and
+ * [ProfileKinds.VERBATIM] turns rewriting off, which is that kind's entire promise. Every other
+ * kind suggests the defaults, so picking it changes the tone line and nothing the user set.
  */
 data class ProfileKindPreset(
     val kind: ProfileKind,
@@ -81,10 +85,10 @@ object ProfileKinds {
         label = "Chat",
         description = "Casual and concise, the way people write in chat.",
         toneHint = "Use a casual conversational tone. Keep it concise and natural for chat.",
-        suggested = SuggestedStyle(
-            outputStyle = OutputStyle.RELAXED,
-            emojiAllowed = true
-        )
+        // Decided by Lars 2026-09-10 (B2): a kind declares its tone, it does not reach over and
+        // set the user's own style fields. NOTES stays the one preset that changes visible
+        // output; CHAT and SOCIAL used to preset RELAXED and emoji, and no longer do.
+        suggested = SuggestedStyle()
     )
 
     val NOTES = ProfileKindPreset(
@@ -103,10 +107,8 @@ object ProfileKinds {
         label = "Social media",
         description = "Short enough to post.",
         toneHint = "Keep it concise and suitable for social media posts.",
-        suggested = SuggestedStyle(
-            outputStyle = OutputStyle.RELAXED,
-            emojiAllowed = true
-        )
+        // See the note on CHAT: declaring the kind is the whole of the suggestion (B2).
+        suggested = SuggestedStyle()
     )
 
     val VERBATIM = ProfileKindPreset(

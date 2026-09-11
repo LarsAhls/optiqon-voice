@@ -26,8 +26,25 @@ import se.optiqon.voice.domain.model.SummarizeMode
  */
 class ProfileCardSummaryTest {
 
-    private val configured = CapabilityEnvironment(llmBaseUrl = "https://api.example/v1", llmApiKey = "sk-test")
-    private val noKey = CapabilityEnvironment(llmBaseUrl = "https://api.example/v1", llmApiKey = "")
+    /**
+     * `ProfilesUiState` is a data class that carries the environment, so its generated
+     * `toString()` is the path a provider key could take into a crash log. The key is kept out of
+     * the type rather than out of the log, and this is the assertion that says so.
+     */
+    @Test
+    fun `the ui state cannot print the provider key`() {
+        val secret = "sk-live-must-never-be-printed"
+        val state = ProfilesUiState(
+            environment = CapabilityEnvironment.from(llmBaseUrl = "https://api.example/v1", llmApiKey = secret)
+        )
+        assertFalse(
+            "the profiles UI state leaked the provider key through toString()",
+            state.toString().contains(secret)
+        )
+    }
+
+    private val configured = CapabilityEnvironment.from(llmBaseUrl = "https://api.example/v1", llmApiKey = "sk-test")
+    private val noKey = CapabilityEnvironment.from(llmBaseUrl = "https://api.example/v1", llmApiKey = "")
 
     private fun profile(
         llmEnabled: Boolean = false,

@@ -102,4 +102,35 @@ class ProfileKindsTest {
     fun `the notes preset is the decided LIGHT`() {
         assertEquals(SummarizeMode.LIGHT, ProfileKinds.of(ProfileKind.NOTES).suggested.summarizeMode)
     }
+
+    /**
+     * Decided by Lars 2026-09-10 (B2). A kind declares what the text is for; it does not reach
+     * over and rewrite the style fields the user set for themselves. CHAT and SOCIAL briefly
+     * preset RELAXED and emoji, which made three presets change visible output where the spec
+     * allows one — so the assertion is over every kind, not over those two, and a fourth preset
+     * added later fails here rather than in a tester's dictation.
+     */
+    @Test
+    fun `only notes and verbatim suggest anything at all`() {
+        val plain = SuggestedStyle()
+        val allowedToDiffer = setOf(ProfileKind.NOTES, ProfileKind.VERBATIM)
+
+        ProfileKinds.ALL.filterNot { it.kind in allowedToDiffer }.forEach { preset ->
+            assertEquals(
+                "${preset.kind} suggests a style of its own; only NOTES and VERBATIM may",
+                plain,
+                preset.suggested
+            )
+        }
+    }
+
+    /** The half of B2 a tester would notice: picking a chat profile must not switch emoji on. */
+    @Test
+    fun `chat and social suggest no emoji and no relaxed style`() {
+        listOf(ProfileKind.CHAT, ProfileKind.SOCIAL).forEach { kind ->
+            val suggested = ProfileKinds.of(kind).suggested
+            assertFalse("$kind must not switch emoji on for the user", suggested.emojiAllowed)
+            assertEquals("$kind must leave the output style alone", OutputStyle.STANDARD, suggested.outputStyle)
+        }
+    }
 }

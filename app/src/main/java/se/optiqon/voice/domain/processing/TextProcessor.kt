@@ -47,7 +47,7 @@ class TextProcessor @Inject constructor(
             // The same evaluation the profile card prints, rather than a second copy of the same
             // three clauses. They disagreed before: the card said "no cleanup" while the rules above
             // had already run, and said "Cleanup on" for a profile with no key to call.
-            val environment = CapabilityEnvironment(
+            val environment = CapabilityEnvironment.from(
                 llmBaseUrl = prefs.llmBaseUrl,
                 llmApiKey = prefs.llmApiKey
             )

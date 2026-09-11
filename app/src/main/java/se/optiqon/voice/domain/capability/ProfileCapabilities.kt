@@ -45,16 +45,31 @@ sealed interface CapabilityState {
  * Deliberately a value object rather than the preferences themselves: it keeps [evaluate] a pure
  * function with no DataStore, no `Context` and no `suspend`, which is what lets every capability
  * rule be tested without a single new test dependency.
+ *
+ * [hasApiKey] is the fact about the key rather than the key, deliberately. Nothing here ever
+ * needed more than `isNotBlank()`, while this type is carried by
+ * [se.optiqon.voice.ui.profiles.ProfilesUiState], a data class whose generated `toString()`
+ * reaches crash logs and Compose state dumps. A key that is never in the type cannot be printed
+ * by one.
  */
 data class CapabilityEnvironment(
     val llmBaseUrl: String,
-    val llmApiKey: String
+    val hasApiKey: Boolean
 ) {
-    val hasProvider: Boolean get() = llmBaseUrl.isNotBlank() && llmApiKey.isNotBlank()
+    val hasProvider: Boolean get() = llmBaseUrl.isNotBlank() && hasApiKey
 
     companion object {
         /** No provider configured. */
-        val EMPTY = CapabilityEnvironment(llmBaseUrl = "", llmApiKey = "")
+        val EMPTY = CapabilityEnvironment(llmBaseUrl = "", hasApiKey = false)
+
+        /**
+         * The one place a key value is reduced to the fact about it. Callers upstream of this
+         * hold the key; nothing downstream of it does.
+         */
+        fun from(llmBaseUrl: String, llmApiKey: String) = CapabilityEnvironment(
+            llmBaseUrl = llmBaseUrl,
+            hasApiKey = llmApiKey.isNotBlank()
+        )
     }
 }
 
@@ -114,7 +129,7 @@ object ProfileCapabilities {
     ): CapabilityState = when {
         !profile.llmEnabled -> CapabilityState.Unavailable(REASON_CLEANUP_OFF)
         environment.llmBaseUrl.isBlank() -> CapabilityState.Unavailable(REASON_NO_PROVIDER_URL)
-        environment.llmApiKey.isBlank() -> CapabilityState.Unavailable(REASON_NO_API_KEY)
+        !environment.hasApiKey -> CapabilityState.Unavailable(REASON_NO_API_KEY)
         else -> CapabilityState.Available
     }
 

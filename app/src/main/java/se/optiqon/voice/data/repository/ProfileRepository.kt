@@ -6,6 +6,7 @@ import se.optiqon.voice.data.db.entity.PostProcessingPromptEntity
 import se.optiqon.voice.data.db.entity.ProfileEntity
 import se.optiqon.voice.data.db.entity.toEntity
 import se.optiqon.voice.data.preferences.PreferencesDataStore
+import se.optiqon.voice.domain.capability.CapabilityEnvironment
 import se.optiqon.voice.domain.model.Profile
 import se.optiqon.voice.domain.model.TranscriptionLanguages
 import se.optiqon.voice.domain.processing.BuiltInPrompt
@@ -27,6 +28,17 @@ class ProfileRepository @Inject constructor(
 
     val activeProfile: Flow<Profile?> = profileDao.observeActiveProfile()
         .map { it?.toDomain() }
+
+    /**
+     * What the configured provider lets a profile do — the global half of the answer the
+     * profile card prints.
+     *
+     * It is exposed here rather than by handing the preferences to the view model because this
+     * repository already holds them, and because the key must not travel: the flow emits
+     * [CapabilityEnvironment], which carries whether a key is set and never the key itself.
+     */
+    val capabilityEnvironment: Flow<CapabilityEnvironment> = preferencesDataStore.preferences
+        .map { prefs -> CapabilityEnvironment.from(prefs.llmBaseUrl, prefs.llmApiKey) }
 
     suspend fun ensureDefaults() {
         seedBuiltInPrompts()
