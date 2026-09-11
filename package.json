@@ -5,6 +5,7 @@
   "description": "Firestore security rules and their emulator test suite. Not part of the Android build.",
   "type": "module",
   "scripts": {
+    "test:storage-spike": "firebase emulators:exec --config firebase.spike.json --project optiqon-voice-rules-test --only firestore,storage \"node --test --test-concurrency=1 tests/storage/*.test.mjs\"",
     "test:rules": "firebase emulators:exec --project optiqon-voice-rules-test --only firestore \"node --test --test-concurrency=1 tests/rules/*.test.mjs tests/admin/*.test.mjs\""
   },
   "devDependencies": {
