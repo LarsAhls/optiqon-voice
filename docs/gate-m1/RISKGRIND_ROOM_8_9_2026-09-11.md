@@ -1,7 +1,7 @@
 # Riskgrind — fysisk Room-migrering 8 → 9
 
 Datum: 2026-09-11. Gäller PR #9 (Mission 2, typade profiler).
-Status: **framlagd, ej godkänd för `01132f9f`.** §1–§7 gäller `c1f9837c` (CPH2645); §8 lägger fram enhetsbytet till OnePlus 8 Pro `01132f9f`. Ingen enhet rörs förrän Lars godkänner.
+Status: **PASS på `01132f9f` 2026-09-11** — se §9. §1–§7 gäller `c1f9837c` (CPH2645), som är orörd; §8 lade fram enhetsbytet.
 
 Den här grinden **ärver ingenting från Mission B**. Mission B installerade en app som inte
 ändrade databasens form; den här installationen skriver om schemat i din telefon. Det är en annan
@@ -271,3 +271,96 @@ Artefakten är oförändrad: code HEAD `40b4899`, APK
 `scratchpad/optiqon-voice-40b4899-v20260911.apk`, SHA-256
 `c8362d93935bfaa9c7573f45e41b1b5078206c8e324842d24929471cd2ffbc33`, versionCode `2026091100`,
 signer `234e2833…29eed`.
+
+---
+
+## 9. Resultat — fysisk Room 8 → 9 på `01132f9f`, 2026-09-11: **PASS**
+
+Kört under GATE APPROVAL för `01132f9f` (ersätter `c1f9837c`-approvalen för just Mission C:s
+fysiska acceptans). Fysiskt verifierad code HEAD: `40b4899ecd5742b064ee9b46df26c7fb6b8cc21d`.
+
+### 9.1 Installation
+
+- `adb install -r` på den låsta APK:n — **Success**.
+- `2026091000` / `v20260910` → **`2026091100` / `v20260911`**. `minSdk` 26 → 28 (väntat, D8).
+- `firstInstallTime` **oförändrad** för båda Android-användarna
+  (User 0 `2026-09-09 21:48:14`, User 10 `2026-09-09 22:08:35`).
+- Signer **oförändrad**: `234E2833…29EED`, `multiple_signers=false`.
+- Appen startade utan fatal crash; inga `FATAL`/`AndroidRuntime`-rader, inga Room-exceptions.
+
+### 9.2 Migreringen av aktiva `default`
+
+`db_user_version` **8 → 9**, bekräftat på två oberoende sätt: `DUMP_STATE`-dumpen, och en
+read-only läsning av SQLite-headerns `user_version` (offset 60) direkt ur filen.
+
+**Pre- och postflight-dumpen skiljer sig på exakt en rad — `db_user_version`.** Allt annat är
+tecken för tecken identiskt:
+
+| Bevarat | Värde |
+|---|---|
+| profiler | 1, `profile_names=Standard`, `active_profiles=Standard` |
+| regler | 0 |
+| diktat | 6 st / 34 ord, `dictation_texts_sha256` oförändrad |
+| settings | alla 16 rader identiska |
+| ASR-nyckel | `len=56`, digest oförändrad |
+| LLM-nyckel | `len=56`, digest oförändrad |
+| konto / rot | `default_owner` = `active_uid` oförändrat, rot `default` |
+| access | `access_status=APPROVED`, `onboarding_complete=true` |
+
+Ingen destruktiv migrering, ingen fallback.
+
+### 9.3 `profileKind = GENERAL` — hur det är verifierat
+
+**Indirekt, och det redovisas som indirekt.** Det fysiska v9-schemat på enheten slutar nu
+bokstavligen på `` `profileKind` TEXT NOT NULL DEFAULT 'GENERAL') `` (läst read-only ur filen),
+profilen lästes framgångsrikt tillbaka efter migreringen, och `ProfileKindMigrationTest` är grön
+mot det verkliga exporterade v8-schemat.
+
+Det finns **ingen direkt fysisk row-value-readback**. Strängen `GENERAL` förekommer exakt en gång
+i filen — i schematexten, inte i raden — vilket är korrekt SQLite-beteende: `ALTER TABLE ADD
+COLUMN` är en ren metadataoperation och skriver inte om befintliga rader; värdet levereras vid
+läsning från kolumndefaulten. Den befintliga dumpen har inget `profileKind`-fält, och att bygga
+ett vore ny instrumentering.
+
+### 9.4 Vad som medvetet lämnades orört
+
+- **`signedout` och `u1` i User 0 står kvar på v8.** Ingen postflight-dump kördes mot dem, i
+  enlighet med Beslut 3 — en sådan dump hade migrerat dem (fynd 2, §8.2). Verifierat kvar på v8
+  via read-only headerläsning.
+- **`c1f9837c` är orörd.**
+
+### 9.5 Operativt fynd — User 10 startades automatiskt av Android
+
+Gaten förutsatte att User 10 inte skulle röras. Installationen gjorde det ändå, utan att någon
+kommandorad riktades dit. Ur logcat:
+
+```
+11:33:16.818 ActivityManager: Force stopping se.optiqon.voice appid=10289 user=-1: installPackageLI
+11:33:17.151 ActivityManager: Force stopping se.optiqon.voice appid=10289 user=10: pkg removed
+11:33:18.167 ActivityManager: Start proc  8391:se.optiqon.voice/u0a289  for service   {…TextInjectorService}
+11:33:18.550 ActivityManager: Start proc 27604:se.optiqon.voice/u10a289 for broadcast {…BootReceiver}
+```
+
+Tre saker följer:
+
+1. **Plattformen force-stoppar appen vid varje paketbyte**, för samtliga Android-användare. Det
+   går inte att installera utan det, och det är inte samma sak som en utfärdad `force-stop`.
+2. **User 0:s process startades av systemet före den manuella appstarten** — migreringen skedde
+   vid `TextInjectorService`-starten, inte vid ett tryck på ikonen.
+3. **User 10:s process startades av systemet** via `BootReceiver` på package-replaced-broadcasten.
+   **User 10:s DB-state är därmed overifierat och kan ha migrerats.** Det har inte inspekterats:
+   `run-as` från User 0 når inte dit, och inspektion var inte godkänd.
+
+Klassat av ChatGPT som **operativt migrations-/releasefynd, inte merge-blockerande koddefekt.**
+
+> **Regel för framtida Room-/schemamigreringsgrindar:** anta inte att bara den manuellt startade
+> eller nuvarande Android-användaren kan öppna databasen efter en paketuppdatering. Ett paketbyte
+> väcker appen för varje Android-användare som har den installerad, via boot-/replace-receivers,
+> och varje sådan process migrerar sin egen aktiva rot. Räkna med alla installerade
+> Android-användare, eller avgränsa uttryckligen.
+
+### 9.6 Kvarstående glapp
+
+Android 16:s SQLite är otestad (enheten kör SDK 33) · `signedout`/`u1` medvetet kvar på v8 och
+overifierade · User 10 overifierad och sannolikt migrerad · `c1f9837c` orörd och fortsatt utan
+backup-möjlighet.
