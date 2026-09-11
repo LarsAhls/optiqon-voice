@@ -50,6 +50,11 @@ jobs:
       # This proves the assertions executed against this checkout. It does not prove the task
       # declares every input it reads; nothing cheap does. It makes that mistake loud instead of
       # silent, which is precisely what the two incidents lacked.
+      #
+      # Fail-closed has a cost: re-running this job on an unchanged commit produces FROM-CACHE and
+      # is refused, although that cached result is perfectly good. The check cannot tell a cache
+      # hit with complete inputs from one without, and the second kind is what has bitten us. Push
+      # an empty commit instead of relaxing this.
       - name: Prove the suite ran on this commit
         run: |
           outcome=$(grep -E '^> Task :app:testDebugUnitTest( |$)' gradle-test.log | tail -1)

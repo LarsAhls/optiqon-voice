@@ -178,6 +178,11 @@ android {
 
     lint {
         checkReleaseBuilds = false
+        // Lint has been configured and never invoked since this project started, so it starts
+        // from a baseline: every finding that exists today is recorded and silenced, and only
+        // what arrives after this commit is reported. Delete lint-baseline.xml and re-run to
+        // see the debt; shrinking it is separate work from not adding to it.
+        baseline = file("lint-baseline.xml")
     }
 
     composeCompiler {

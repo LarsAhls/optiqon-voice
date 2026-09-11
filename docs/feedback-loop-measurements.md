@@ -51,3 +51,48 @@ Windows, which is why it belongs on a Linux runner.
 - The test-count floor as the primary answer to false green. A cached run reports the right count,
   so it would have caught neither recorded incident. It is kept as a secondary guard against a
   different fault -- a test class dropped by a filter or a rename.
+
+## The freshness proof
+
+`ManifestContractTest` reads `AndroidManifest.xml` as *text*. Compilation inputs do not cover
+that, which is how this build produced a green run that never ran, twice. So the manifest and
+`res/xml` are now declared inputs of the test task — and the declaration was proven rather than
+assumed, by running the same filtered command four times:
+
+| # | Manifest | Gradle reported | Result | Wall clock |
+|---|---|---|---|---|
+| 1 | intact | `> Task :app:testDebugUnitTest` | pass | 14 m 50 s |
+| 2 | untouched | `UP-TO-DATE` | pass | 6 s |
+| 3 | `VIBRATE` removed | `> Task :app:testDebugUnitTest` | **FAILED**, on the permission-set assertion | 56 s |
+| 4 | restored | `FROM-CACHE` | pass | 7 s |
+
+Run 3 is the one that matters twice over: the task re-ran *because* the manifest is now an input,
+and the guard went red on a real defect. Without run 3, neither claim would be evidence. Run 1 is
+slow only because a new test file invalidates the compiled test source set; run 2 is what the
+steady state costs.
+
+Run 4 is worth staring at. Restoring the manifest returned the task to an input set Gradle had
+already seen, and it handed back a cached *result* — a correct cache hit, and simultaneously a
+live demonstration of the shape of both recorded incidents. It is exactly the outcome CI now
+refuses.
+
+**The caveat that follows from run 4.** Re-running the CI job on an unchanged commit will produce
+`FROM-CACHE` and the freshness step will fail it, even though that cached result is legitimate.
+This is deliberate and fail-closed: the check cannot distinguish a cache hit whose inputs were
+complete from one whose inputs were not, and the second kind is the one that has actually bitten
+us. If a re-run is needed, push an empty commit or clear the Actions cache rather than relaxing
+the check.
+
+## Android Lint
+
+| What | Wall clock | Result |
+|---|---|---|
+| `:app:lintDebug`, first run, writing the baseline | **10 m 12 s** | 25 errors, 114 warnings |
+
+Lint had been configured and never invoked since the project started, so this is the first time
+anyone has seen that number. 139 findings is not a crisis and it is not something to fix inside
+this Mission either; it is why the CI job starts report-only against `app/lint-baseline.xml`.
+The baseline silences exactly today's findings and nothing else, so anything new shows up.
+
+Ten minutes is also why it is its own parallel job rather than another step in the test job: it
+costs nothing in wall clock when it runs beside a suite that takes longer.
