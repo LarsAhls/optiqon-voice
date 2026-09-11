@@ -24,7 +24,7 @@ import se.optiqon.voice.data.db.entity.TextReplacementRuleEntity
         LifetimeStatsEntity::class,
         OutboxEntry::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = true
 )
 abstract class OptiqonVoiceDatabase : RoomDatabase() {

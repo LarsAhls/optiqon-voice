@@ -166,6 +166,20 @@ object DatabaseModule {
     }
 
     /**
+     * One column, following [migration5To6]: a string enum with a SQL default, so every existing
+     * row lands on GENERAL and keeps the output it had before the column existed.
+     *
+     * No heuristic reclassification. A profile named "Mail" does not become EMAIL here, because a
+     * migration that guesses is a migration that silently changes what a tester's dictation comes
+     * out as, with no event they could connect it to.
+     */
+    private val migration8To9 = object : Migration(8, 9) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL("ALTER TABLE `profiles` ADD COLUMN `profileKind` TEXT NOT NULL DEFAULT 'GENERAL'")
+        }
+    }
+
+    /**
      * Every migration, in order. Exposed rather than inlined so the migration tests upgrade a
      * real version 7 file through the same chain a phone does.
      */
@@ -176,7 +190,8 @@ object DatabaseModule {
         migration4To5,
         migration5To6,
         migration6To7,
-        migration7To8
+        migration7To8,
+        migration8To9
     )
 
     @Provides
