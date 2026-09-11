@@ -10,7 +10,7 @@ open.** This file is the evidence for D2/D8 and the runbook for G4; it decides n
 | # | Fact | Where |
 |---|---|---|
 | 1 | The repository is public and `debug.keystore` (alias `androiddebugkey`, password `android`) is committed. Its certificate SHA-256 is `234E2833E3E74D721B316C0DB5E87E112B3F74ED5F76D34E5D3208C504429EED`. Every build so far, including the one on Lars's phone, is signed with it. | repo root, `docs/gate-m1/PREFLIGHT.md` |
-| 2 | `minSdk = 26`. APK Signature Scheme v3 (and therefore key rotation) exists from API 28; v3.1 (rotation targeting) from API 33. On API 26–27 the signer of an installed app can never change in an update. | `app/build.gradle.kts`, apksigner docs |
+| 2 | `minSdk = 28` since D8 (raised from 26). APK Signature Scheme v3 (and therefore key rotation) exists from API 28; v3.1 (rotation targeting) from API 33. On API 26–27 the signer of an installed app could never change in an update, which is why that floor was left behind rather than worked around. | `app/build.gradle.kts`, apksigner docs |
 | 3 | `apksigner` 0.9 (build-tools 36.0.0) defaults `--rotation-min-sdk-version` to 33: the rotated key is only used through v3.1 on API 33+, the *old* key keeps signing for everything below. With `--rotation-min-sdk-version 28` the rotated key is used from API 28 through a plain v3 block. | `apksigner sign --help` |
 | 4 | Without `RELEASE_*` configuration, `./gradlew assembleRelease` signs with the debug key. CI is already fail-closed (release workflows require the four secrets plus `RELEASE_CERT_SHA256` and run `verify-apk-signer.sh`). The open path was local. | `.github/workflows/*.yml`, `app/build.gradle.kts` |
 
@@ -46,8 +46,11 @@ Readings:
   `--set-rollback true` when producing the real lineage.
 - Android 8.0/8.1 (API 26–27) cannot be reached by any rotation. There the debug key remains
   the signer of an already installed app forever; a fresh install with the beta key is the
-  only clean state. This is the input to D8 (Android floor for the external beta):
-  **recommended floor Android 9+, signing with `--rotation-min-sdk-version 28`.**
+  only clean state. This was the input to D8 (Android floor for the external beta).
+  **D8 decided 2026-09-10: floor Android 9 (API 28), signing with
+  `--rotation-min-sdk-version 28`.** No tester is on Android 8.x, so the levels rotation cannot
+  reach are now outside the supported range instead of being a permanent signer trap. D2 is
+  therefore rotation in place, with no uninstall.
 
 ## 3. Proven on the real app (B.2, `scripts/signing/rotation-e2e.sh`)
 
@@ -164,11 +167,13 @@ into chat, repository, CI or logs.
 4. Register the beta certificate SHA-1 and SHA-256 **additively** in the Firebase project
    (debug SHAs stay), add the SHA-256 to `public/.well-known/assetlinks.json` and redeploy
    Hosting (G2 postflight again) **before** the first beta-signed build is installed.
-5. Then G4 proper, according to the method D2 selects:
-   (a) rotation in place on the phone (`adb install -r` of a beta-signed, lineage-carrying
-   build), or (b) beta key only for new installations while the phone stays on the debug key
-   until a proven migration exists. Rollback after a successful rotation does not exist,
-   which is why §2 and §3 came first.
+5. Then G4 proper. **D2 was decided 2026-09-10 (`docs/DECISION_SHEET_2026-09-10.md`):
+   rotation in place, no uninstall** — `adb install -r` of a beta-signed,
+   lineage-carrying build, with the installation's data kept. The alternative (beta key for
+   new installations only) was not taken. Two consequences follow and are accepted:
+   rollback after a successful rotation does not exist, which is why §2 and §3 came
+   first; and the floor is Android 9 (D8, §1 fact 2), because below API 28 rotation in
+   place is not a thing that can be done at all.
 
 ## 7. Play App Signing — out of scope
 
@@ -176,9 +181,12 @@ Uploading lineage-rotated APKs to Play and Play's own key rotation (Android 13+)
 different rules from sideloaded/App Distribution builds. Nothing here is designed to make the
 beta key a Play upload key; that is a separate decision when Play becomes relevant.
 
-## 8. Distribution (unchanged from plan rev. 4, decision D3 pending)
+## 8. Distribution — D3 decided: Firebase App Distribution
 
-Firebase App Distribution is recommended for ≤ 10 private testers (private APK, invitation
+**Decided 2026-09-10** (`docs/DECISION_SHEET_2026-09-10.md`). The console work is a tickable
+list in `docs/gate-m1/SITTING_3_CHECKLIST.md`; this section keeps the reasoning.
+
+Firebase App Distribution is used for ≤ 10 private testers (private APK, invitation
 by mail, in-app update SDK, Spark tier). GitHub Releases would publish every beta APK from a
 public repository and is not used for artefacts while the repository is public. The in-app
 "check for update" must show three distinct states (up to date / new version / could not

@@ -173,7 +173,21 @@ class AccountViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AccountUiState.Loading)
 
     fun signInWithGoogle(activity: Activity) = run {
-        signInClient.signInWithGoogle(activity).thenAwaitName()
+        signInClient.signInWithGoogle(activity).fold(
+            onSuccess = { },
+            onFailure = {
+                _message.value = when (it) {
+                    // Credential Manager reports a sheet that Play services closed itself the
+                    // same way it reports a dismissal, so the client names these two and the
+                    // screen states them instead of echoing the platform's own wording.
+                    is SignInClient.Offline ->
+                        context.getString(R.string.registration_google_offline)
+                    is SignInClient.Cancelled ->
+                        context.getString(R.string.registration_google_cancelled)
+                    else -> it.message
+                }
+            }
+        )
     }
 
     /**

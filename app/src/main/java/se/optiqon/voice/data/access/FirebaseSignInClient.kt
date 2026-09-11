@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.Context
 import androidx.credentials.CredentialManager
 import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.GetCredentialException
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.firebase.FirebaseApp
@@ -16,6 +18,7 @@ import kotlinx.coroutines.tasks.await
 import se.optiqon.voice.BuildConfig
 import se.optiqon.voice.domain.access.SignInClient
 import se.optiqon.voice.domain.access.runCatchingCancellable
+import se.optiqon.voice.domain.transcription.NetworkMonitor
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -23,7 +26,8 @@ import javax.inject.Singleton
 class FirebaseSignInClient @Inject constructor(
     @ApplicationContext private val context: Context,
     private val auth: FirebaseAuth,
-    private val pendingEmailStore: PendingEmailStore
+    private val pendingEmailStore: PendingEmailStore,
+    private val networkMonitor: NetworkMonitor
 ) : SignInClient {
 
     /**
@@ -62,7 +66,28 @@ class FirebaseSignInClient @Inject constructor(
             val firebaseCredential = GoogleAuthProvider.getCredential(googleCredential.idToken, null)
             auth.signInWithCredential(firebaseCredential).await()
             Unit
-        }
+        }.recoverCatching { failure -> throw classifyGoogleFailure(failure) }
+    }
+
+    /**
+     * Names the two failures the screen must not echo verbatim.
+     *
+     * Credential Manager collapses a great deal into [GetCredentialCancellationException]: the
+     * user dismissing the sheet, and Play services closing its own sheet after an internal step
+     * failed. Observed on device 2026-09-10 in airplane mode: the sheet drew, Play services
+     * logged `getToken() -> NETWORK_ERROR` for `oauth2:profile`, finished with status 16, and the
+     * app displayed "Activity is cancelled by the user" — a message that sends the reader looking
+     * for a mistake they did not make.
+     *
+     * Connectivity decides, because the platform will not. Read at the moment of failure rather
+     * than before the call, so a connection lost while the sheet was open lands on the same
+     * answer.
+     */
+    private fun classifyGoogleFailure(failure: Throwable): Throwable = when {
+        failure !is GetCredentialException -> failure
+        !networkMonitor.isOnline.value -> SignInClient.Offline()
+        failure is GetCredentialCancellationException -> SignInClient.Cancelled()
+        else -> failure
     }
 
     override suspend fun sendEmailLink(email: String): Result<Unit> {
