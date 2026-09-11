@@ -341,3 +341,37 @@ This stays UNPROVEN until a feature genuinely protected by `isApproved()` ships 
 account is observed being refused by the rules. An earlier draft of the template asserted 403
 on the tester's own document, which would have produced a false FAIL on the one step meant to
 prove the boundary; that criterion has been corrected rather than kept.
+
+### The two-document ceiling is VERIFIED, and the emulator must not be used to check it
+
+Added 2026-09-11 after the F-a live verification run
+(`docs/F_A_STORAGE_RULES_VERIFICATION_2026-09-11.md`).
+
+Cross-service Cloud Storage Security Rules — `firestore.get()` from `storage.rules` — are
+documented to allow **no more than two distinct Firestore documents per evaluation**, while
+repeated calls against a document already read are free because they are cached. Mission D Fas 5
+depends on both halves of that sentence being literally true. Both are now measured against the
+real service:
+
+- **two distinct documents, eight `firestore.get()` calls → allowed**, three runs out of three;
+- **three distinct documents → denied**, and **five → denied**, three runs out of three.
+
+The ceiling counts *documents*, not *calls*. The approved rule fits, and it fits with margin on
+the call count but none on the document count: **a third `firestore.get()` target is a breaking
+change to the Storage contract**, not a refactor, and any change that adds one must be
+re-measured live before it ships.
+
+**The Storage emulator cannot be used for this check.** MISSION E0 / PR-0 (Draft PR #18) found
+that the emulator enforces no document ceiling at all — it allowed three *and* five distinct
+documents, i.e. the exact inverse of production behaviour. An emulator-green rules suite is
+therefore evidence about logic and about deny reasons, and is **no evidence at all** about the
+document budget. Keep the emulator suite; do not let it stand in for a live measurement.
+
+**The IAM prerequisite is cheap.** Cross-service rules require
+`roles/firebaserules.firestoreServiceAgent` on
+`service-{projectNumber}@gcp-sa-firebasestorage.iam.gserviceaccount.com`. That grant was made
+and rolled back on a throwaway project during F-a: the organization's Domain Restricted Sharing
+policy (`iam.allowedPolicyMemberDomains` = `["C01qej65i"]`) **did not block it**, even though the
+principal is a Google-owned service agent outside the customer, and the removal left the policy
+byte-identical apart from its etag. Production wiring needs no org-policy exemption and no
+service-account key.
