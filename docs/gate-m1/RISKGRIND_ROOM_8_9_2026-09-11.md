@@ -1,7 +1,7 @@
-# Riskgrind — fysisk Room-migrering 8 → 9 på `c1f9837c` (CPH2645)
+# Riskgrind — fysisk Room-migrering 8 → 9
 
 Datum: 2026-09-11. Gäller PR #9 (Mission 2, typade profiler).
-Status: **framlagd, ej godkänd.** Ingen enhet rörs förrän Lars säger ja till den här grinden.
+Status: **framlagd, ej godkänd för `01132f9f`.** §1–§7 gäller `c1f9837c` (CPH2645); §8 lägger fram enhetsbytet till OnePlus 8 Pro `01132f9f`. Ingen enhet rörs förrän Lars godkänner.
 
 Den här grinden **ärver ingenting från Mission B**. Mission B installerade en app som inte
 ändrade databasens form; den här installationen skriver om schemat i din telefon. Det är en annan
@@ -174,3 +174,100 @@ går snett i själva skrivningen är återställningen en separat åtgärd som k
 att ändå rekommendera det är att ändringen är additiv, testad mot det verkliga exporterade
 v8-schemat (svit 458/0/2, CI grön), att mängden data som står på spel är uppmätt och liten
 (3 profiler, 0 regler, 13 diktat), och att du står bredvid med skärmen påslagen.
+
+---
+
+## 8. Tillägg 2026-09-11 (kväll) — enhetsbytet till OnePlus 8 Pro `01132f9f`
+
+Två saker har ändrats sedan §1–§7 skrevs, och båda ändrar beslutet.
+
+1. **`c1f9837c` svarar inte längre på ADB.** Enda anslutna enheten är `01132f9f`.
+2. **`01132f9f` är en ren testtelefon.** Lars har angett att inget annat görs på den. Det var
+   okänt när grinden skrevs och ändrar kostnadssidan helt: ett migreringsfel där kostar 5 diktat
+   på ett testkonto, inte hans primära diktamenshistorik.
+
+**Föreslaget beslut: `01132f9f` blir fysisk acceptance device för PR #9. `c1f9837c` körs inte nu.**
+
+Motiveringen är att enheterna svarar på olika frågor och bara den ena grindar en merge:
+
+- *Fungerar migreringen mot riktig Android-SQLite på riktig hårdvara?* → `01132f9f` svarar fullt
+  ut. Den har en **riktig v8-databas** (1 profil, 0 regler, 5 diktat / 34 ord, riktigt
+  Firebase-konto `APPROVED`, riktiga nycklar) — inte en syntetisk fixtur.
+- *Överlever Lars personliga data?* → bara `c1f9837c` svarar, och den frågan infinner sig ändå
+  vid nästa vanliga release. Att köra den manuellt sänker inte risken för den datan.
+
+### 8.1 Glapp som kvarstår med den här enheten
+
+- **SDK 33, inte 36.** `01132f9f` kör Android 13; `c1f9837c` kör Android 16. Android 16:s
+  SQLite-build förblir otestad.
+- **En populerad rot, inte tre.** `signedout` och `u1` är 4 096 B / tomma.
+- **User 10 (*Island*) finns även här** och rörs inte — samma glapp som V5.
+- **`c1f9837c` är fortsatt utan backup-möjlighet** (§3 gäller oförändrat).
+
+### 8.2 Två tekniska fynd som §5 inte kände till
+
+**Fynd 1 — en appstart migrerar exakt EN databasfil, den aktiva rotens.**
+`StorageModule.kt:46-48` ger en enda `@Singleton StorageRoot`; `StorageOwnership.kt:42,60-87`
+returnerar en rot utan att iterera; `DatabaseModule.kt:203-214` bygger Room mot
+`storageRoot.databaseName`, singular. Vilande rötter migreras först när respektive konto blir
+aktivt, vilket kräver `seal()` + `exitProcess(0)` (`AccessSession.kt:141-152`,
+`ProcessRestarter.kt:29-43`) och alltså en ny process. Det bekräftar §5 steg D och §6:s sista
+punkt. På `01132f9f` är aktiv rot `default` — den populerade filen migreras alltså vid första
+start, vilket är önskvärt.
+
+**Fynd 2 — `DUMP_STATE` mot en vilande rot MIGRERAR den roten.**
+`app/src/debug/java/se/optiqon/voice/debug/AndroidSyntheticSink.kt:82-85` bygger en andra
+Room-instans mot en godtycklig `root.databaseName` med samma `DatabaseModule.ALL_MIGRATIONS`.
+**Efter installationen är en `--es root signedout`-dump alltså inte en läsning** — den öppnar
+filen och kör 8→9 på den. Steg E i §5 ("upprepa steg A:s dump per rot") är därför inte
+read-only efter installationen, vilket §5 antog. Det gäller bara debug-byggen; ingen release-väg
+rör den koden.
+
+Migreringen är registrerad i `ALL_MIGRATIONS` (`DatabaseModule.kt:186-195`, `:207`), och
+`fallbackToDestructiveMigration` finns **inte** någonstans i `app/src` — enda träffen är prosa i
+`DowngradeGuardTest.kt:24` som dokumenterar att den togs bort.
+
+### 8.3 Uppmätt baseline för `01132f9f` (read-only, inga skrivningar gjorda)
+
+| | |
+|---|---|
+| Serial / modell | `01132f9f` / OnePlus 8 Pro, `IN2023`, `OnePlus8Pro_EEA` |
+| Android / SDK | 13 / 33, `IN2023_13.1.0.591(EX01)` |
+| Installerad | `v20260910` / `2026091000`, minSdk 26, targetSdk 35 |
+| Signer | `234E2833…29EED` — **identisk** med den låsta APK:ns |
+| appId / `run-as` | 10289 / fungerar |
+| firstInstallTime | User 0: 2026-09-09 21:48:14 · User 10: 2026-09-09 22:08:35 |
+| lastUpdateTime | 2026-09-10 10:35:02, installer `pc` |
+| pkgFlags | `[DEBUGGABLE HAS_CODE ALLOW_CLEAR_USER_DATA]` |
+| DB-filer | `optiqon_voice.db` 57 344 B · `optiqon_voice_signedout.db` 4 096 B · `optiqon_voice_u1.db` 4 096 B |
+| Aktiv rot | `default`, `default_owner` = `active_uid` = `qHWdyX…`, `access_status=APPROVED` |
+| Innehåll (`default`) | `db_user_version=8`, 1 profil, 0 regler, 5 diktat / 34 ord |
+| Dump på enheten | `files/debug/state.txt` 2026-09-09 23:28 — **stale**, samma glapp som V4 |
+
+`2026091000 → 2026091100` är en uppgradering med samma signer ⇒ `install -r` utan `-d`.
+
+### 8.4 Procedur på `01132f9f`
+
+Identisk med §5 i sak, med fynden ovan inarbetade:
+
+| # | Handling | Effekt |
+|---|---|---|
+| 0 | Verifiera APK SHA-256 / versionCode / signer mot approval box | Läser bara |
+| A | `am broadcast …DUMP_STATE` för `default`, `signedout`, `u1`, sedan `run-as cat` | Skriver `files/debug/state*.txt`. **Med gammal APK migrerar detta ingenting** — dess `ALL_MIGRATIONS` slutar på v8. Verifiera `db_user_version=8` på alla tre. |
+| B | `adb logcat` **innan** installationen | Läser bara |
+| C | `adb install -r <godkänd apk>` | Skriver. Inget `-d`, ingen uninstall, ingen clear-data, ingen force-stop. |
+| D | Normal appstart | **`optiqon_voice.db` migreras här** (`OptiqonVoiceApp.kt:39-47` → `ProfileRepository.ensureDefaults()`) |
+| E | Postflight-dump av **`default`**, jämför mot A | Skriver samma debug-fil igen |
+| F | *(egen beslutspunkt)* dump av `signedout`/`u1` | **Migrerar dem** (fynd 2). Görs bara med uttryckligt ja. |
+
+Hard stop, uteslutningar och "ingen recovery improviseras" gäller oförändrat från §5–§6.
+User 10 på `01132f9f` rörs inte. `c1f9837c` rörs inte. PR #9 mergas inte.
+
+### 8.5 Vad grinden begär nu
+
+Gällande approval box är scopad till `c1f9837c` och säger uttryckligen
+"Ingen annan artefakt eller device ingår". **Ett nytt Gate-beslut krävs för `01132f9f`.**
+Artefakten är oförändrad: code HEAD `40b4899`, APK
+`scratchpad/optiqon-voice-40b4899-v20260911.apk`, SHA-256
+`c8362d93935bfaa9c7573f45e41b1b5078206c8e324842d24929471cd2ffbc33`, versionCode `2026091100`,
+signer `234e2833…29eed`.
