@@ -274,6 +274,18 @@ tasks.withType<Test>().configureEach {
     if (providers.environmentVariable("OPENAI_ENDPOINT").isPresent) {
         outputs.upToDateWhen { false }
     }
+
+    // CI refuses a test result it did not watch execute ("Prove the suite ran on this commit"),
+    // and setup-gradle restores the default branch's build cache into every branch build. A pull
+    // request that changes no declared input of this task -- documentation, firebase.json, a
+    // rules file -- is therefore served FROM-CACHE and fails a check that has nothing to do with
+    // the change. The refusal is right; what was wrong is that it was routinely reachable. Make
+    // it unreachable at the source: in CI this task is neither cacheable nor ever up to date, so
+    // the only way the log can say FROM-CACHE again is if this block stopped applying.
+    if (providers.environmentVariable("CI").isPresent) {
+        outputs.cacheIf { false }
+        outputs.upToDateWhen { false }
+    }
 }
 
 /**

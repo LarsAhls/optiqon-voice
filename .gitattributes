@@ -4,3 +4,12 @@
 *.sh text eol=lf
 .githooks/* text eol=lf
 gradlew text eol=lf
+
+# The firebase CLI uploads the WORKING TREE bytes, so a rules file that arrives CRLF on one
+# clone and LF on another publishes two different rulesets and two different checksums for the
+# same content. storage.rules is pinned by sha256 in the deploy evidence (and its contract block
+# is the ruleset F-a measured), so its line endings are part of the artifact, not a local
+# preference. firestore.rules is deliberately left alone: it is already live as CRLF, and
+# renormalising it here would silently change what the next Firestore deploy publishes.
+storage.rules text eol=lf
+storage.denyall.rules text eol=lf

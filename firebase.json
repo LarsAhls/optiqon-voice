@@ -3,7 +3,10 @@
     "rules": "firestore.rules"
   },
   "storage": {
-    "rules": "storage.rules"
+    "rules": "storage.rules",
+    "predeploy": [
+      "node scripts/deploy/storage-guard.mjs"
+    ]
   },
   "hosting": {
     "public": "public",
