@@ -1,0 +1,6 @@
+# The pre-commit hook and the scripts it runs are executed by sh. With CRLF endings the shebang
+# line ends in a carriage return and the interpreter is not found, so the gate silently stops
+# being a gate on any clone with core.autocrlf enabled -- which is the default on Windows.
+*.sh text eol=lf
+.githooks/* text eol=lf
+gradlew text eol=lf

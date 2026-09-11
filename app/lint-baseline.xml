@@ -1,0 +1,1536 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<issues format="6" by="lint 8.7.3" type="baseline" client="gradle" dependencies="false" name="AGP (8.7.3)" variant="all" version="8.7.3">
+
+    <issue
+        id="ApplySharedPref"
+        message="Consider using `apply()` instead; `commit` writes its data to persistent storage immediately, whereas `apply` will handle it in the background"
+        errorLine1="        prefs.edit().putString(KEY_ACTIVE_UID, uid).commit()"
+        errorLine2="                                                    ~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/data/storage/DeviceDataOwner.kt"
+            line="46"
+            column="53"/>
+    </issue>
+
+    <issue
+        id="ApplySharedPref"
+        message="Consider using `apply()` instead; `commit` writes its data to persistent storage immediately, whereas `apply` will handle it in the background"
+        errorLine1="            .commit()"
+        errorLine2="             ~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/data/storage/DeviceDataOwner.kt"
+            line="69"
+            column="14"/>
+    </issue>
+
+    <issue
+        id="ApplySharedPref"
+        message="Consider using `apply()` instead; `commit` writes its data to persistent storage immediately, whereas `apply` will handle it in the background"
+        errorLine1="            .commit()"
+        errorLine2="             ~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/data/storage/DeviceDataOwner.kt"
+            line="98"
+            column="14"/>
+    </issue>
+
+    <issue
+        id="ApplySharedPref"
+        message="Consider using `apply()` instead; `commit` writes its data to persistent storage immediately, whereas `apply` will handle it in the background"
+        errorLine1="        prefs.edit().putBoolean(KEY_DECLINED + uid, true).commit()"
+        errorLine2="                                                          ~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/data/storage/DeviceDataOwner.kt"
+            line="107"
+            column="59"/>
+    </issue>
+
+    <issue
+        id="InlinedApi"
+        message="Field requires API level 33 (current min is 28): `android.content.Context#RECEIVER_NOT_EXPORTED`"
+        errorLine1="        registerReceiver(stopReceiver, IntentFilter(NotificationHelper.ACTION_STOP), RECEIVER_NOT_EXPORTED)"
+        errorLine2="                                                                                     ~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/service/BubbleService.kt"
+            line="202"
+            column="86"/>
+    </issue>
+
+    <issue
+        id="InlinedApi"
+        message="Field requires API level 34 (current min is 28): `android.content.pm.ServiceInfo#FOREGROUND_SERVICE_TYPE_SPECIAL_USE`"
+        errorLine1="            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/service/BubbleService.kt"
+            line="293"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="InlinedApi"
+        message="Field requires API level 30 (current min is 28): `android.content.pm.ServiceInfo#FOREGROUND_SERVICE_TYPE_MICROPHONE`"
+        errorLine1="                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or"
+        errorLine2="                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/service/BubbleService.kt"
+            line="553"
+            column="17"/>
+    </issue>
+
+    <issue
+        id="InlinedApi"
+        message="Field requires API level 34 (current min is 28): `android.content.pm.ServiceInfo#FOREGROUND_SERVICE_TYPE_SPECIAL_USE`"
+        errorLine1="                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE"
+        errorLine2="                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/service/BubbleService.kt"
+            line="554"
+            column="21"/>
+    </issue>
+
+    <issue
+        id="InlinedApi"
+        message="Field requires API level 34 (current min is 28): `android.content.pm.ServiceInfo#FOREGROUND_SERVICE_TYPE_SPECIAL_USE`"
+        errorLine1="                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE"
+        errorLine2="                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/service/BubbleService.kt"
+            line="574"
+            column="17"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 29 (current min is 28): `android.app.Service#startForeground`"
+        errorLine1="        startForeground("
+        errorLine2="        ~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/service/BubbleService.kt"
+            line="290"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 29 (current min is 28): `android.app.Service#startForeground`"
+        errorLine1="            startForeground("
+        errorLine2="            ~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/service/BubbleService.kt"
+            line="550"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 29 (current min is 28): `android.app.Service#startForeground`"
+        errorLine1="            startForeground("
+        errorLine2="            ~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/service/BubbleService.kt"
+            line="571"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="OldTargetApi"
+        message="Not targeting the latest versions of Android; compatibility modes apply. Consider testing and updating this version. Consult the `android.os.Build.VERSION_CODES` javadoc for details."
+        errorLine1="        targetSdk = 35"
+        errorLine2="        ~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="62"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="CredentialManagerSignInWithGoogle"
+        message="Use of `:googleid` classes without use of `GoogleIdTokenCredential`"
+        errorLine1="            val option = GetSignInWithGoogleOption.Builder(clientId).build()"
+        errorLine2="                         ~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/data/access/FirebaseSignInClient.kt"
+            line="62"
+            column="26"/>
+    </issue>
+
+    <issue
+        id="AndroidGradlePluginVersion"
+        message="A newer version of com.android.application than 8.7.3 is available: 9.4.0"
+        errorLine1="agp = &quot;8.7.3&quot;"
+        errorLine2="      ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="2"
+            column="7"/>
+    </issue>
+
+    <issue
+        id="AndroidGradlePluginVersion"
+        message="A newer version of com.android.application than 8.7.3 is available: 9.4.0"
+        errorLine1="agp = &quot;8.7.3&quot;"
+        errorLine2="      ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="2"
+            column="7"/>
+    </issue>
+
+    <issue
+        id="AndroidGradlePluginVersion"
+        message="A newer version of com.android.application than 8.7.3 is available: 9.4.0"
+        errorLine1="agp = &quot;8.7.3&quot;"
+        errorLine2="      ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="2"
+            column="7"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.compose:compose-bom than 2025.01.01 is available: 2026.09.00"
+        errorLine1="composeBom = &quot;2025.01.01&quot;"
+        errorLine2="             ~~~~~~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="5"
+            column="14"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.compose:compose-bom than 2025.01.01 is available: 2026.09.00"
+        errorLine1="composeBom = &quot;2025.01.01&quot;"
+        errorLine2="             ~~~~~~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="5"
+            column="14"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.compose:compose-bom than 2025.01.01 is available: 2026.09.00"
+        errorLine1="composeBom = &quot;2025.01.01&quot;"
+        errorLine2="             ~~~~~~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="5"
+            column="14"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.room than 2.7.0 is available: 2.8.5"
+        errorLine1="room = &quot;2.7.0&quot;"
+        errorLine2="       ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="7"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.room than 2.7.0 is available: 2.8.5"
+        errorLine1="room = &quot;2.7.0&quot;"
+        errorLine2="       ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="7"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.room than 2.7.0 is available: 2.8.5"
+        errorLine1="room = &quot;2.7.0&quot;"
+        errorLine2="       ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="7"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.room:room-compiler than 2.7.0 is available: 2.8.5"
+        errorLine1="room = &quot;2.7.0&quot;"
+        errorLine2="       ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="7"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.room:room-compiler than 2.7.0 is available: 2.8.5"
+        errorLine1="room = &quot;2.7.0&quot;"
+        errorLine2="       ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="7"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.room:room-compiler than 2.7.0 is available: 2.8.5"
+        errorLine1="room = &quot;2.7.0&quot;"
+        errorLine2="       ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="7"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.room:room-ktx than 2.7.0 is available: 2.8.5"
+        errorLine1="room = &quot;2.7.0&quot;"
+        errorLine2="       ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="7"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.room:room-ktx than 2.7.0 is available: 2.8.5"
+        errorLine1="room = &quot;2.7.0&quot;"
+        errorLine2="       ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="7"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.room:room-ktx than 2.7.0 is available: 2.8.5"
+        errorLine1="room = &quot;2.7.0&quot;"
+        errorLine2="       ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="7"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.room:room-runtime than 2.7.0 is available: 2.8.5"
+        errorLine1="room = &quot;2.7.0&quot;"
+        errorLine2="       ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="7"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.room:room-runtime than 2.7.0 is available: 2.8.5"
+        errorLine1="room = &quot;2.7.0&quot;"
+        errorLine2="       ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="7"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.room:room-runtime than 2.7.0 is available: 2.8.5"
+        errorLine1="room = &quot;2.7.0&quot;"
+        errorLine2="       ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="7"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.room:room-testing than 2.7.0 is available: 2.8.5"
+        errorLine1="room = &quot;2.7.0&quot;"
+        errorLine2="       ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="7"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.room:room-testing than 2.7.0 is available: 2.8.5"
+        errorLine1="room = &quot;2.7.0&quot;"
+        errorLine2="       ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="7"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.room:room-testing than 2.7.0 is available: 2.8.5"
+        errorLine1="room = &quot;2.7.0&quot;"
+        errorLine2="       ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="7"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.datastore:datastore-preferences than 1.1.2 is available: 1.2.1"
+        errorLine1="datastore = &quot;1.1.2&quot;"
+        errorLine2="            ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="10"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.datastore:datastore-preferences than 1.1.2 is available: 1.2.1"
+        errorLine1="datastore = &quot;1.1.2&quot;"
+        errorLine2="            ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="10"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.datastore:datastore-preferences than 1.1.2 is available: 1.2.1"
+        errorLine1="datastore = &quot;1.1.2&quot;"
+        errorLine2="            ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="10"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.navigation:navigation-compose than 2.8.5 is available: 2.10.1"
+        errorLine1="navigationCompose = &quot;2.8.5&quot;"
+        errorLine2="                    ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="11"
+            column="21"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.navigation:navigation-compose than 2.8.5 is available: 2.10.1"
+        errorLine1="navigationCompose = &quot;2.8.5&quot;"
+        errorLine2="                    ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="11"
+            column="21"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.navigation:navigation-compose than 2.8.5 is available: 2.10.1"
+        errorLine1="navigationCompose = &quot;2.8.5&quot;"
+        errorLine2="                    ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="11"
+            column="21"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.lifecycle:lifecycle-process than 2.8.7 is available: 2.11.0"
+        errorLine1="lifecycle = &quot;2.8.7&quot;"
+        errorLine2="            ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="12"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.lifecycle:lifecycle-process than 2.8.7 is available: 2.11.0"
+        errorLine1="lifecycle = &quot;2.8.7&quot;"
+        errorLine2="            ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="12"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.lifecycle:lifecycle-process than 2.8.7 is available: 2.11.0"
+        errorLine1="lifecycle = &quot;2.8.7&quot;"
+        errorLine2="            ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="12"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.lifecycle:lifecycle-runtime-compose than 2.8.7 is available: 2.11.0"
+        errorLine1="lifecycle = &quot;2.8.7&quot;"
+        errorLine2="            ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="12"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.lifecycle:lifecycle-runtime-compose than 2.8.7 is available: 2.11.0"
+        errorLine1="lifecycle = &quot;2.8.7&quot;"
+        errorLine2="            ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="12"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.lifecycle:lifecycle-runtime-compose than 2.8.7 is available: 2.11.0"
+        errorLine1="lifecycle = &quot;2.8.7&quot;"
+        errorLine2="            ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="12"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.lifecycle:lifecycle-runtime-ktx than 2.8.7 is available: 2.11.0"
+        errorLine1="lifecycle = &quot;2.8.7&quot;"
+        errorLine2="            ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="12"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.lifecycle:lifecycle-runtime-ktx than 2.8.7 is available: 2.11.0"
+        errorLine1="lifecycle = &quot;2.8.7&quot;"
+        errorLine2="            ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="12"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.lifecycle:lifecycle-runtime-ktx than 2.8.7 is available: 2.11.0"
+        errorLine1="lifecycle = &quot;2.8.7&quot;"
+        errorLine2="            ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="12"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.lifecycle:lifecycle-viewmodel-compose than 2.8.7 is available: 2.11.0"
+        errorLine1="lifecycle = &quot;2.8.7&quot;"
+        errorLine2="            ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="12"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.lifecycle:lifecycle-viewmodel-compose than 2.8.7 is available: 2.11.0"
+        errorLine1="lifecycle = &quot;2.8.7&quot;"
+        errorLine2="            ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="12"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.lifecycle:lifecycle-viewmodel-compose than 2.8.7 is available: 2.11.0"
+        errorLine1="lifecycle = &quot;2.8.7&quot;"
+        errorLine2="            ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="12"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.core:core-ktx than 1.15.0 is available: 1.19.0"
+        errorLine1="coreKtx = &quot;1.15.0&quot;"
+        errorLine2="          ~~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="14"
+            column="11"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.core:core-ktx than 1.15.0 is available: 1.19.0"
+        errorLine1="coreKtx = &quot;1.15.0&quot;"
+        errorLine2="          ~~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="14"
+            column="11"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.core:core-ktx than 1.15.0 is available: 1.19.0"
+        errorLine1="coreKtx = &quot;1.15.0&quot;"
+        errorLine2="          ~~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="14"
+            column="11"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.activity:activity-compose than 1.9.3 is available: 1.13.0"
+        errorLine1="activityCompose = &quot;1.9.3&quot;"
+        errorLine2="                  ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="15"
+            column="19"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.activity:activity-compose than 1.9.3 is available: 1.13.0"
+        errorLine1="activityCompose = &quot;1.9.3&quot;"
+        errorLine2="                  ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="15"
+            column="19"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.activity:activity-compose than 1.9.3 is available: 1.13.0"
+        errorLine1="activityCompose = &quot;1.9.3&quot;"
+        errorLine2="                  ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="15"
+            column="19"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.security:security-crypto than 1.0.0 is available: 1.1.0"
+        errorLine1="securityCrypto = &quot;1.0.0&quot;"
+        errorLine2="                 ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="16"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.security:security-crypto than 1.0.0 is available: 1.1.0"
+        errorLine1="securityCrypto = &quot;1.0.0&quot;"
+        errorLine2="                 ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="16"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.security:security-crypto than 1.0.0 is available: 1.1.0"
+        errorLine1="securityCrypto = &quot;1.0.0&quot;"
+        errorLine2="                 ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="16"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.test:core than 1.6.1 is available: 1.7.0"
+        errorLine1="androidxTest = &quot;1.6.1&quot;"
+        errorLine2="               ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="19"
+            column="16"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.test:core than 1.6.1 is available: 1.7.0"
+        errorLine1="androidxTest = &quot;1.6.1&quot;"
+        errorLine2="               ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="19"
+            column="16"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.test:core than 1.6.1 is available: 1.7.0"
+        errorLine1="androidxTest = &quot;1.6.1&quot;"
+        errorLine2="               ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="19"
+            column="16"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.test.ext:junit than 1.2.1 is available: 1.3.0"
+        errorLine1="androidxTestExtJunit = &quot;1.2.1&quot;"
+        errorLine2="                       ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="20"
+            column="24"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.test.ext:junit than 1.2.1 is available: 1.3.0"
+        errorLine1="androidxTestExtJunit = &quot;1.2.1&quot;"
+        errorLine2="                       ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="20"
+            column="24"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.test.ext:junit than 1.2.1 is available: 1.3.0"
+        errorLine1="androidxTestExtJunit = &quot;1.2.1&quot;"
+        errorLine2="                       ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="20"
+            column="24"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of com.google.firebase:firebase-bom than 34.1.0 is available: 34.19.0"
+        errorLine1="firebaseBom = &quot;34.1.0&quot;"
+        errorLine2="              ~~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="22"
+            column="15"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of com.google.firebase:firebase-bom than 34.1.0 is available: 34.19.0"
+        errorLine1="firebaseBom = &quot;34.1.0&quot;"
+        errorLine2="              ~~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="22"
+            column="15"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of com.google.firebase:firebase-bom than 34.1.0 is available: 34.19.0"
+        errorLine1="firebaseBom = &quot;34.1.0&quot;"
+        errorLine2="              ~~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="22"
+            column="15"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of com.google.gms.google-services than 4.4.2 is available: 4.5.0"
+        errorLine1="googleServices = &quot;4.4.2&quot;"
+        errorLine2="                 ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="23"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of com.google.gms.google-services than 4.4.2 is available: 4.5.0"
+        errorLine1="googleServices = &quot;4.4.2&quot;"
+        errorLine2="                 ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="23"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of com.google.gms.google-services than 4.4.2 is available: 4.5.0"
+        errorLine1="googleServices = &quot;4.4.2&quot;"
+        errorLine2="                 ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="23"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.credentials:credentials than 1.3.0 is available: 1.6.0"
+        errorLine1="credentials = &quot;1.3.0&quot;"
+        errorLine2="              ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="24"
+            column="15"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.credentials:credentials than 1.3.0 is available: 1.6.0"
+        errorLine1="credentials = &quot;1.3.0&quot;"
+        errorLine2="              ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="24"
+            column="15"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.credentials:credentials than 1.3.0 is available: 1.6.0"
+        errorLine1="credentials = &quot;1.3.0&quot;"
+        errorLine2="              ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="24"
+            column="15"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.credentials:credentials-play-services-auth than 1.3.0 is available: 1.6.0"
+        errorLine1="credentials = &quot;1.3.0&quot;"
+        errorLine2="              ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="24"
+            column="15"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.credentials:credentials-play-services-auth than 1.3.0 is available: 1.6.0"
+        errorLine1="credentials = &quot;1.3.0&quot;"
+        errorLine2="              ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="24"
+            column="15"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.credentials:credentials-play-services-auth than 1.3.0 is available: 1.6.0"
+        errorLine1="credentials = &quot;1.3.0&quot;"
+        errorLine2="              ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="24"
+            column="15"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of com.google.android.libraries.identity.googleid:googleid than 1.1.1 is available: 1.2.0"
+        errorLine1="googleid = &quot;1.1.1&quot;"
+        errorLine2="           ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="25"
+            column="12"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of com.google.android.libraries.identity.googleid:googleid than 1.1.1 is available: 1.2.0"
+        errorLine1="googleid = &quot;1.1.1&quot;"
+        errorLine2="           ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="25"
+            column="12"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of com.google.android.libraries.identity.googleid:googleid than 1.1.1 is available: 1.2.0"
+        errorLine1="googleid = &quot;1.1.1&quot;"
+        errorLine2="           ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="25"
+            column="12"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.work:work-runtime-ktx than 2.10.0 is available: 2.11.2"
+        errorLine1="work = &quot;2.10.0&quot;"
+        errorLine2="       ~~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="26"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.work:work-runtime-ktx than 2.10.0 is available: 2.11.2"
+        errorLine1="work = &quot;2.10.0&quot;"
+        errorLine2="       ~~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="26"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.work:work-runtime-ktx than 2.10.0 is available: 2.11.2"
+        errorLine1="work = &quot;2.10.0&quot;"
+        errorLine2="       ~~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="26"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.work:work-testing than 2.10.0 is available: 2.11.2"
+        errorLine1="work = &quot;2.10.0&quot;"
+        errorLine2="       ~~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="26"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.work:work-testing than 2.10.0 is available: 2.11.2"
+        errorLine1="work = &quot;2.10.0&quot;"
+        errorLine2="       ~~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="26"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.work:work-testing than 2.10.0 is available: 2.11.2"
+        errorLine1="work = &quot;2.10.0&quot;"
+        errorLine2="       ~~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="26"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.hilt:hilt-navigation-compose than 1.2.0 is available: 1.4.0"
+        errorLine1="hilt-navigation-compose = { group = &quot;androidx.hilt&quot;, name = &quot;hilt-navigation-compose&quot;, version = &quot;1.2.0&quot; }"
+        errorLine2="                                                                                                 ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="48"
+            column="98"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.hilt:hilt-navigation-compose than 1.2.0 is available: 1.4.0"
+        errorLine1="hilt-navigation-compose = { group = &quot;androidx.hilt&quot;, name = &quot;hilt-navigation-compose&quot;, version = &quot;1.2.0&quot; }"
+        errorLine2="                                                                                                 ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="48"
+            column="98"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.hilt:hilt-navigation-compose than 1.2.0 is available: 1.4.0"
+        errorLine1="hilt-navigation-compose = { group = &quot;androidx.hilt&quot;, name = &quot;hilt-navigation-compose&quot;, version = &quot;1.2.0&quot; }"
+        errorLine2="                                                                                                 ~~~~~~~">
+        <location
+            file="$HOME/Projects/voice-mv1/gradle/libs.versions.toml"
+            line="48"
+            column="98"/>
+    </issue>
+
+    <issue
+        id="ComposableNaming"
+        message="Composable functions that return Unit should start with an uppercase letter"
+        errorLine1="private fun observeOnResume(onResume: () -> Unit) {"
+        errorLine2="            ~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/ui/common/PermissionHelper.kt"
+            line="289"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="ComposableNaming"
+        message="Composable functions that return Unit should start with an uppercase letter"
+        errorLine1="    private fun onboarding(viewModel: OnboardingViewModel) {"
+        errorLine2="                ~~~~~~~~~~">
+        <location
+            file="src/test/java/se/optiqon/voice/ui/ScreenshotTest.kt"
+            line="127"
+            column="17"/>
+    </issue>
+
+    <issue
+        id="ModifierParameter"
+        message="Modifier parameter should be the first optional parameter"
+        errorLine1="    modifier: Modifier = Modifier.fillMaxSize()"
+        errorLine2="    ~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/ui/access/AccountScreen.kt"
+            line="49"
+            column="5"/>
+    </issue>
+
+    <issue
+        id="ModifierParameter"
+        message="Optional Modifier parameter should have a default value of `Modifier`"
+        errorLine1="    modifier: Modifier = Modifier.fillMaxSize()"
+        errorLine2="    ~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/ui/access/AccountScreen.kt"
+            line="49"
+            column="5"/>
+    </issue>
+
+    <issue
+        id="ModifierParameter"
+        message="Optional Modifier parameter should have a default value of `Modifier`"
+        errorLine1="    modifier: Modifier = Modifier.fillMaxSize(),"
+        errorLine2="    ~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/ui/access/AccountScreen.kt"
+            line="84"
+            column="5"/>
+    </issue>
+
+    <issue
+        id="ModifierParameter"
+        message="Modifier parameter should be the first optional parameter"
+        errorLine1="    modifier: Modifier = Modifier,"
+        errorLine2="    ~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/ui/common/AppChrome.kt"
+            line="91"
+            column="5"/>
+    </issue>
+
+    <issue
+        id="ModifierParameter"
+        message="Optional Modifier parameter should have a default value of `Modifier`"
+        errorLine1="    modifier: Modifier = Modifier.fillMaxSize()"
+        errorLine2="    ~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/ui/common/UnsupportedProfileScreen.kt"
+            line="28"
+            column="5"/>
+    </issue>
+
+    <issue
+        id="ProduceStateDoesNotAssignValue"
+        message="produceState calls should assign `value` inside the producer lambda"
+        errorLine1="    val text by produceState(initialValue = &quot;&quot;, license) {"
+        errorLine2="                ~~~~~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/ui/settings/AboutScreen.kt"
+            line="127"
+            column="17"/>
+    </issue>
+
+    <issue
+        id="SwitchIntDef"
+        message="Switch statement on an `int` with known associated constant missing case `AccessibilityEvent.TYPE_ANNOUNCEMENT`, `AccessibilityEvent.TYPE_ASSIST_READING_CONTEXT`, `AccessibilityEvent.TYPE_GESTURE_DETECTION_END`, `AccessibilityEvent.TYPE_GESTURE_DETECTION_START`, `AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED`, `AccessibilityEvent.TYPE_SPEECH_STATE_CHANGE`, `AccessibilityEvent.TYPE_TOUCH_EXPLORATION_GESTURE_END`, `AccessibilityEvent.TYPE_TOUCH_EXPLORATION_GESTURE_START`, `AccessibilityEvent.TYPE_TOUCH_INTERACTION_END`, `AccessibilityEvent.TYPE_TOUCH_INTERACTION_START`, `AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED`, `AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED`, `AccessibilityEvent.TYPE_VIEW_CLICKED`, `AccessibilityEvent.TYPE_VIEW_CONTEXT_CLICKED`, `AccessibilityEvent.TYPE_VIEW_HOVER_ENTER`, `AccessibilityEvent.TYPE_VIEW_HOVER_EXIT`, `AccessibilityEvent.TYPE_VIEW_LONG_CLICKED`, `AccessibilityEvent.TYPE_VIEW_SCROLLED`, `AccessibilityEvent.TYPE_VIEW_SELECTED`, `AccessibilityEvent.TYPE_VIEW_TARGETED_BY_SCROLL`, `AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED`, `AccessibilityEvent.TYPE_VIEW_TEXT_TRAVERSED_AT_MOVEMENT_GRANULARITY`, `AccessibilityEvent.TYPE_WINDOWS_CHANGED`, `AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED`"
+        errorLine1="        when (event.eventType) {"
+        errorLine2="        ~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/service/TextInjectorService.kt"
+            line="118"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="DiscouragedApi"
+        message="Use of this function is discouraged because resource reflection makes it harder to perform build optimizations and compile-time verification of code. It is much more efficient to retrieve resources by identifier (e.g. `R.foo.bar`) than by name (e.g. `getIdentifier(&quot;bar&quot;, &quot;foo&quot;, null)`)."
+        errorLine1="        val id = context.resources.getIdentifier(&quot;default_web_client_id&quot;, &quot;string&quot;, context.packageName)"
+        errorLine2="                                   ~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/data/access/FirebaseSignInClient.kt"
+            line="44"
+            column="36"/>
+    </issue>
+
+    <issue
+        id="MissingTranslation"
+        message="&quot;app_name&quot; is not translated in &quot;sv&quot; (Swedish)"
+        errorLine1="    &lt;string name=&quot;app_name&quot;>OPTIQON Voice&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/strings.xml"
+            line="3"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="MissingTranslation"
+        message="&quot;bubble_notification_channel&quot; is not translated in &quot;sv&quot; (Swedish)"
+        errorLine1="    &lt;string name=&quot;bubble_notification_channel&quot;>Dictation Service&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/strings.xml"
+            line="4"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="MissingTranslation"
+        message="&quot;bubble_notification_title&quot; is not translated in &quot;sv&quot; (Swedish)"
+        errorLine1="    &lt;string name=&quot;bubble_notification_title&quot;>OPTIQON Voice is running&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/strings.xml"
+            line="5"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="MissingTranslation"
+        message="&quot;bubble_notification_text&quot; is not translated in &quot;sv&quot; (Swedish)"
+        errorLine1="    &lt;string name=&quot;bubble_notification_text&quot;>Tap the bubble to dictate&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/strings.xml"
+            line="6"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="MissingTranslation"
+        message="&quot;action_stop&quot; is not translated in &quot;sv&quot; (Swedish)"
+        errorLine1="    &lt;string name=&quot;action_stop&quot;>Stop&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/strings.xml"
+            line="7"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="MissingTranslation"
+        message="&quot;accessibility_service_description&quot; is not translated in &quot;sv&quot; (Swedish)"
+        errorLine1="    &lt;string name=&quot;accessibility_service_description&quot;>OPTIQON Voice uses accessibility to insert dictated text into text fields in other apps. It can read the content of the focused field, which it uses to place the dictation at the cursor. Password fields and banking apps are blocked from injection.&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/strings.xml"
+            line="8"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="MissingTranslation"
+        message="&quot;clipboard_fallback_toast&quot; is not translated in &quot;sv&quot; (Swedish)"
+        errorLine1="    &lt;string name=&quot;clipboard_fallback_toast&quot;>Text copied to clipboard&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/strings.xml"
+            line="9"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="MissingTranslation"
+        message="&quot;no_accessibility_toast&quot; is not translated in &quot;sv&quot; (Swedish)"
+        errorLine1="    &lt;string name=&quot;no_accessibility_toast&quot;>Enable accessibility service for direct text insertion&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/strings.xml"
+            line="10"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="MissingTranslation"
+        message="&quot;unsupported_profile_title&quot; is not translated in &quot;sv&quot; (Swedish)"
+        errorLine1="    &lt;string name=&quot;unsupported_profile_title&quot;>Optiqon Voice cannot run in a work profile&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/strings.xml"
+            line="12"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="MissingTranslation"
+        message="&quot;unsupported_profile_body&quot; is not translated in &quot;sv&quot; (Swedish)"
+        errorLine1="    &lt;string name=&quot;unsupported_profile_body&quot;>Android starts a dictation service only for the profile you are currently in, and a work profile never is. Anything you dictate here would be handled by the personal copy of Optiqon Voice instead — its microphone, its key, its history — without saying so. Use Optiqon Voice in your personal profile.&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/strings.xml"
+            line="13"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="MissingTranslation"
+        message="&quot;feedback_title&quot; is not translated in &quot;sv&quot; (Swedish)"
+        errorLine1="    &lt;string name=&quot;feedback_title&quot;>Report a problem&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/strings.xml"
+            line="77"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="MissingTranslation"
+        message="&quot;feedback_body&quot; is not translated in &quot;sv&quot; (Swedish)"
+        errorLine1="    &lt;string name=&quot;feedback_body&quot;>Describe what happened. Nothing you have dictated and no audio is attached — only what you type here, the app version and the phone model. The message is saved on this device; sending it to Optiqon is not switched on yet.&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/strings.xml"
+            line="78"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="MissingTranslation"
+        message="&quot;feedback_message_label&quot; is not translated in &quot;sv&quot; (Swedish)"
+        errorLine1="    &lt;string name=&quot;feedback_message_label&quot;>What happened&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/strings.xml"
+            line="79"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="MissingTranslation"
+        message="&quot;feedback_message_hint&quot; is not translated in &quot;sv&quot; (Swedish)"
+        errorLine1="    &lt;string name=&quot;feedback_message_hint&quot;>What you did, what you expected, what happened instead.&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/strings.xml"
+            line="80"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="MissingTranslation"
+        message="&quot;feedback_contact_label&quot; is not translated in &quot;sv&quot; (Swedish)"
+        errorLine1="    &lt;string name=&quot;feedback_contact_label&quot;>How to reach you (optional)&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/strings.xml"
+            line="81"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="MissingTranslation"
+        message="&quot;feedback_contact_hint&quot; is not translated in &quot;sv&quot; (Swedish)"
+        errorLine1="    &lt;string name=&quot;feedback_contact_hint&quot;>Leave empty if you would rather not be contacted.&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/strings.xml"
+            line="82"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="MissingTranslation"
+        message="&quot;feedback_save&quot; is not translated in &quot;sv&quot; (Swedish)"
+        errorLine1="    &lt;string name=&quot;feedback_save&quot;>Save on this device&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/strings.xml"
+            line="83"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="MissingTranslation"
+        message="&quot;feedback_saved&quot; is not translated in &quot;sv&quot; (Swedish)"
+        errorLine1="    &lt;string name=&quot;feedback_saved&quot;>Saved on this device. Nothing has been uploaded.&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/strings.xml"
+            line="84"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="MissingTranslation"
+        message="&quot;feedback_empty&quot; is not translated in &quot;sv&quot; (Swedish)"
+        errorLine1="    &lt;string name=&quot;feedback_empty&quot;>Write something first.&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/strings.xml"
+            line="85"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="MissingTranslation"
+        message="&quot;feedback_too_long&quot; is not translated in &quot;sv&quot; (Swedish)"
+        errorLine1="    &lt;string name=&quot;feedback_too_long&quot;>That is longer than the box allows. Shorten it rather than let it be cut.&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/strings.xml"
+            line="86"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="MissingTranslation"
+        message="&quot;feedback_signed_out&quot; is not translated in &quot;sv&quot; (Swedish)"
+        errorLine1="    &lt;string name=&quot;feedback_signed_out&quot;>Sign in first, so the message is saved under your own account.&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/strings.xml"
+            line="87"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="DataExtractionRules"
+        message="The attribute `android:allowBackup` is deprecated from Android 12 and higher and may be removed in future versions. Consider adding the attribute `android:dataExtractionRules` specifying an `@xml` resource which configures cloud backups and device transfers on Android 12 and higher."
+        errorLine1="        android:allowBackup=&quot;false&quot;"
+        errorLine2="                             ~~~~~">
+        <location
+            file="$HOME/Projects/optiqon-voice/app/src/main/AndroidManifest.xml"
+            line="18"
+            column="30"/>
+    </issue>
+
+    <issue
+        id="DrawAllocation"
+        message="Avoid object allocations during draw/layout operations (preallocate and reuse instead)"
+        errorLine1="                val rect = RectF(cx - baseRadius * 0.52f, cy - baseRadius * 0.52f, cx + baseRadius * 0.52f, cy + baseRadius * 0.52f)"
+        errorLine2="                           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/service/BubbleView.kt"
+            line="110"
+            column="28"/>
+    </issue>
+
+    <issue
+        id="DrawAllocation"
+        message="Avoid object allocations during draw/layout operations (preallocate and reuse instead)"
+        errorLine1="        val scaled = RectF("
+        errorLine2="                     ^">
+        <location
+            file="src/main/java/se/optiqon/voice/service/FanMenuView.kt"
+            line="94"
+            column="22"/>
+    </issue>
+
+    <issue
+        id="DrawAllocation"
+        message="Avoid object allocations during draw/layout operations (preallocate and reuse instead)"
+        errorLine1="            val rect = RectF(left, barRect.top, left + segmentWidth, barRect.bottom)"
+        errorLine2="                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/service/FanMenuView.kt"
+            line="110"
+            column="24"/>
+    </issue>
+
+    <issue
+        id="DrawAllocation"
+        message="Avoid object allocations during draw/layout operations (preallocate and reuse instead)"
+        errorLine1="        drawClose(canvas, RectF(barRect.right - closeWidth, barRect.top, barRect.right, barRect.bottom))"
+        errorLine2="                          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/service/FanMenuView.kt"
+            line="119"
+            column="27"/>
+    </issue>
+
+    <issue
+        id="ObsoleteSdkInt"
+        message="Unnecessary; SDK_INT is never &lt; 28"
+        errorLine1="        if (Build.VERSION.SDK_INT &lt; Build.VERSION_CODES.P) return listOf(&quot;signing_api=unavailable_below_28&quot;)"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/debug/java/se/optiqon/voice/debug/AndroidSyntheticSink.kt"
+            line="148"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="ObsoleteSdkInt"
+        message="Unnecessary; SDK_INT is always >= 28"
+        errorLine1="        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/service/BubbleService.kt"
+            line="1105"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="ObsoleteSdkInt"
+        message="Unnecessary; SDK_INT is always >= 28"
+        errorLine1="        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/service/BubbleService.kt"
+            line="1124"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="ObsoleteSdkInt"
+        message="This folder configuration (`v26`) is unnecessary; `minSdkVersion` is 28. Merge all the resources in this folder into `mipmap-anydpi`.">
+        <location
+            file="src/main/res/mipmap-anydpi-v26"/>
+    </issue>
+
+    <issue
+        id="AutoboxingStateCreation"
+        message="Prefer `mutableFloatStateOf` instead of `mutableStateOf`"
+        errorLine1="        mutableStateOf(preferences.silenceThresholdMs.toFloat())"
+        errorLine2="        ~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/ui/settings/SettingsScreen.kt"
+            line="627"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.string.no_accessibility_toast` appears to be unused"
+        errorLine1="    &lt;string name=&quot;no_accessibility_toast&quot;>Enable accessibility service for direct text insertion&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/strings.xml"
+            line="10"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="IconLauncherShape"
+        message="Launcher icons should not fill every pixel of their square region; see the design guide for details">
+        <location
+            file="src/main/res/mipmap-mdpi/ic_launcher.png"/>
+    </issue>
+
+    <issue
+        id="ViewConstructor"
+        message="Custom view `FanMenuView` is missing constructor used by tools: `(Context)` or `(Context,AttributeSet)` or `(Context,AttributeSet,int)`"
+        errorLine1="class FanMenuView("
+        errorLine2="      ~~~~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/service/FanMenuView.kt"
+            line="19"
+            column="7"/>
+    </issue>
+
+    <issue
+        id="ClickableViewAccessibility"
+        message="`onTouch` lambda should call `View#performClick` when a click is detected"
+        errorLine1="        bubbleView?.setOnTouchListener { _, event ->"
+        errorLine2="                                       ^">
+        <location
+            file="src/main/java/se/optiqon/voice/service/BubbleService.kt"
+            line="409"
+            column="40"/>
+    </issue>
+
+    <issue
+        id="ClickableViewAccessibility"
+        message="Custom view `FanMenuView` overrides `onTouchEvent` but not `performClick`"
+        errorLine1="    override fun onTouchEvent(event: MotionEvent): Boolean {"
+        errorLine2="                 ~~~~~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/service/FanMenuView.kt"
+            line="122"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="ConstantLocale"
+        message="Assigning `Locale.getDefault()` to a final static field is suspicious; this code will not work correctly if the user changes locale while the app is running"
+        errorLine1="private val timeFormat = DateTimeFormatter.ofPattern(&quot;HH:mm&quot;, Locale.getDefault())"
+        errorLine2="                                                              ~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/ui/history/HistoryScreen.kt"
+            line="260"
+            column="63"/>
+    </issue>
+
+    <issue
+        id="ConstantLocale"
+        message="Assigning `Locale.getDefault()` to a final static field is suspicious; this code will not work correctly if the user changes locale while the app is running"
+        errorLine1="private val timeFormat = DateTimeFormatter.ofPattern(&quot;HH:mm&quot;, Locale.getDefault())"
+        errorLine2="                                                              ~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/se/optiqon/voice/ui/home/HomeScreen.kt"
+            line="539"
+            column="63"/>
+    </issue>
+
+</issues>

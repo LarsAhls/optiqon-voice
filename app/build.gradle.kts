@@ -178,6 +178,11 @@ android {
 
     lint {
         checkReleaseBuilds = false
+        // Lint has been configured and never invoked since this project started, so it starts
+        // from a baseline: every finding that exists today is recorded and silenced, and only
+        // what arrives after this commit is reported. Delete lint-baseline.xml and re-run to
+        // see the debt; shrinking it is separate work from not adding to it.
+        baseline = file("lint-baseline.xml")
     }
 
     composeCompiler {
@@ -245,6 +250,14 @@ tasks.withType<Test>().configureEach {
     // never ran.
     inputs.dir(layout.projectDirectory.dir("src/main/java"))
         .withPropertyName("mainSourcesAsData")
+    // ManifestContractTest reads the manifest and the accessibility configuration as text. They
+    // do reach the test JVM a second way -- merged into the resources -- but that route is a
+    // transitive one through another task's output, and both false-green defects this build has
+    // recorded were a guard reading a file Gradle did not know it read. Say it directly instead.
+    inputs.file(layout.projectDirectory.file("src/main/AndroidManifest.xml"))
+        .withPropertyName("manifestAsData")
+    inputs.dir(layout.projectDirectory.dir("src/main/res/xml"))
+        .withPropertyName("resXmlAsData")
     testLogging {
         showStandardStreams = true
         events("passed", "skipped", "failed")
