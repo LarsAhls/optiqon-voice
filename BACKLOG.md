@@ -48,6 +48,55 @@ report of 2026-09-10, which turned out to be airplane mode and not this — whic
 left out of that fix rather than folded into it. Trigger: the next mission that touches the
 account screens, or the first report of sign-in reusing an account the user did not pick.
 
+### Open — an approved account with unfinished onboarding has no way out
+
+Found on 2026-09-11 while closing G3 step 2, on the device, by walking into it.
+
+An account that is **approved** but has not finished onboarding, on a storage root with no
+stored ASR key, can go neither forward nor back:
+
+- Forward is closed because `OnboardingViewModel.canLeaveConnectStep` requires
+  `Verified`, `Restored` or `VerifiedWithoutCleanup`, and `canVerify` requires a non-blank
+  key. A user without the key cannot even attempt the verification that would release the step.
+- Back is closed because `AccountScreen`'s approved branch renders heading and body only —
+  `SignOutAction` exists on the pending and revoked branches, not this one. Sign-out otherwise
+  lives in Settings, which sits behind `MAIN`, which sits behind `onboardingComplete`.
+- Restarting the app does not help: `RootViewModel` maps `onboardingComplete=false` back to
+  `ONBOARDING`, and the account step is where it lands.
+
+The only exit left is uninstall. This is reachable by a real user, not just by a test: any
+approved account whose key verification fails, or who signs in on a second account and so gets
+a fresh empty root, is in it. Note that the trap is a consequence of storage isolation working
+as designed (`DeviceDataOwner.rootFor` allocates a new empty root per uid, and
+`SecurePreferencesStore` opens a per-root file), so the fix belongs in the UI, not in the
+isolation.
+
+Worked around during G3 by typing the key and leaving through "Finish later", which is exactly
+the path a user without the key does not have.
+
+Trigger: before G4, or the next mission that touches the account or onboarding screens.
+Cheapest sufficient fix is probably a sign-out affordance on the approved branch of
+`AccountScreen` — the state where the user is furthest from any other exit.
+
+### Open — Gate question: should a typed API key survive a sign-out during testing?
+
+Asked by Lars on 2026-09-11: re-entering the ASR key on every account switch costs real time
+while the app is still only being tested.
+
+Today it does not survive, and that is deliberate: `SecurePreferencesStore` opens
+`storageRoot.securePreferencesName`, so the keys one account typed are **absent from the file
+the next account opens**, not merely hidden. `StorageRoot`'s own doc states the intent — two
+roots are separate the way two installs are separate. G3 step 0b and the isolation rows rest on
+that property.
+
+So this is a Gate question, not a task. If it is ever implemented it must be **build-variant
+gated to debug**, and it must not be able to leak into a release build, because a shared key
+store across accounts is precisely the thing the isolation evidence says does not exist. A
+debug-only convenience that weakens the release invariant by accident would invalidate the G3
+evidence retroactively.
+
+Deferred. Not started, and not to be started without an explicit decision.
+
 ### Repo migration note
 
 If OPTIQON Voice is moved into a new `LarsAhls/optiqon-voice` repository instead of renaming
