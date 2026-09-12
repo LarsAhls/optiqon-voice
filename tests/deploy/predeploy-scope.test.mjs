@@ -13,6 +13,12 @@
 // deploy/index.js pushes one predeploy hook per *selected* target name. So the scope assertions
 // below are made where the decision is really taken, and the hook-fires assertions are made
 // against the hook itself.
+//
+// No `firebase deploy` command path -- with or without `--dry-run` -- takes part in verifying
+// this repository. That is not a preference to be re-litigated by a later session that finds
+// a CLI run more convincing: the premise that `--dry-run` is provider-free has been falsified
+// against production, and the CLI offers no mode that runs predeploy and stops there. The
+// network trap below makes the rule structural rather than a matter of discipline.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,6 +28,37 @@ import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+// ---------------------------------------------------------------- the network trap
+//
+// Armed before firebase-tools is loaded, so nothing this file reaches can open a socket. The
+// point is not to catch a mistake I expect to make; it is that "this proof cannot touch the
+// provider" should be enforced by the file rather than asserted in its comments. If a future
+// change here starts down a code path that resolves a name or opens a connection -- a prepare
+// phase, an API enable, a token refresh -- the run dies with SENTINEL instead of succeeding
+// quietly against production.
+const SENTINEL = 'predeploy-scope: network access is forbidden in this test';
+const forbid = () => {
+  throw new Error(SENTINEL);
+};
+
+const net = require('node:net');
+const tls = require('node:tls');
+const http = require('node:http');
+const https = require('node:https');
+const dns = require('node:dns');
+
+net.Socket.prototype.connect = forbid;
+net.connect = forbid;
+net.createConnection = forbid;
+tls.connect = forbid;
+http.request = forbid;
+http.get = forbid;
+https.request = forbid;
+https.get = forbid;
+dns.lookup = forbid;
+dns.promises.lookup = forbid;
+globalThis.fetch = forbid;
 
 const { lifecycleHooks } = require('firebase-tools/lib/deploy/lifecycleHooks');
 const { filterTargets } = require('firebase-tools/lib/filterTargets');
@@ -74,4 +111,13 @@ test('the storage hook refuses when the allow variable is absent', async () => {
     lifecycleHooks('storage', 'predeploy')({}, options),
     /storage predeploy error/,
   );
+});
+
+// The trap is only worth having if it is armed. Prove it rather than trusting the assignments
+// above -- a future node release that makes one of these properties read-only would otherwise
+// leave a silently disarmed trap behind, and every test in this file would still be green.
+test('the network trap is armed', () => {
+  assert.throws(() => https.request('https://firebasestorage.googleapis.com/'), new RegExp(SENTINEL));
+  assert.throws(() => net.connect(443, 'firebasestorage.googleapis.com'), new RegExp(SENTINEL));
+  assert.throws(() => globalThis.fetch('https://firebasestorage.googleapis.com/'), new RegExp(SENTINEL));
 });

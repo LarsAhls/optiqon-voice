@@ -42,6 +42,11 @@ test('refuses when OPTIQON_ALLOW_DEPLOY is absent', () => {
   const r = run({ GCLOUD_PROJECT: PROD });
   assert.equal(r.status, 2);
   assert.match(r.stderr, /OPTIQON_ALLOW_DEPLOY does not name 'storage'/);
+  // A refusal that does not say what to type instead is a refusal the operator works around.
+  assert.match(
+    r.stderr,
+    /OPTIQON_ALLOW_DEPLOY=storage firebase deploy --only storage --project optiqon-voice-47498/,
+  );
 });
 
 test('refuses when OPTIQON_ALLOW_DEPLOY names another target', () => {
