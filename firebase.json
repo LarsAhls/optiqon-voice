@@ -2,6 +2,12 @@
   "firestore": {
     "rules": "firestore.rules"
   },
+  "storage": {
+    "rules": "storage.rules",
+    "predeploy": [
+      "node scripts/deploy/storage-guard.mjs"
+    ]
+  },
   "hosting": {
     "public": "public",
     "ignore": [

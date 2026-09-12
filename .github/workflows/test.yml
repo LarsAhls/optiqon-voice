@@ -123,6 +123,12 @@ jobs:
       - name: Install rules tooling
         run: npm ci
 
+      # No emulator: the deploy guard is a plain process whose exit code is the whole contract.
+      # It rides in this job because it is the one job that already has Node and the dev
+      # dependencies installed.
+      - name: Run the Storage deploy-guard regression tests
+        run: npm run test:deploy-guard
+
       - name: Run Firestore rules and bootstrap tests against the emulator
         run: npm run test:rules
 

@@ -1,0 +1,13 @@
+rules_version = '2';
+
+// EMERGENCY CONTAINMENT ONLY -- Mission D Fas 5.
+// Published only if the newly created default bucket comes up with anything other than
+// deny-all rules. Denies every read and every write, for every principal, on every path.
+// Not part of normal progression: publishing this file stops the Mission.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
