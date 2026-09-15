@@ -1,0 +1,6 @@
+{
+  "_comment": "F-a deploy config for the ephemeral verification project optiqon-rules-verify-20260911 ONLY. Kept out of firebase.json for the same reason firebase.spike.json is: adding a \"storage\" key to the repository's firebase.json would make an ordinary `firebase deploy` capable of publishing a storage rules file. Reaching this file requires naming it with --config AND naming the project with --project, so no default-project deploy can touch it.",
+  "storage": {
+    "rules": "storage.verify.rules"
+  }
+}
