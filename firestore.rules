@@ -15,6 +15,14 @@ rules_version = '2';
 // ordinary `firebase deploy --only firestore:rules` cannot reach for the future file by
 // accident. Opening a future path is an edit to this file, which is a reviewable event.
 //
+// FS-1 (Feedback Storage) opens the feedback-case paths: cases, the owner's own messages on
+// them, attachment metadata, upload reservations and the upload quota. They are ported from
+// `firestore.future.rules` with the FS-1 deltas — no content fingerprint anywhere, at most 3
+// screenshots per message and 10 active per case, and a one-way tombstone that the Storage
+// rules read. REPO RUNS AHEAD OF PRODUCTION from this point: the live ruleset is still the
+// Mission 1 one, and `scripts/deploy/firestore-guard.mjs` refuses any Firestore deploy that
+// was not explicitly allowed. Publishing this file is a provider Gate, not a merge.
+//
 // One boundary is unchanged from F1 and worth restating: these rules are the security
 // boundary. The device-side access gate is a product boundary with a grace period; this has
 // none. A revoked account loses cloud access at the next request, not at the next check-in.
@@ -219,38 +227,387 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // ------------------------------------------------- not yet in the product
+    // ------------------------------------------------- feedback cases (FS-1)
     //
-    // Every path below belongs to a feature Mission 1 does not ship. They are written out
-    // rather than left to the implicit default so that the closure is visible in review and
-    // provable in the emulator suite — `m1.test.mjs` asserts each one denies an approved
-    // admin, which is the strongest caller there is.
+    // A case is one piece of feedback. Its owner writes the opening text and, later, messages
+    // on it; an admin reads it and answers. Screenshots hang off the case as attachment
+    // metadata here and as bytes in Cloud Storage, and `storage.rules` reads exactly two
+    // documents per request: the attachment below and one users/ document. Nothing in this
+    // section may make a Storage decision depend on a third.
     //
-    // `deletionRequests` is closed too, and that is safe rather than a gap: in Mission 1 the
-    // revoked screen carries support@optiqon.se and opens the device's own mail composer.
-    // The app transmits nothing itself, so a revoked account's route to request deletion or
-    // reach support is email, which no Firestore rule can take away. Opening a write path
-    // here would add an obligation nobody is on the other end of yet.
+    // Counting, which the client cannot be trusted with:
+    //   * `activeAttachmentCount` on the case — screenshots that are not tombstoned, <= 10.
+    //     +1 in the same commit as an attachment is created, -1 in the same commit as one is
+    //     tombstoned. The attachment id each movement is spent on is named in
+    //     `attachmentFor`, the same device as `seatFor` on the seat counter: without it one
+    //     +1 could cover two attachments, or a -1 could be taken with nothing tombstoned.
+    //   * `attachmentCount` on the case — screenshots sent with the opening text, <= 3,
+    //     monotonic. On a message event the same field counts that message's screenshots.
+    //
+    // No content fingerprint is stored anywhere. An attachment document outlives its bytes as
+    // a tombstone, and a permanent hash of a deleted screenshot is content by another name.
+    // The F1 `sha256` existed for the R2 Worker to verify bytes against; there is no Worker.
+
+    function caseDoc(caseId) {
+      return /databases/$(database)/documents/cases/$(caseId);
+    }
+
+    function attDoc(caseId, aid) {
+      return /databases/$(database)/documents/cases/$(caseId)/attachments/$(aid);
+    }
+
+    function eventDoc(caseId, eventId) {
+      return /databases/$(database)/documents/cases/$(caseId)/events/$(eventId);
+    }
+
+    // See isApproved(): being signed in is not being let in. A revoked owner is not an owner.
+    function isCaseOwner(caseId) {
+      return isApproved() && get(caseDoc(caseId)).data.ownerUid == uid();
+    }
+
+    function isApprovedSelf(userId) {
+      return isApproved() && userId == uid();
+    }
+
+    function allowedTransition(from, to) {
+      return (from == 'Mottaget' && to in ['Under granskning', 'Parkerat', 'Inte planerat'])
+        || (from == 'Under granskning' && to in ['Planerat', 'Parkerat', 'Inte planerat'])
+        || (from == 'Planerat' && to in ['Pågår', 'Parkerat', 'Inte planerat'])
+        || (from == 'Pågår' && to in ['Levererat', 'Parkerat'])
+        || (from == 'Parkerat' && to in ['Under granskning', 'Planerat', 'Inte planerat'])
+        || (from == 'Inte planerat' && to in ['Under granskning']);
+    }
+
+    // Rules can bind who claimed delivery and when. They cannot judge whether the claim is
+    // true — the writing tool checks App Distribution first. See
+    // docs/BACKEND_OPEN_CONTRACTS.md.
+    function deliveryEvidence(e) {
+      return e.evidence.keys().hasAll(
+               ['releaseTag', 'versionCode', 'distributedAt', 'verifiedBy'])
+        && e.evidence.verifiedBy == uid()
+        && e.evidence.distributedAt <= request.time
+        && e.evidence.versionCode is int
+        && e.evidence.releaseTag is string
+        && e.evidence.releaseTag.size() > 0;
+    }
+
+    function statusEventMatches(caseId, eventId, from, to) {
+      let e = getAfter(eventDoc(caseId, eventId)).data;
+      return e.type == 'status_change'
+        && e.fromStatus == from
+        && e.toStatus == to
+        && e.actorUid == uid()
+        && e.createdAt == request.time
+        && (to != 'Levererat' || deliveryEvidence(e));
+    }
+
+    // One slot taken on the case, for exactly the attachment being created in this commit.
+    // The opening-text counter moves too when, and only when, the new attachment belongs to
+    // the opening text rather than to a message.
+    function caseSlotTaken(caseId, aid) {
+      let before = get(caseDoc(caseId)).data;
+      let after = getAfter(caseDoc(caseId)).data;
+      let a = getAfter(attDoc(caseId, aid)).data;
+      return after.attachmentFor == aid
+        && !exists(attDoc(caseId, aid))
+        && a.ownerUid == uid()
+        && after.activeAttachmentCount == before.activeAttachmentCount + 1
+        && after.activeAttachmentCount <= 10
+        && (a.messageId == null
+              ? after.attachmentCount == before.attachmentCount + 1
+                  && after.attachmentCount <= 3
+              : after.attachmentCount == before.attachmentCount)
+        && after.lastActivityAt == request.time;
+    }
+
+    // One active slot returned, for exactly the attachment being tombstoned in this commit.
+    function caseSlotReleased(caseId, aid) {
+      let before = get(caseDoc(caseId)).data;
+      let after = getAfter(caseDoc(caseId)).data;
+      return after.attachmentFor == aid
+        && !('deleteRequestedAt' in get(attDoc(caseId, aid)).data)
+        && getAfter(attDoc(caseId, aid)).data.deleteRequestedAt == request.time
+        && after.activeAttachmentCount == before.activeAttachmentCount - 1
+        && after.activeAttachmentCount >= 0;
+    }
 
     match /cases/{caseId} {
-      allow read, write: if false;
+      // A list query must be constrained to ownerUid == the caller, or it is refused whole.
+      allow get, list: if (isApproved() && resource.data.ownerUid == uid()) || isReader();
+
+      allow create: if isApproved()
+        && request.resource.data.keys().hasOnly(
+             ['ownerUid', 'title', 'body', 'statusCache', 'lastStatusEventId',
+              'attachmentCount', 'activeAttachmentCount', 'createdAt', 'updatedAt',
+              'lastActivityAt'])
+        && request.resource.data.ownerUid == uid()
+        && request.resource.data.statusCache == 'Mottaget'
+        && request.resource.data.lastStatusEventId == null
+        && request.resource.data.attachmentCount == 0
+        && request.resource.data.activeAttachmentCount == 0
+        && request.resource.data.title is string
+        && request.resource.data.title.size() > 0
+        && request.resource.data.title.size() <= 200
+        && request.resource.data.body is string
+        && request.resource.data.body.size() <= 20000
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.lastActivityAt == request.time;
+
+      // The owner moves the attachment counters, and only in step with an attachment
+      // created or tombstoned in the same commit. A closed case takes no new screenshots,
+      // but its owner can still take one down.
+      allow update: if isApproved()
+        && resource.data.ownerUid == uid()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+             ['activeAttachmentCount', 'attachmentCount', 'attachmentFor', 'lastActivityAt'])
+        && request.resource.data.attachmentFor is string
+        && (
+             (!('closedAt' in resource.data)
+               && caseSlotTaken(caseId, request.resource.data.attachmentFor))
+             ||
+             (request.resource.data.lastActivityAt == resource.data.lastActivityAt
+               && request.resource.data.attachmentCount == resource.data.attachmentCount
+               && caseSlotReleased(caseId, request.resource.data.attachmentFor))
+           );
+
+      // A new message marks the case active. Nothing else about the case moves with it.
+      allow update: if isApproved()
+        && resource.data.ownerUid == uid()
+        && !('closedAt' in resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastActivityAt'])
+        && request.resource.data.lastActivityAt == request.time;
+
+      // A writer may take a screenshot down too, and the count follows it the same way.
+      allow update: if isWriter()
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['activeAttachmentCount', 'attachmentFor'])
+        && request.resource.data.attachmentFor is string
+        && caseSlotReleased(caseId, request.resource.data.attachmentFor);
+
+      // A status change is only ever half of a commit; the other half is its event.
+      allow update: if isWriter()
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['statusCache', 'lastStatusEventId', 'updatedAt'])
+        && request.resource.data.updatedAt == request.time
+        && allowedTransition(resource.data.statusCache, request.resource.data.statusCache)
+        && statusEventMatches(caseId, request.resource.data.lastStatusEventId,
+                              resource.data.statusCache, request.resource.data.statusCache);
+
+      // Closing is the writer's decision, one way, and it starts the closed-case retention
+      // clock. The owner cannot close, reopen or backdate a case.
+      allow update: if isWriter()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['closedAt'])
+        && !('closedAt' in resource.data)
+        && request.resource.data.closedAt == request.time;
+
+      allow delete: if false;
+    }
+
+    // ------------------------------------------------------------------ events
+
+    function caseAfterMatches(caseId, eventId, e) {
+      let c = getAfter(caseDoc(caseId)).data;
+      return c.lastStatusEventId == eventId
+        && c.statusCache == e.toStatus
+        && c.updatedAt == request.time;
     }
 
     match /cases/{caseId}/events/{eventId} {
-      allow read, write: if false;
+      // Internal notes and draft personal replies stay invisible to the case owner. An
+      // unconstrained query would return a denied document and is rejected in full.
+      allow get, list: if isReader()
+        || (isCaseOwner(caseId) && resource.data.visibility == 'public');
+
+      // The owner's own message: public, attributed, and fixed in its content once written.
+      // It starts with no screenshots and marks the case active in the same commit.
+      allow create: if isCaseOwner(caseId)
+        && !('closedAt' in get(caseDoc(caseId)).data)
+        && request.resource.data.keys().hasOnly(
+             ['type', 'visibility', 'actorUid', 'body', 'attachmentCount', 'createdAt'])
+        && request.resource.data.type == 'message'
+        && request.resource.data.visibility == 'public'
+        && request.resource.data.actorUid == uid()
+        && request.resource.data.body is string
+        && request.resource.data.body.size() > 0
+        && request.resource.data.body.size() <= 20000
+        && request.resource.data.attachmentCount == 0
+        && request.resource.data.createdAt == request.time
+        && getAfter(caseDoc(caseId)).data.lastActivityAt == request.time;
+
+      allow create: if isWriter()
+        && request.resource.data.actorUid == uid()
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.visibility in ['public', 'internal']
+        && (request.resource.data.type != 'status_change'
+            || caseAfterMatches(caseId, eventId, request.resource.data));
+
+      // The one thing that moves on an event after it is written: the screenshot count of
+      // the owner's own message, +1 per screenshot, at most 3, in step with that
+      // screenshot's creation. Text, author and time are fixed. Every other event is
+      // append-only, including for the writer account.
+      allow update: if isCaseOwner(caseId)
+        && resource.data.type == 'message'
+        && resource.data.actorUid == uid()
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['attachmentCount', 'attachmentFor'])
+        && request.resource.data.attachmentCount == resource.data.attachmentCount + 1
+        && request.resource.data.attachmentCount <= 3
+        && request.resource.data.attachmentFor is string
+        && !exists(attDoc(caseId, request.resource.data.attachmentFor))
+        && getAfter(attDoc(caseId, request.resource.data.attachmentFor)).data.messageId
+             == eventId;
+
+      allow delete: if false;
+    }
+
+    // ------------------------------------------------------------- attachments
+
+    function reservationAfter(userId, aid) {
+      return getAfter(/databases/$(database)/documents/users/$(userId)/uploads/$(aid)).data;
+    }
+
+    function messageSlotTaken(caseId, messageId, aid) {
+      let before = get(eventDoc(caseId, messageId)).data;
+      let after = getAfter(eventDoc(caseId, messageId)).data;
+      return before.type == 'message'
+        && before.actorUid == uid()
+        && after.attachmentFor == aid
+        && after.attachmentCount == before.attachmentCount + 1;
     }
 
     match /cases/{caseId}/attachments/{aid} {
-      allow read, write: if false;
+      allow get, list: if isReader() || isCaseOwner(caseId);
+
+      // Metadata only. The bytes go to Cloud Storage afterwards, under
+      // case-attachments/{ownerUid}/{caseId}/{aid}, and storage.rules checks them against
+      // this document. `maxBytes` is copied from the reservation so that the Storage rule
+      // can read its ceiling here without paying for a third document.
+      allow create: if isCaseOwner(caseId)
+        && request.resource.data.keys().hasOnly(
+             ['ownerUid', 'caseId', 'messageId', 'maxBytes', 'createdAt'])
+        && request.resource.data.keys().hasAll(
+             ['ownerUid', 'caseId', 'messageId', 'maxBytes', 'createdAt'])
+        && request.resource.data.ownerUid == uid()
+        && request.resource.data.caseId == caseId
+        && request.resource.data.createdAt == request.time
+        && reservationAfter(uid(), aid).createdAt == request.time
+        && reservationAfter(uid(), aid).caseId == caseId
+        && request.resource.data.maxBytes == reservationAfter(uid(), aid).maxBytes
+        && getAfter(caseDoc(caseId)).data.attachmentFor == aid
+        && (request.resource.data.messageId == null
+            || (request.resource.data.messageId is string
+                && messageSlotTaken(caseId, request.resource.data.messageId, aid)));
+
+      // Delete intent is a one-way flag, set by the owner or by a writer, and it is the one
+      // deny flag every Storage read and write checks. Nobody deletes the document: it stays
+      // as a tombstone, so a spent attachment id can never be reused. The case gives the
+      // slot back in the same commit. Recording that the bytes are gone is the server's
+      // business, not a client's.
+      allow update: if (resource.data.ownerUid == uid() ? isApproved() : isWriter())
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['deleteRequestedAt'])
+        && !('deleteRequestedAt' in resource.data)
+        && request.resource.data.deleteRequestedAt == request.time
+        && getAfter(caseDoc(caseId)).data.attachmentFor == aid
+        && getAfter(caseDoc(caseId)).data.activeAttachmentCount
+             == get(caseDoc(caseId)).data.activeAttachmentCount - 1;
+
+      allow delete: if false;
     }
 
+    // -------------------------------------------------- reservations and quota
+
+    function quotaDoc(userId) {
+      return /databases/$(database)/documents/users/$(userId)/quota/attachments;
+    }
+
+    // The first reservation an account makes finds no quota document; it creates one at 1.
+    function quotaBound(userId, aid) {
+      let q = quotaDoc(userId);
+      return getAfter(q).data.lastUploadId == aid
+        && getAfter(q).data.count == (exists(q) ? get(q).data.count : 0) + 1;
+    }
+
+    // Immutable, create-only, one per screenshot. Never deleted, so a consumed attachment id
+    // is permanently spent — including after the attachment is taken down.
     match /users/{userId}/uploads/{aid} {
-      allow read, write: if false;
+      allow get: if isApprovedSelf(userId) || isReader();
+      allow list: if isReader();
+
+      allow create: if isApprovedSelf(userId)
+        && request.resource.data.keys().hasOnly(['caseId', 'maxBytes', 'createdAt'])
+        && request.resource.data.caseId is string
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.maxBytes is int
+        && request.resource.data.maxBytes > 0
+        && request.resource.data.maxBytes <= 2097152
+        && quotaBound(userId, aid);
+
+      allow update, delete: if false;
     }
 
-    match /users/{userId}/quota/{docId} {
-      allow read, write: if false;
+    function windowOk() {
+      return (request.resource.data.windowStart == resource.data.windowStart
+               && request.resource.data.windowCount == resource.data.windowCount + 1
+               && request.resource.data.windowCount <= 20)
+        || (resource.data.windowStart < request.time - duration.value(1, 'h')
+               && request.resource.data.windowStart == request.time
+               && request.resource.data.windowCount == 1);
     }
+
+    function quotaDelta(userId, reservationId) {
+      let r = reservationAfter(userId, reservationId);
+      return request.resource.data.count == resource.data.count + 1
+        && request.resource.data.count <= 50
+        && request.resource.data.bytes == resource.data.bytes + r.maxBytes
+        && request.resource.data.bytes <= 104857600
+        && r.createdAt == request.time
+        && windowOk();
+    }
+
+    match /users/{userId}/quota/attachments {
+      allow get: if isApprovedSelf(userId) || isReader();
+      allow delete: if false;
+
+      // F1 never let anyone create this document and nothing seeds it, so a newly approved
+      // account could never have attached anything. Its first reservation creates it at 1.
+      allow create: if isApprovedSelf(userId)
+        && request.resource.data.keys().hasOnly(
+             ['count', 'bytes', 'windowStart', 'windowCount', 'lastUploadId'])
+        && request.resource.data.count == 1
+        && request.resource.data.windowStart == request.time
+        && request.resource.data.windowCount == 1
+        && request.resource.data.lastUploadId is string
+        && reservationAfter(userId, request.resource.data.lastUploadId).createdAt
+             == request.time
+        && request.resource.data.bytes
+             == reservationAfter(userId, request.resource.data.lastUploadId).maxBytes;
+
+      allow update: if isApprovedSelf(userId)
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['count', 'bytes', 'windowStart', 'windowCount', 'lastUploadId'])
+        && quotaDelta(userId, request.resource.data.lastUploadId);
+
+      // An administrative reset genuinely lifts the lifetime cap for that user. It is
+      // audited, not prevented — see docs/BACKEND_OPEN_CONTRACTS.md.
+      allow update: if isWriter()
+        && request.resource.data.resetBy == uid()
+        && request.resource.data.resetAt == request.time;
+    }
+
+    // ------------------------------------------------- not yet in the product
+    //
+    // Every path below belongs to a feature that is not shipped. They are written out rather
+    // than left to the implicit default so that the closure is visible in review and provable
+    // in the emulator suite — `m1.test.mjs` asserts each one denies an approved admin, which
+    // is the strongest caller there is.
+    //
+    // `deletionRequests` is closed too, and that is safe rather than a gap: the revoked
+    // screen carries support@optiqon.se and opens the device's own mail composer. The app
+    // transmits nothing itself, so a revoked account's route to request deletion or reach
+    // support is email, which no Firestore rule can take away. Opening a write path here
+    // would add an obligation nobody is on the other end of yet.
 
     match /users/{userId}/sync/{docId} {
       allow read, write: if false;

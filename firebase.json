@@ -1,13 +1,19 @@
 {
   "firestore": {
-    "rules": "firestore.rules"
-  },
-  "storage": {
-    "rules": "storage.rules",
+    "rules": "firestore.rules",
     "predeploy": [
-      "node scripts/deploy/storage-guard.mjs"
+      "node scripts/deploy/firestore-guard.mjs"
     ]
   },
+  "storage": [
+    {
+      "target": "feedback",
+      "rules": "storage.rules",
+      "predeploy": [
+        "node scripts/deploy/storage-guard.mjs"
+      ]
+    }
+  ],
   "hosting": {
     "public": "public",
     "ignore": [
