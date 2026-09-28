@@ -22,6 +22,7 @@ import se.optiqon.voice.domain.feedback.FeedbackCase
 import se.optiqon.voice.domain.feedback.LegacyNote
 import se.optiqon.voice.domain.feedback.PreparedImage
 import se.optiqon.voice.domain.feedback.QueuedCase
+import se.optiqon.voice.domain.feedback.ShotState
 import se.optiqon.voice.testing.PrimeTypefaces
 import se.optiqon.voice.testing.captureBaseline
 import se.optiqon.voice.ui.theme.OptiqonVoiceTheme
@@ -128,7 +129,7 @@ class FeedbackScreenTest {
                 CaseEvent("e1", "message", "Vilken telefonmodell gäller det?", fromOwner = false, toStatus = null, createdAtMs = null),
                 CaseEvent("e2", "message", "Pixel 8, Android 15.", fromOwner = true, toStatus = null, createdAtMs = null)
             ),
-            shots = listOf(Shot("aid-1", messageId = null, pending = false, thumbnail = null))
+            shots = listOf(Shot("aid-1", messageId = null, state = ShotState.AVAILABLE, thumbnail = null))
         )
         composeRule.setContent {
             OptiqonVoiceTheme {
@@ -186,4 +187,50 @@ class FeedbackScreenTest {
         composeRule.onNodeWithText(string(R.string.feedback_discard_queued)).assertIsEnabled()
     }
 
+
+    @Test
+    fun `a refused upload is shown as failed, never as waiting`() {
+        val detail = CaseDetail(
+            caseId = "case-1",
+            case = remoteCase,
+            queued = null,
+            shots = listOf(Shot("aid-1", messageId = null, state = ShotState.UPLOAD_FAILED, thumbnail = null))
+        )
+        composeRule.setContent {
+            OptiqonVoiceTheme {
+                FeedbackDetailContent(
+                    state = FeedbackUiState(page = FeedbackPage.Detail("case-1"), remoteEnabled = true, approved = true, detail = detail),
+                    padding = padding,
+                    reply = "",
+                    onReply = {}, onPick = {}, onRemoveImage = {}, onSubmit = {}, onDeleteShot = {}, onDiscardQueued = {}
+                )
+            }
+        }
+        composeRule.onNodeWithText(string(R.string.feedback_shot_upload_failed)).assertIsDisplayed()
+        composeRule.onNodeWithText(string(R.string.feedback_shot_pending)).assertDoesNotExist()
+        // The one way out: remove it.
+        composeRule.onNodeWithText(string(R.string.feedback_delete_screenshot)).assertIsEnabled()
+    }
+
+    @Test
+    fun `a removal under way is not called done`() {
+        val detail = CaseDetail(
+            caseId = "case-1",
+            case = remoteCase,
+            queued = null,
+            shots = listOf(Shot("aid-1", messageId = null, state = ShotState.REMOVING, thumbnail = null))
+        )
+        composeRule.setContent {
+            OptiqonVoiceTheme {
+                FeedbackDetailContent(
+                    state = FeedbackUiState(page = FeedbackPage.Detail("case-1"), remoteEnabled = true, approved = true, detail = detail),
+                    padding = padding,
+                    reply = "",
+                    onReply = {}, onPick = {}, onRemoveImage = {}, onSubmit = {}, onDeleteShot = {}, onDiscardQueued = {}
+                )
+            }
+        }
+        composeRule.onNodeWithText(string(R.string.feedback_shot_removing)).assertIsDisplayed()
+        composeRule.onNodeWithText(string(R.string.feedback_notice_screenshot_removed)).assertDoesNotExist()
+    }
 }

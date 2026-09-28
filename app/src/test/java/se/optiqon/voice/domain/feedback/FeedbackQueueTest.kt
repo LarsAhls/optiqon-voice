@@ -26,6 +26,7 @@ class FeedbackQueueTest {
     private class FakeDao : OutboxDao {
         val rows = mutableListOf<OutboxEntry>()
         override suspend fun insert(entry: OutboxEntry) { rows += entry }
+        override suspend fun insertAll(entries: List<OutboxEntry>) { rows += entries }
         override suspend fun pendingFor(ownerUid: String) =
             rows.filter { it.ownerUid == ownerUid && it.state == OutboxState.PENDING }
         override fun observeUnsent(): Flow<List<OutboxEntry>> = flowOf(rows.toList())

@@ -51,6 +51,21 @@ class ScreenshotPreprocessor(
         return PrepareResult.Ready(PreparedImage(file = name, mime = outMime, bytes = bytes.size))
     }
 
+    /** The names of every copy in the account's attachments directory. */
+    fun present(uid: String): List<String> =
+        files.attachmentsDir(uid).listFiles()?.filter { it.isFile }?.map { it.name }.orEmpty()
+
+    /**
+     * Removes those of [orphans] written before [beforeMs]. The age check keeps a copy being
+     * prepared right now, for a draft the caller could not see yet, out of reach.
+     */
+    fun sweep(uid: String, orphans: List<String>, beforeMs: Long) {
+        val dir = files.attachmentsDir(uid)
+        orphans.map { File(dir, it) }
+            .filter { it.canonicalFile.parentFile == dir.canonicalFile && it.lastModified() < beforeMs }
+            .forEach { it.delete() }
+    }
+
     /** Removes a prepared copy that the user took back out before sending. */
     fun discard(uid: String, file: String) {
         val dir = files.attachmentsDir(uid)

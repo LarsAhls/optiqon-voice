@@ -116,7 +116,9 @@ class FirestoreCaseRemote(
     override suspend fun tombstoneAttachment(caseId: String, aid: String): RemoteResult = write {
         firestore.runTransaction { tx ->
             val a = tx.get(attachment(caseId, aid))
-            if (!a.exists()) return@runTransaction RemoteResult.Denied("No such screenshot.")
+            // Never committed: its upload was dropped before it left, and with the local copy
+            // gone nothing can commit it later. There is nothing to take down.
+            if (!a.exists()) return@runTransaction RemoteResult.Ok
             if (a.contains("deleteRequestedAt")) return@runTransaction RemoteResult.Ok
             val active = tx.get(case(caseId)).getLong("activeAttachmentCount") ?: 0L
             tx.update(attachment(caseId, aid), CaseDocuments.tombstone())

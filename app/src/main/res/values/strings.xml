@@ -110,6 +110,9 @@
     <string name="feedback_detail_closed">This report is closed. Start a new one if the problem comes back.</string>
     <string name="feedback_loading">Loading…</string>
     <string name="feedback_shot_pending">Waiting to upload</string>
+    <string name="feedback_shot_upload_failed">Could not be uploaded and will not be retried. Tap to remove it.</string>
+    <string name="feedback_shot_removing">Removal pending – not confirmed yet</string>
+    <string name="feedback_shot_remove_failed">Could not be removed. Tap to try again.</string>
     <string name="feedback_delete_screenshot">Delete screenshot</string>
     <string name="feedback_discard_queued">Delete before it is sent</string>
     <string name="feedback_empty">Write something first.</string>
@@ -122,6 +125,6 @@
     <string name="feedback_notice_image_unreadable">That image could not be read.</string>
     <string name="feedback_notice_not_approved">Your account is not approved, so nothing was queued.</string>
     <string name="feedback_notice_removed">Removed from this device.</string>
-    <string name="feedback_notice_screenshot_removed">Screenshot removed. Once the phone is online, nobody can open it any more.</string>
+    <string name="feedback_notice_screenshot_removed">Screenshot removed.</string>
     <string name="claim_empty_note">Starting empty leaves the existing data on the device, untouched and unread, and it can still be claimed later.</string>
 </resources>

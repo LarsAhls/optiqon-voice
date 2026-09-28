@@ -14,6 +14,10 @@ interface OutboxDao {
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insert(entry: OutboxEntry)
 
+    /** All or nothing: Room runs a list insert in one transaction. */
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertAll(entries: List<OutboxEntry>)
+
     /**
      * The only query the worker is allowed to use. Filtering by owner in SQL rather than in
      * Kotlin means a caller cannot forget to filter and pick up someone else's rows.

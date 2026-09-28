@@ -139,6 +139,7 @@ fun ListRow(
     subtitle: String? = null,
     onClick: (() -> Unit)? = null,
     enabled: Boolean = true,
+    subtitleColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
     leading: @Composable (RowScope.() -> Unit)? = null,
     trailing: @Composable (RowScope.() -> Unit)? = null
 ) {
@@ -167,7 +168,7 @@ fun ListRow(
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = subtitleColor,
                     overflow = TextOverflow.Ellipsis,
                     maxLines = 2
                 )

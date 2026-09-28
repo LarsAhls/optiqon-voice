@@ -73,16 +73,27 @@ class CaseComposer(
 
     /**
      * Takes one of the owner's screenshots down. An upload of it that has not left the device
-     * yet is dropped instead of sent, so the bytes never reach the bucket at all.
+     * yet — waiting or refused — is dropped instead of sent, so its bytes never leave from here
+     * on. An earlier removal of the same screenshot still queued is replaced, not doubled.
+     *
+     * A tombstone follows unless the case itself has not left the device: then nothing of the
+     * screenshot can be on the server, dropping the upload is the whole removal, and it needs no
+     * approval — it is the owner's own unsent picture on the owner's own phone. Otherwise the
+     * tombstone is queued even when the upload looked unsent, because that upload may be under
+     * way right now; the tombstone is what makes sure it cannot stay readable.
      */
     suspend fun deleteScreenshot(caseId: String, aid: String): ComposeOutcome {
         val uid = auth.currentUid ?: return ComposeOutcome.SignedOut
-        if (!approval.isApproved()) return ComposeOutcome.NotApproved
-        outbox.pendingFor(uid)
-            .filter { it.kind == CaseOutboxPayloads.KIND_UPLOAD }
-            .filter { (CaseOutboxPayloads.decode(it.kind, it.payload) as? CasePayload.Upload)?.aid == aid }
-            .forEach { outbox.discard(it.id) }
-        enqueue(uid, listOf(CasePayload.Tombstone(caseId, aid)))
+        val unsent = outbox.all()
+            .filter { it.ownerUid == uid && it.state != OutboxState.SENT && it.kind in CaseOutboxPayloads.KINDS }
+            .mapNotNull { row -> CaseOutboxPayloads.decode(row.kind, row.payload)?.let { row to it } }
+            .filter { (_, payload) -> payload.caseId == caseId }
+        val caseOnDevice = unsent.any { (_, payload) -> payload is CasePayload.CreateCase }
+        if (!caseOnDevice && !approval.isApproved()) return ComposeOutcome.NotApproved
+        unsent.filter { (_, payload) ->
+            (payload as? CasePayload.Upload)?.aid == aid || (payload as? CasePayload.Tombstone)?.aid == aid
+        }.forEach { (row, _) -> outbox.discard(row.id) }
+        if (!caseOnDevice) enqueue(uid, listOf(CasePayload.Tombstone(caseId, aid)))
         return ComposeOutcome.Queued(caseId)
     }
 
@@ -145,10 +156,14 @@ class CaseComposer(
     private fun upload(caseId: String, messageId: String?, image: PreparedImage) =
         CasePayload.Upload(caseId, messageId, newId(), image.file, image.mime, image.bytes)
 
+    /**
+     * All rows of one action in one transaction: a process that dies half-way leaves none of
+     * them, never a case without its screenshots' uploads or an upload without its case.
+     */
     private suspend fun enqueue(uid: String, payloads: List<CasePayload>) {
         val base = now()
-        payloads.forEachIndexed { i, payload ->
-            outbox.insert(
+        outbox.insertAll(
+            payloads.mapIndexed { i, payload ->
                 OutboxEntry(
                     id = newId(),
                     ownerUid = uid,
@@ -158,8 +173,8 @@ class CaseComposer(
                     createdAtMs = base + i,
                     state = OutboxState.PENDING
                 )
-            )
-        }
+            }
+        )
         scheduler.schedule()
     }
 

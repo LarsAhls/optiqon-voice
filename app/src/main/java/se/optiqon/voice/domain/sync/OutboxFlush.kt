@@ -15,6 +15,11 @@ import se.optiqon.voice.domain.feedback.FeedbackPayloads
  *   They leave the device only when their owner chooses to send them.
  * - Rows are sent oldest first. Once a row of a case fails, the rest of that case waits: a
  *   screenshot must not go ahead of the case or message it belongs to.
+ * - A screenshot removal goes first and is never held. It is only queued for a case that has
+ *   left the device, with the screenshot's own upload already dropped, so it waits for nothing —
+ *   and a stuck message of the same case must not keep a picture readable.
+ * - Each row is looked up again just before it is sent. A row taken back while the run was under
+ *   way — a screenshot removed before it left — is not sent from a stale list.
  * - If the account changes mid-run, the run stops.
  */
 class OutboxFlush(
@@ -34,14 +39,18 @@ class OutboxFlush(
 
         var retry = false
         val heldCases = mutableSetOf<String>()
-        for (entry in OutboxPolicy.flushable(outbox.pendingFor(uid), uid)) {
+        val queue = OutboxPolicy.flushable(outbox.pendingFor(uid), uid)
+            .sortedBy { if (it.kind == CaseOutboxPayloads.KIND_DELETE) 0 else 1 }
+        for (entry in queue) {
             if (entry.kind == FeedbackPayloads.KIND) continue
             if (auth.currentUid != uid) return Result.DONE
+            if (outbox.byId(entry.id)?.state != OutboxState.PENDING) continue
+            val removal = entry.kind == CaseOutboxPayloads.KIND_DELETE
 
             val caseId = if (entry.kind in CaseOutboxPayloads.KINDS) {
                 CaseOutboxPayloads.decode(entry.kind, entry.payload)?.caseId
             } else null
-            if (caseId != null && caseId in heldCases) continue
+            if (caseId != null && caseId in heldCases && !removal) continue
 
             when (val failure = sender.send(entry)) {
                 null -> outbox.updateState(entry.id, OutboxState.SENT, entry.attempts + 1, null)
@@ -49,7 +58,7 @@ class OutboxFlush(
                     val updated = OutboxPolicy.afterFailure(entry, failure)
                     outbox.updateState(entry.id, updated.state, updated.attempts, updated.lastError)
                     retry = retry || OutboxPolicy.shouldRetry(failure)
-                    caseId?.let { heldCases += it }
+                    if (!removal) caseId?.let { heldCases += it }
                 }
             }
         }

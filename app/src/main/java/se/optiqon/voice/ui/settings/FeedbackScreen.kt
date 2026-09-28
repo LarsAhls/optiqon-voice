@@ -45,6 +45,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import se.optiqon.voice.R
 import se.optiqon.voice.domain.feedback.CaseEvent
 import se.optiqon.voice.domain.feedback.FeedbackLimits
+import se.optiqon.voice.domain.feedback.ShotState
 import se.optiqon.voice.ui.common.EmptyStateCard
 import se.optiqon.voice.ui.common.GhostButton
 import se.optiqon.voice.ui.common.GroupCard
@@ -278,12 +279,16 @@ internal fun FeedbackDetailContent(
                 GroupCard {
                     detail.shots.forEachIndexed { i, shot ->
                         if (i > 0) HairlineDivider()
+                        val failed = shot.state == ShotState.UPLOAD_FAILED || shot.state == ShotState.REMOVE_FAILED
                         ListRow(
                             title = stringResource(R.string.feedback_delete_screenshot),
-                            subtitle = if (shot.pending) stringResource(R.string.feedback_shot_pending) else null,
+                            subtitle = shotStatus(shot.state)?.let { stringResource(it) },
+                            subtitleColor = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                             leading = { Thumbnail(shot.thumbnail) },
                             onClick = { onDeleteShot(shot.aid) },
-                            enabled = state.approved,
+                            // A case that never left the phone is the owner's own to tidy up,
+                            // approved or not; a removal already on its way needs no second tap.
+                            enabled = (state.approved || detail.case == null) && shot.state != ShotState.REMOVING,
                             trailing = { Icon(Icons.Default.Close, contentDescription = null) }
                         )
                     }
@@ -327,6 +332,15 @@ private fun Intro(state: FeedbackUiState) {
         BodyText(stringResource(R.string.feedback_body))
         if (!state.remoteEnabled) BodyText(stringResource(R.string.feedback_local_only))
     }
+}
+
+/** Nothing for a screenshot that is simply there; a refusal is never worded as waiting. */
+private fun shotStatus(state: ShotState): Int? = when (state) {
+    ShotState.AVAILABLE -> null
+    ShotState.UPLOADING -> R.string.feedback_shot_pending
+    ShotState.UPLOAD_FAILED -> R.string.feedback_shot_upload_failed
+    ShotState.REMOVING -> R.string.feedback_shot_removing
+    ShotState.REMOVE_FAILED -> R.string.feedback_shot_remove_failed
 }
 
 /** A confirmation gets the tick; a refusal is said as a problem. */

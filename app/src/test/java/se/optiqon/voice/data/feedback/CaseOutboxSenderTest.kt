@@ -203,7 +203,7 @@ class CaseOutboxSenderTest {
         remote.attachments["c1/a1"] = null
         val tomb = CasePayload.Tombstone("c1", "a1")
         assertNull(sender.send(entry(tomb)))
-        remote.scripted["tombstone"] = ArrayDeque(listOf(RemoteResult.Denied("no such screenshot")))
+        remote.scripted["tombstone"] = ArrayDeque(listOf(RemoteResult.Denied("not your case")))
         assertTrue(sender.send(entry(tomb)) is SendFailure.Permanent)
     }
 

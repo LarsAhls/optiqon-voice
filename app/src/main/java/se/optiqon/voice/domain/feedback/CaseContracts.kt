@@ -94,7 +94,10 @@ interface CaseRemote {
         maxBytes: Int
     ): RemoteResult
 
-    /** The one-way delete flag, and the slot given back. Idempotent. */
+    /**
+     * The one-way delete flag, and the slot given back. Idempotent: a screenshot already taken
+     * down, or never committed at all, is success.
+     */
     suspend fun tombstoneAttachment(caseId: String, aid: String): RemoteResult
 
     suspend fun listCases(uid: String): List<FeedbackCase>

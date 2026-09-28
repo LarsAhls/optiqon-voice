@@ -13,6 +13,18 @@ data class QueuedCase(
     val createdAtMs: Long
 )
 
+/**
+ * Where one screenshot of a case stands, as far as the device can truthfully say.
+ *
+ * A refusal is never shown as waiting: [UPLOAD_FAILED] and [REMOVE_FAILED] are rows the outbox
+ * has parked and will not try again on its own. A removal is [REMOVING] until the tombstone is
+ * confirmed written — only then does the screenshot leave the list.
+ */
+enum class ShotState { UPLOADING, UPLOAD_FAILED, AVAILABLE, REMOVING, REMOVE_FAILED }
+
+/** One screenshot of a case. [file] is the local copy's name while it is still on the device. */
+data class ShotStatus(val aid: String, val messageId: String?, val file: String?, val state: ShotState)
+
 /** A message saved by the earlier, text-only screen. It is only ever sent at the user's word. */
 data class LegacyNote(val id: String, val message: String, val createdAtMs: Long)
 
@@ -51,6 +63,56 @@ object LocalFeedback {
                     .getOrNull()
             }
             .sortedByDescending { it.createdAtMs }
+
+    /**
+     * Every screenshot of [caseId] still to be shown, and where each one stands.
+     *
+     * [rows] may include sent rows: a sent tombstone is the confirmation that the screenshot is
+     * gone, and so is [remote] reporting it deleted. Until one of the two, a removal is only
+     * pending. An upload still on the device outranks a remote document that says it exists,
+     * since the document is written before the bytes.
+     */
+    fun shots(rows: List<OutboxEntry>, uid: String, caseId: String, remote: List<CaseAttachment>): List<ShotStatus> {
+        val mine = rows.filter { it.ownerUid == uid && it.kind in CaseOutboxPayloads.KINDS }
+            .mapNotNull { row -> CaseOutboxPayloads.decode(row.kind, row.payload)?.let { row to it } }
+            .filter { (_, payload) -> payload.caseId == caseId }
+        val tombstones = mine.filter { it.second is CasePayload.Tombstone }
+            .groupBy({ (it.second as CasePayload.Tombstone).aid }, { it.first.state })
+        val uploads = mine.filter { (row, payload) -> payload is CasePayload.Upload && row.state != OutboxState.SENT }
+            .associate { (row, payload) -> (payload as CasePayload.Upload).aid to (row.state to payload) }
+
+        fun confirmedGone(aid: String) = tombstones[aid]?.contains(OutboxState.SENT) == true
+        fun removal(aid: String): ShotState? {
+            val states = tombstones[aid] ?: return null
+            return if (OutboxState.PENDING in states) ShotState.REMOVING else ShotState.REMOVE_FAILED
+        }
+        fun uploadState(aid: String): ShotState? = uploads[aid]?.first?.let {
+            if (it == OutboxState.BLOCKED) ShotState.UPLOAD_FAILED else ShotState.UPLOADING
+        }
+
+        val fromRemote = remote.filterNot { it.deleted || confirmedGone(it.id) }.map { a ->
+            ShotStatus(a.id, a.messageId, uploads[a.id]?.second?.file, removal(a.id) ?: uploadState(a.id) ?: ShotState.AVAILABLE)
+        }
+        val known = remote.map { it.id }.toSet()
+        val fromDevice = uploads.filterKeys { it !in known && !confirmedGone(it) }.map { (aid, entry) ->
+            val upload = entry.second
+            ShotStatus(aid, upload.messageId, upload.file, removal(aid) ?: uploadState(aid)!!)
+        }
+        return fromRemote + fromDevice
+    }
+
+    /**
+     * Screenshot copies in the account's attachments directory that nothing will ever send: no
+     * unsent upload names them. A copy prepared for a draft the process did not live to send
+     * ends up here.
+     */
+    fun orphanedFiles(rows: List<OutboxEntry>, uid: String, present: List<String>): List<String> {
+        val referenced = rows
+            .filter { it.ownerUid == uid && it.kind == CaseOutboxPayloads.KIND_UPLOAD && it.state != OutboxState.SENT }
+            .mapNotNull { (CaseOutboxPayloads.decode(it.kind, it.payload) as? CasePayload.Upload)?.file }
+            .toSet()
+        return present.filterNot { it in referenced }
+    }
 
     /** Screenshots of [caseId] still on their way up; shown with the case until they land. */
     fun pendingUploads(rows: List<OutboxEntry>, uid: String, caseId: String): List<CasePayload.Upload> =

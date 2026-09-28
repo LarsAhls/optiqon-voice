@@ -24,12 +24,14 @@ import se.optiqon.voice.data.storage.UserScopedStorage
 import se.optiqon.voice.domain.access.AuthGateway
 import se.optiqon.voice.domain.feedback.ApprovalCheck
 import se.optiqon.voice.domain.feedback.AttachmentStore
+import se.optiqon.voice.domain.feedback.CaseAttachment
 import se.optiqon.voice.domain.feedback.CaseComposer
 import se.optiqon.voice.domain.feedback.CaseRemote
 import se.optiqon.voice.domain.feedback.ComposeOutcome
 import se.optiqon.voice.domain.feedback.FeedbackConfig
 import se.optiqon.voice.domain.feedback.FeedbackLimits
 import se.optiqon.voice.domain.feedback.LocalFeedback
+import se.optiqon.voice.domain.feedback.ShotState
 import java.io.File
 import javax.inject.Inject
 
@@ -60,7 +62,15 @@ class FeedbackViewModel @Inject constructor(
 
     private var rows: List<OutboxEntry> = emptyList()
 
+    /** The open case and the attachments the server last reported for it. */
+    private var shotSource: Pair<String, List<CaseAttachment>>? = null
+    private val thumbnails = mutableMapOf<String, ImageBitmap?>()
+    /** Screenshots the user removed on this visit; their disappearance is announced. */
+    private val removals = mutableSetOf<String>()
+    private val startedAtMs = System.currentTimeMillis()
+
     init {
+        viewModelScope.launch { sweepOrphans() }
         viewModelScope.launch {
             val approved = approval.isApproved()
             _state.update { it.copy(approved = approved, signedIn = auth.currentUid != null) }
@@ -74,6 +84,7 @@ class FeedbackViewModel @Inject constructor(
                     if (uid == null) it.copy(queued = emptyList(), legacy = emptyList())
                     else it.copy(queued = LocalFeedback.queuedCases(unsent, uid), legacy = LocalFeedback.legacy(unsent, uid))
                 }
+                restate()
             }
         }
     }
@@ -94,6 +105,7 @@ class FeedbackViewModel @Inject constructor(
         val page = _state.value.page
         if (page is FeedbackPage.Compose || page is FeedbackPage.Detail) {
             clearDraft()
+            shotSource = null
             _state.update { it.copy(page = FeedbackPage.List, detail = null, notice = null) }
             refreshRemote()
         }
@@ -159,59 +171,98 @@ class FeedbackViewModel @Inject constructor(
     }
 
     fun open(caseId: String) {
-        val uid = auth.currentUid ?: return
+        auth.currentUid ?: return
         val case = _state.value.remoteCases.firstOrNull { it.id == caseId }
         val queued = _state.value.queued.firstOrNull { it.caseId == caseId }
+        shotSource = caseId to emptyList()
+        thumbnails.clear()
+        removals.clear()
         _state.update { it.copy(page = FeedbackPage.Detail(caseId), detail = CaseDetail(caseId, case, queued, loading = case != null)) }
         viewModelScope.launch {
-            val pending = withContext(Dispatchers.IO) {
-                LocalFeedback.pendingUploads(rows, uid, caseId).map {
-                    Shot(it.aid, it.messageId, pending = true, thumbnail = thumbnail(File(files.attachmentsDir(uid), it.file)))
-                }
-            }
             if (case == null) {
-                _state.update { s -> s.copy(detail = s.detail?.takeIf { it.caseId == caseId }?.copy(shots = pending)) }
+                restate()
                 return@launch
             }
             val events = runCatching { remote.events(caseId) }
             val attachments = runCatching { remote.attachments(caseId) }
-            val remoteShots = withContext(Dispatchers.IO) {
-                attachments.getOrDefault(emptyList())
-                    .filterNot { a -> a.deleted || pending.any { it.aid == a.id } }
-                    .map { a ->
-                        val bytes = store.getBytes(AttachmentStore.path(uid, caseId, a.id), FeedbackLimits.MAX_IMAGE_BYTES.toLong())
-                        Shot(a.id, a.messageId, pending = false, thumbnail = bytes?.let(::decode))
-                    }
-            }
+            if (shotSource?.first == caseId) shotSource = caseId to attachments.getOrDefault(emptyList())
             _state.update { s ->
                 s.copy(detail = s.detail?.takeIf { it.caseId == caseId }?.copy(
                     events = events.getOrDefault(emptyList()),
-                    shots = remoteShots + pending,
                     loading = false,
                     error = events.isFailure || attachments.isFailure
                 ))
             }
+            restate()
         }
     }
 
-    /** A tombstone on the queue; the bytes are the server's to remove. */
+    /**
+     * Takes a screenshot down. It stays in the list, marked as being removed, until the device
+     * knows the removal holds: the tombstone written, or — for a case that never left the phone
+     * — the upload dropped. Only then does it go, and only then is it called removed.
+     */
     fun deleteShot(aid: String) {
         val uid = auth.currentUid ?: return
         val caseId = _state.value.detail?.caseId ?: return
-        val localCopy = LocalFeedback.pendingUploads(rows, uid, caseId).firstOrNull { it.aid == aid }?.file
         viewModelScope.launch {
+            val localCopy = withContext(Dispatchers.IO) {
+                LocalFeedback.pendingUploads(outbox.all(), uid, caseId).firstOrNull { it.aid == aid }?.file
+            }
             val outcome = composer.deleteScreenshot(caseId, aid)
             if (outcome is ComposeOutcome.Queued) {
-                localCopy?.let { preprocessor.discard(uid, it) }
-                _state.update { s ->
-                    s.copy(
-                        notice = FeedbackNotice.ScreenshotRemoved,
-                        detail = s.detail?.copy(shots = s.detail.shots.filterNot { it.aid == aid })
-                    )
-                }
+                // The upload is gone from the queue, so nothing will send this copy any more.
+                localCopy?.let { withContext(Dispatchers.IO) { preprocessor.discard(uid, it) } }
+                removals += aid
+                _state.update { it.copy(notice = null) }
+                restate()
             } else {
                 _state.update { it.copy(notice = noticeFor(outcome)) }
             }
+        }
+    }
+
+    /** Recomputes the open case's screenshots from the whole queue, sent rows included. */
+    private suspend fun restate() {
+        val uid = auth.currentUid ?: return
+        val (caseId, attachments) = shotSource ?: return
+        val statuses = withContext(Dispatchers.IO) { LocalFeedback.shots(outbox.all(), uid, caseId, attachments) }
+        if (shotSource?.first != caseId) return
+        val missing = statuses.filter { it.aid !in thumbnails }
+        val loaded = withContext(Dispatchers.IO) {
+            missing.associate { shot ->
+                shot.aid to when {
+                    shot.file != null -> thumbnail(File(files.attachmentsDir(uid), shot.file))
+                    shot.state == ShotState.AVAILABLE ->
+                        store.getBytes(AttachmentStore.path(uid, caseId, shot.aid), FeedbackLimits.MAX_IMAGE_BYTES.toLong())?.let(::decode)
+                    else -> null
+                }
+            }
+        }
+        thumbnails.putAll(loaded)
+        val shown = statuses.map { it.aid }.toSet()
+        val gone = removals.filter { it !in shown }
+        removals -= gone.toSet()
+        _state.update { s ->
+            s.copy(
+                detail = s.detail?.takeIf { it.caseId == caseId }?.copy(
+                    shots = statuses.map { Shot(it.aid, it.messageId, it.state, thumbnails[it.aid]) }
+                ),
+                notice = if (gone.isNotEmpty()) FeedbackNotice.ScreenshotRemoved else s.notice
+            )
+        }
+    }
+
+    /**
+     * Copies a draft prepared before the process died are referenced by nothing and would stay
+     * on the device for good. Anything written since this screen opened is left alone: it may
+     * belong to a draft being put together right now.
+     */
+    private suspend fun sweepOrphans() {
+        val uid = auth.currentUid ?: return
+        withContext(Dispatchers.IO) {
+            val orphans = LocalFeedback.orphanedFiles(outbox.all(), uid, preprocessor.present(uid))
+            preprocessor.sweep(uid, orphans, startedAtMs)
         }
     }
 

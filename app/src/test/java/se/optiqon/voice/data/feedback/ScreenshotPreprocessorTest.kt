@@ -133,4 +133,19 @@ class ScreenshotPreprocessorTest {
         preprocessor.discard("uid-a", image.file)
         assertFalse(output(image.file).exists())
     }
+
+    @Test
+    fun `a sweep removes old orphans only, and only in the account's own directory`() {
+        val dir = files.attachmentsDir("uid-a")
+        val old = File(dir, "old.png").apply { writeBytes(byteArrayOf(1)); setLastModified(1_000L) }
+        val fresh = File(dir, "fresh.png").apply { writeBytes(byteArrayOf(1)); setLastModified(9_000L) }
+        val elsewhere = File(files.attachmentsDir("uid-b"), "keep.png").apply { writeBytes(byteArrayOf(1)); setLastModified(1_000L) }
+
+        assertEquals(setOf("old.png", "fresh.png"), preprocessor.present("uid-a").toSet())
+        preprocessor.sweep("uid-a", listOf("old.png", "fresh.png", "../../uid-b/attachments/keep.png"), beforeMs = 5_000L)
+
+        assertFalse(old.exists())
+        assertTrue("a copy newer than the sweep may belong to a draft being made", fresh.exists())
+        assertTrue(elsewhere.exists())
+    }
 }

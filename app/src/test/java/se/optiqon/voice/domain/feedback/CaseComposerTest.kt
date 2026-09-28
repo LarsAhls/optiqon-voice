@@ -102,18 +102,81 @@ class CaseComposerTest {
         assertEquals(message.messageId, upload.messageId)
     }
 
-    @Test
-    fun `taking a screenshot down before it left drops the upload and queues the tombstone`() = runTest {
-        composer.createCase("hej", listOf(image("a.png"), image("b.png")))
-        val uploads = decoded().filterIsInstance<CasePayload.Upload>()
-        val gone = uploads.first()
+    /** A case whose opening has reached the server, with its screenshot uploads still queued. */
+    private suspend fun sentCase(vararg names: String): List<CasePayload.Upload> {
+        composer.createCase("hej", names.map { image(it) })
+        outbox.updateState(outbox.rows.first().id, OutboxState.SENT, 1, null)
+        return decoded().filterIsInstance<CasePayload.Upload>()
+    }
 
-        composer.deleteScreenshot(gone.caseId, gone.aid)
+    @Test
+    fun `taking a screenshot down drops its upload, waiting or refused, and queues the tombstone`() = runTest {
+        val uploads = sentCase("a.png", "b.png", "c.png")
+        val (waiting, refused, kept) = uploads
+        outbox.updateState(outbox.rows[2].id, OutboxState.BLOCKED, 1, "no")
+
+        composer.deleteScreenshot(waiting.caseId, waiting.aid)
+        composer.deleteScreenshot(refused.caseId, refused.aid)
 
         val after = decoded()
-        assertTrue(after.none { it is CasePayload.Upload && it.aid == gone.aid })
-        assertTrue(after.any { it is CasePayload.Upload && it.aid == uploads.last().aid })
-        assertEquals(CasePayload.Tombstone(gone.caseId, gone.aid), after.last())
+        assertEquals(listOf(kept.aid), after.filterIsInstance<CasePayload.Upload>().map { it.aid })
+        assertEquals(
+            listOf(CasePayload.Tombstone(waiting.caseId, waiting.aid), CasePayload.Tombstone(refused.caseId, refused.aid)),
+            after.filterIsInstance<CasePayload.Tombstone>()
+        )
+    }
+
+    @Test
+    fun `a second removal of the same screenshot replaces the first`() = runTest {
+        val shot = sentCase("a.png").single()
+        composer.deleteScreenshot(shot.caseId, shot.aid)
+        outbox.updateState(outbox.rows.last().id, OutboxState.BLOCKED, 1, "offline too long")
+
+        composer.deleteScreenshot(shot.caseId, shot.aid)
+
+        val tombstones = outbox.rows.filter { it.kind == CaseOutboxPayloads.KIND_DELETE }
+        assertEquals(OutboxState.PENDING, tombstones.single().state)
+    }
+
+    @Test
+    fun `a screenshot of a case still on the device is dropped without a tombstone or approval`() = runTest {
+        val caseId = (composer.createCase("hej", listOf(image("a.png"), image("b.png"))) as ComposeOutcome.Queued).caseId
+        val (gone, kept) = decoded().filterIsInstance<CasePayload.Upload>()
+        approved = false
+
+        assertEquals(ComposeOutcome.Queued(caseId), composer.deleteScreenshot(caseId, gone.aid))
+
+        val after = decoded()
+        assertTrue(after.none { it is CasePayload.Tombstone })
+        assertEquals(listOf(kept.aid), after.filterIsInstance<CasePayload.Upload>().map { it.aid })
+    }
+
+    @Test
+    fun `a screenshot removed before it left is never uploaded`() = runTest {
+        val shot = sentCase("a.png").single()
+        composer.deleteScreenshot(shot.caseId, shot.aid)
+        val sent = mutableListOf<String>()
+        val flush = se.optiqon.voice.domain.sync.OutboxFlush(
+            outbox, auth, { true }, { entry -> sent += entry.kind; null }, remoteEnabled = true
+        )
+
+        flush.run()
+
+        assertEquals(listOf(CaseOutboxPayloads.KIND_DELETE), sent)
+    }
+
+    @Test
+    fun `an action that cannot be written whole leaves nothing behind`() = runTest {
+        val clash = CaseComposer(
+            outbox = outbox, auth = auth, approval = { true }, scheduler = { scheduled++ },
+            build = FeedbackBuildInfo("1.2.3", 34, "Pixel Test"), now = { 1_000L },
+            newId = { "same" }
+        )
+
+        runCatching { clash.createCase("hej", listOf(image("a.png"))) }
+
+        assertTrue(outbox.rows.isEmpty())
+        assertEquals(0, scheduled)
     }
 
     private suspend fun legacyRow(owner: String, id: String = "legacy-1") = OutboxEntry(

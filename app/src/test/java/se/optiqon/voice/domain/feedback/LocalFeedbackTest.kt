@@ -1,6 +1,7 @@
 package se.optiqon.voice.domain.feedback
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import se.optiqon.voice.data.db.entity.OutboxEntry
@@ -82,5 +83,68 @@ class LocalFeedbackTest {
         )
 
         assertEquals(listOf("a1", "a2"), LocalFeedback.pendingUploads(rows, "uid-a", "c1").map { it.aid })
+    }
+
+    private fun attachment(aid: String, deleted: Boolean = false) = CaseAttachment(aid, null, deleted, null)
+
+    private fun stateOf(rows: List<OutboxEntry>, aid: String, remote: List<CaseAttachment> = emptyList()) =
+        LocalFeedback.shots(rows, "uid-a", "c1", remote).singleOrNull { it.aid == aid }?.state
+
+    @Test
+    fun `a refused upload is shown as failed, never as waiting`() {
+        val rows = listOf(
+            row(upload("c1", "a1"), state = OutboxState.BLOCKED),
+            row(upload("c1", "a2"))
+        )
+
+        assertEquals(ShotState.UPLOAD_FAILED, stateOf(rows, "a1"))
+        assertEquals(ShotState.UPLOADING, stateOf(rows, "a2"))
+        // The document may already exist; the parked upload still outranks it.
+        assertEquals(ShotState.UPLOAD_FAILED, stateOf(rows, "a1", listOf(attachment("a1"))))
+    }
+
+    @Test
+    fun `a removal is pending until its tombstone is confirmed`() {
+        val remote = listOf(attachment("a1"))
+        val pending = listOf(row(CasePayload.Tombstone("c1", "a1")))
+        val refused = listOf(row(CasePayload.Tombstone("c1", "a1"), state = OutboxState.BLOCKED))
+        val confirmed = listOf(row(CasePayload.Tombstone("c1", "a1"), state = OutboxState.SENT))
+
+        assertEquals(ShotState.AVAILABLE, stateOf(emptyList(), "a1", remote))
+        assertEquals(ShotState.REMOVING, stateOf(pending, "a1", remote))
+        assertEquals(ShotState.REMOVE_FAILED, stateOf(refused, "a1", remote))
+        assertNull(stateOf(confirmed, "a1", remote))
+        assertNull(stateOf(emptyList(), "a1", listOf(attachment("a1", deleted = true))))
+        // A retried tombstone still pending beside a refused one is still under way.
+        assertEquals(ShotState.REMOVING, stateOf(refused + pending, "a1", remote))
+    }
+
+    @Test
+    fun `a screenshot only on the device is removing while its tombstone waits`() {
+        val rows = listOf(row(upload("c1", "a1")), row(CasePayload.Tombstone("c1", "a1")))
+        assertEquals(ShotState.REMOVING, stateOf(rows, "a1"))
+    }
+
+    @Test
+    fun `shots of another account or another case are not shown`() {
+        val rows = listOf(
+            row(upload("c1", "theirs"), owner = "uid-b"),
+            row(upload("c2", "other")),
+            row(CasePayload.Tombstone("c1", "x"), owner = "uid-b", state = OutboxState.SENT)
+        )
+        assertEquals(listOf("x"), LocalFeedback.shots(rows, "uid-a", "c1", listOf(attachment("x"))).map { it.aid })
+    }
+
+    @Test
+    fun `a copy no unsent upload names is an orphan`() {
+        val rows = listOf(
+            row(upload("c1", "queued")),
+            row(upload("c1", "parked"), state = OutboxState.BLOCKED),
+            row(upload("c1", "done"), state = OutboxState.SENT),
+            row(upload("c1", "theirs"), owner = "uid-b")
+        )
+        val present = listOf("queued.png", "parked.png", "done.png", "theirs.png", "draft.png")
+
+        assertEquals(listOf("done.png", "theirs.png", "draft.png"), LocalFeedback.orphanedFiles(rows, "uid-a", present))
     }
 }

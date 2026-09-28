@@ -8,6 +8,7 @@ import se.optiqon.voice.domain.feedback.FeedbackCase
 import se.optiqon.voice.domain.feedback.LegacyNote
 import se.optiqon.voice.domain.feedback.PreparedImage
 import se.optiqon.voice.domain.feedback.QueuedCase
+import se.optiqon.voice.domain.feedback.ShotState
 
 sealed interface FeedbackPage {
     data object List : FeedbackPage
@@ -18,8 +19,8 @@ sealed interface FeedbackPage {
 /** A screenshot picked for the message being written, already stripped and on disk. */
 data class DraftImage(val image: PreparedImage, val thumbnail: ImageBitmap?)
 
-/** A screenshot shown with a case: on its way up ([pending]) or already in the bucket. */
-data class Shot(val aid: String, val messageId: String?, val pending: Boolean, val thumbnail: ImageBitmap?)
+/** A screenshot shown with a case, and where it stands — see [ShotState]. */
+data class Shot(val aid: String, val messageId: String?, val state: ShotState, val thumbnail: ImageBitmap?)
 
 data class CaseDetail(
     val caseId: String,

@@ -113,6 +113,9 @@
     <string name="feedback_detail_closed">Rapporten är stängd. Skriv en ny om problemet kommer tillbaka.</string>
     <string name="feedback_loading">Hämtar…</string>
     <string name="feedback_shot_pending">Väntar på uppladdning</string>
+    <string name="feedback_shot_upload_failed">Kunde inte laddas upp och försöks inte igen. Tryck för att ta bort den.</string>
+    <string name="feedback_shot_removing">Borttagning väntar – inte bekräftad än</string>
+    <string name="feedback_shot_remove_failed">Kunde inte tas bort. Tryck för att försöka igen.</string>
     <string name="feedback_delete_screenshot">Ta bort skärmbild</string>
     <string name="feedback_discard_queued">Ta bort innan den skickas</string>
     <string name="feedback_empty">Skriv något först.</string>
@@ -125,5 +128,5 @@
     <string name="feedback_notice_image_unreadable">Bilden kunde inte läsas.</string>
     <string name="feedback_notice_not_approved">Ditt konto är inte godkänt, så inget köades.</string>
     <string name="feedback_notice_removed">Borttagen från enheten.</string>
-    <string name="feedback_notice_screenshot_removed">Skärmbilden är borttagen. När telefonen är uppkopplad kan ingen öppna den längre.</string>
+    <string name="feedback_notice_screenshot_removed">Skärmbilden är borttagen.</string>
 </resources>

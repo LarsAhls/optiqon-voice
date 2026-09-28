@@ -26,6 +26,13 @@ class MemoryOutboxDao : OutboxDao {
         table.value = rows + entry
     }
 
+    /** Like Room: one duplicate id and none of the list is written. */
+    override suspend fun insertAll(entries: List<OutboxEntry>) {
+        val ids = entries.map { it.id }
+        check(ids.toSet().size == ids.size && rows.none { it.id in ids }) { "duplicate id in $ids" }
+        table.value = rows + entries
+    }
+
     override suspend fun pendingFor(ownerUid: String) =
         rows.filter { it.ownerUid == ownerUid && it.state == OutboxState.PENDING }.sortedBy { it.createdAtMs }
 
@@ -112,7 +119,8 @@ class FakeCaseRemote : CaseRemote {
     override suspend fun tombstoneAttachment(caseId: String, aid: String): RemoteResult {
         calls += "tombstone:$aid"
         scriptedFor("tombstone")?.let { return it }
-        if ("$caseId/$aid" !in attachments) return RemoteResult.Denied("no such screenshot")
+        // Never committed: nothing to take down, as in FirestoreCaseRemote.
+        if ("$caseId/$aid" !in attachments) return RemoteResult.Ok
         tombstoned += "$caseId/$aid"
         return RemoteResult.Ok
     }

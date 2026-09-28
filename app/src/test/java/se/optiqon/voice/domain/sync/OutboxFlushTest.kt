@@ -1,5 +1,6 @@
 package se.optiqon.voice.domain.sync
 
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -122,5 +123,41 @@ class OutboxFlushTest {
 
         assertEquals(listOf("r1"), sent)
         assertEquals(OutboxState.PENDING, state("r2"))
+    }
+
+    @Test
+    fun `a removal goes first and a failing row of its case does not hold it`() = runTest {
+        row("message-1", CasePayload.Message("c1", "m1", "text"))
+        row("upload-1", CasePayload.Upload("c1", "m1", "a2", "a2.png", "image/png", 10))
+        row("tomb-1", CasePayload.Tombstone("c1", "a1"))
+        failures["message-1"] = SendFailure.Transient("offline")
+
+        flush().run()
+
+        assertEquals(listOf("tomb-1", "message-1"), sent)
+        assertEquals(OutboxState.SENT, state("tomb-1"))
+        assertEquals(OutboxState.PENDING, state("upload-1"))
+    }
+
+    @Test
+    fun `a failing removal does not hold the rest of its case`() = runTest {
+        row("tomb-1", CasePayload.Tombstone("c1", "a1"))
+        row("message-1", CasePayload.Message("c1", "m1", "text"))
+        failures["tomb-1"] = SendFailure.Transient("offline")
+
+        assertEquals(OutboxFlush.Result.RETRY, flush().run())
+        assertEquals(listOf("tomb-1", "message-1"), sent)
+        assertEquals(OutboxState.PENDING, state("tomb-1"))
+    }
+
+    @Test
+    fun `a row taken back during the run is not sent from the stale list`() = runTest {
+        row("message-1", CasePayload.Message("c1", "m1", "text"))
+        row("upload-1", CasePayload.Upload("c1", "m1", "a1", "a1.png", "image/png", 10))
+        onSend = { entry -> if (entry.id == "message-1") runBlocking { outbox.discard("upload-1") } }
+
+        flush().run()
+
+        assertEquals(listOf("message-1"), sent)
     }
 }
