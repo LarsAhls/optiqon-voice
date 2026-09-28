@@ -270,9 +270,9 @@ private fun SignedOut(
 /**
  * Contact information, and at most a mail composer the user opens themselves.
  *
- * Deliberately not wired to the feedback outbox: `OutboxSender` is a placeholder with no
- * transport behind it, so a "message sent" here would be a receipt for something that never
- * left the device. The app sends nothing, automatically or otherwise; the mail button hands the
+ * Deliberately not wired to the feedback outbox: this screen is shown to accounts that are not
+ * approved, and those cannot queue a report (see `CaseComposer`), so a "message sent" here would
+ * be a receipt for something that never left the device. The app sends nothing, automatically or otherwise; the mail button hands the
  * text to the user's own mail app, where they decide whether to send it.
  */
 @Composable

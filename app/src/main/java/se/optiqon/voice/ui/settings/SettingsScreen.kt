@@ -291,9 +291,9 @@ private fun SettingsMainScreen(
                     HairlineDivider()
                     ListRow("About Optiqon Voice", subtitle = "Version, GPLv3 and bundled font licences.", onClick = onAbout)
                     HairlineDivider()
-                    // Saved locally only — see FeedbackQueue. The subtitle says so rather than
-                    // implying a message goes anywhere.
-                    ListRow("Report a problem", subtitle = "Saved on this device; sending is not switched on yet.", onClick = onFeedback)
+                    // The feedback screen itself says whether this build sends anything; the subtitle
+                    // names what is there without promising delivery.
+                    ListRow("Report a problem", subtitle = "Your reports, replies and screenshots.", onClick = onFeedback)
                 }
             }
         }

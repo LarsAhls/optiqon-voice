@@ -148,4 +148,52 @@ class CaseComposerTest {
 
         assertEquals(listOf(other, mine), outbox.rows)
     }
+
+    @Test
+    fun `a legacy row is deleted only by its own account`() = runTest {
+        val other = legacyRow("uid-b", "legacy-b")
+        val mine = legacyRow("uid-a", "legacy-a")
+
+        assertEquals(false, composer.discardLegacy(other.id))
+        assertEquals(false, composer.discardLegacy("missing"))
+        assertEquals(true, composer.discardLegacy(mine.id))
+
+        assertEquals(listOf(other), outbox.rows)
+    }
+
+    @Test
+    fun `a legacy id never deletes a case row`() = runTest {
+        composer.createCase("hej", emptyList())
+        val create = outbox.rows.single()
+
+        assertEquals(false, composer.discardLegacy(create.id))
+        assertEquals(listOf(create), outbox.rows)
+    }
+
+    @Test
+    fun `a queued case is taken back whole and hands back its screenshot files, even when not approved`() = runTest {
+        val caseId = (composer.createCase("hej", listOf(image("a.png"), image("b.png"))) as ComposeOutcome.Queued).caseId
+        composer.createCase("en annan", listOf(image("c.png")))
+        approved = false
+
+        val files = composer.discardQueuedCase(caseId)
+
+        assertEquals(listOf("a.png", "b.png"), files)
+        assertTrue(decoded().none { it!!.caseId == caseId })
+        assertEquals(2, outbox.rows.size)
+    }
+
+    @Test
+    fun `a case whose opening has left the device, or of another account, is not taken back`() = runTest {
+        val caseId = (composer.createCase("hej", listOf(image("a.png"))) as ComposeOutcome.Queued).caseId
+        val create = outbox.rows.first()
+        outbox.updateState(create.id, OutboxState.SENT, 1, null)
+        val before = outbox.rows.toList()
+
+        assertEquals(null, composer.discardQueuedCase(caseId))
+
+        auth.currentUid = "uid-b"
+        assertEquals(null, composer.discardQueuedCase(caseId))
+        assertEquals(before, outbox.rows)
+    }
 }

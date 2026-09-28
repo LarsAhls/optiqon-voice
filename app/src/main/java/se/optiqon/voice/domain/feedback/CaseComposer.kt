@@ -106,6 +106,33 @@ class CaseComposer(
         return ComposeOutcome.Queued(caseId)
     }
 
+    /** Removes a saved text-only message of the signed-in account, at the user's word. */
+    suspend fun discardLegacy(id: String): Boolean {
+        val uid = auth.currentUid ?: return false
+        val row = outbox.byId(id) ?: return false
+        if (row.ownerUid != uid || row.kind != FeedbackPayloads.KIND) return false
+        outbox.discard(row.id)
+        return true
+    }
+
+    /**
+     * Takes back a case that has not left the device: its opening, its screenshots and anything
+     * queued after it. Returns the screenshot files to remove, or null when the opening has
+     * already been sent and there is nothing left to take back.
+     *
+     * No approval check: removing your own unsent words and pictures from your own phone is
+     * always allowed, revoked or not.
+     */
+    suspend fun discardQueuedCase(caseId: String): List<String>? {
+        val uid = auth.currentUid ?: return null
+        val rows = outbox.all().filter { it.ownerUid == uid && it.state != OutboxState.SENT }
+            .map { it to CaseOutboxPayloads.decode(it.kind, it.payload) }
+            .filter { (_, payload) -> payload?.caseId == caseId }
+        if (rows.none { (_, payload) -> payload is CasePayload.CreateCase }) return null
+        rows.forEach { (row, _) -> outbox.discard(row.id) }
+        return rows.mapNotNull { (_, payload) -> (payload as? CasePayload.Upload)?.file }
+    }
+
     private fun refusal(text: String, images: List<PreparedImage>): ComposeOutcome? = when {
         text.isEmpty() -> ComposeOutcome.Empty
         text.length > FeedbackLimits.MAX_TEXT_CHARS -> ComposeOutcome.TooLong
