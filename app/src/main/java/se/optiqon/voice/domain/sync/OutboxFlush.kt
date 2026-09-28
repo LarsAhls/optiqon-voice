@@ -20,6 +20,12 @@ import se.optiqon.voice.domain.feedback.FeedbackPayloads
  *   and a stuck message of the same case must not keep a picture readable.
  * - Each row is looked up again just before it is sent. A row taken back while the run was under
  *   way — a screenshot removed before it left — is not sent from a stale list.
+ * - The queue is read again once a pass is done, and whatever was added meanwhile is sent in the
+ *   same run. A screenshot removed while its upload was inside the sender is queued exactly then:
+ *   its tombstone goes out right after that upload has returned, never before it and never
+ *   waiting for some later run to be started by something else. The run ends only on a pass
+ *   that finds nothing new; [OutboxWorker] covers the moment after that last look.
+ * - A row that failed after it was taken back asks for no retry: there is nothing left to retry.
  * - If the account changes mid-run, the run stops.
  */
 class OutboxFlush(
@@ -39,26 +45,32 @@ class OutboxFlush(
 
         var retry = false
         val heldCases = mutableSetOf<String>()
-        val queue = OutboxPolicy.flushable(outbox.pendingFor(uid), uid)
-            .sortedBy { if (it.kind == CaseOutboxPayloads.KIND_DELETE) 0 else 1 }
-        for (entry in queue) {
-            if (entry.kind == FeedbackPayloads.KIND) continue
-            if (auth.currentUid != uid) return Result.DONE
-            if (outbox.byId(entry.id)?.state != OutboxState.PENDING) continue
-            val removal = entry.kind == CaseOutboxPayloads.KIND_DELETE
+        val attempted = mutableSetOf<String>()
+        while (true) {
+            val queue = OutboxPolicy.flushable(outbox.pendingFor(uid), uid)
+                .filter { it.kind != FeedbackPayloads.KIND && it.id !in attempted }
+                .sortedBy { if (it.kind == CaseOutboxPayloads.KIND_DELETE) 0 else 1 }
+            if (queue.isEmpty()) break
+            for (entry in queue) {
+                if (auth.currentUid != uid) return Result.DONE
+                attempted += entry.id
+                if (outbox.byId(entry.id)?.state != OutboxState.PENDING) continue
+                val removal = entry.kind == CaseOutboxPayloads.KIND_DELETE
 
-            val caseId = if (entry.kind in CaseOutboxPayloads.KINDS) {
-                CaseOutboxPayloads.decode(entry.kind, entry.payload)?.caseId
-            } else null
-            if (caseId != null && caseId in heldCases && !removal) continue
+                val caseId = if (entry.kind in CaseOutboxPayloads.KINDS) {
+                    CaseOutboxPayloads.decode(entry.kind, entry.payload)?.caseId
+                } else null
+                if (caseId != null && caseId in heldCases && !removal) continue
 
-            when (val failure = sender.send(entry)) {
-                null -> outbox.updateState(entry.id, OutboxState.SENT, entry.attempts + 1, null)
-                else -> {
-                    val updated = OutboxPolicy.afterFailure(entry, failure)
-                    outbox.updateState(entry.id, updated.state, updated.attempts, updated.lastError)
-                    retry = retry || OutboxPolicy.shouldRetry(failure)
-                    if (!removal) caseId?.let { heldCases += it }
+                when (val failure = sender.send(entry)) {
+                    null -> outbox.updateState(entry.id, OutboxState.SENT, entry.attempts + 1, null)
+                    else -> {
+                        if (outbox.byId(entry.id) == null) continue
+                        val updated = OutboxPolicy.afterFailure(entry, failure)
+                        outbox.updateState(entry.id, updated.state, updated.attempts, updated.lastError)
+                        retry = retry || OutboxPolicy.shouldRetry(failure)
+                        if (!removal) caseId?.let { heldCases += it }
+                    }
                 }
             }
         }

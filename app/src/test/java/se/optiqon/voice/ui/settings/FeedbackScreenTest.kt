@@ -2,6 +2,9 @@ package se.optiqon.voice.ui.settings
 
 import android.content.Context
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -232,5 +235,40 @@ class FeedbackScreenTest {
         }
         composeRule.onNodeWithText(string(R.string.feedback_shot_removing)).assertIsDisplayed()
         composeRule.onNodeWithText(string(R.string.feedback_notice_screenshot_removed)).assertDoesNotExist()
+    }
+
+    private fun shotsOnly(vararg shots: Shot) {
+        val detail = CaseDetail(caseId = "case-1", case = remoteCase, queued = null, shots = shots.toList())
+        composeRule.setContent {
+            OptiqonVoiceTheme {
+                FeedbackDetailContent(
+                    state = FeedbackUiState(page = FeedbackPage.Detail("case-1"), remoteEnabled = true, approved = true, detail = detail),
+                    padding = padding,
+                    reply = "",
+                    onReply = {}, onPick = {}, onRemoveImage = {}, onSubmit = {}, onDeleteShot = {}, onDiscardQueued = {}
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `a screenshot being removed is not drawn, even with its picture still in memory`() {
+        val picture = ImageBitmap(8, 8)
+        shotsOnly(
+            Shot("aid-1", messageId = null, state = ShotState.REMOVING, thumbnail = picture),
+            Shot("aid-2", messageId = null, state = ShotState.REMOVE_FAILED, thumbnail = picture)
+        )
+        composeRule.onAllNodesWithTag(THUMBNAIL_TAG, useUnmergedTree = true).assertCountEquals(0)
+        // Where the removal stands is still said, and it is not called done.
+        composeRule.onNodeWithText(string(R.string.feedback_shot_removing)).assertIsDisplayed()
+        composeRule.onNodeWithText(string(R.string.feedback_shot_remove_failed)).assertIsDisplayed()
+        composeRule.onNodeWithText(string(R.string.feedback_notice_screenshot_removed)).assertDoesNotExist()
+    }
+
+    @Test
+    fun `a screenshot that is staying is drawn`() {
+        // The control for the test above: the tag does find a picture when there is one.
+        shotsOnly(Shot("aid-1", messageId = null, state = ShotState.AVAILABLE, thumbnail = ImageBitmap(8, 8)))
+        composeRule.onAllNodesWithTag(THUMBNAIL_TAG, useUnmergedTree = true).assertCountEquals(1)
     }
 }

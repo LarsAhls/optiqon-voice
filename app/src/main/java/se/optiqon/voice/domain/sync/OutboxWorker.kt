@@ -43,6 +43,15 @@ class OutboxWorker(
     companion object {
         private const val WORK_NAME = "outbox"
 
+        /**
+         * Asks for a run after anything already queued or running, never instead of it.
+         *
+         * A run in flight may already have taken its last look at the queue when a row lands —
+         * a screenshot removed while its upload was inside the sender. Keeping only the existing
+         * run would leave that tombstone waiting for some unrelated later schedule, so each
+         * request is chained behind the current one. A failed or cancelled chain is replaced.
+         * The cost is an extra, cheap pass that finds nothing to send.
+         */
         fun enqueue(context: Context) {
             val request = OneTimeWorkRequestBuilder<OutboxWorker>()
                 .setConstraints(
@@ -50,7 +59,7 @@ class OutboxWorker(
                 )
                 .build()
             WorkManager.getInstance(context)
-                .enqueueUniqueWork(WORK_NAME, ExistingWorkPolicy.KEEP, request)
+                .enqueueUniqueWork(WORK_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request)
         }
     }
 }

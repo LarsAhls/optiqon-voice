@@ -147,4 +147,12 @@ class LocalFeedbackTest {
 
         assertEquals(listOf("done.png", "theirs.png", "draft.png"), LocalFeedback.orphanedFiles(rows, "uid-a", present))
     }
+
+    @Test
+    fun `a screenshot is drawn only until its owner asks for it to go`() {
+        assertEquals(
+            setOf(ShotState.UPLOADING, ShotState.UPLOAD_FAILED, ShotState.AVAILABLE),
+            ShotState.entries.filter { it.showsContent }.toSet()
+        )
+    }
 }

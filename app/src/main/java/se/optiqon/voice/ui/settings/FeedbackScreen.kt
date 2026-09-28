@@ -39,6 +39,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -46,6 +47,7 @@ import se.optiqon.voice.R
 import se.optiqon.voice.domain.feedback.CaseEvent
 import se.optiqon.voice.domain.feedback.FeedbackLimits
 import se.optiqon.voice.domain.feedback.ShotState
+import se.optiqon.voice.domain.feedback.showsContent
 import se.optiqon.voice.ui.common.EmptyStateCard
 import se.optiqon.voice.ui.common.GhostButton
 import se.optiqon.voice.ui.common.GroupCard
@@ -284,7 +286,8 @@ internal fun FeedbackDetailContent(
                             title = stringResource(R.string.feedback_delete_screenshot),
                             subtitle = shotStatus(shot.state)?.let { stringResource(it) },
                             subtitleColor = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                            leading = { Thumbnail(shot.thumbnail) },
+                            // A screenshot on its way out is never drawn, whatever is in memory.
+                            leading = { Thumbnail(shot.thumbnail?.takeIf { shot.state.showsContent }) },
                             onClick = { onDeleteShot(shot.aid) },
                             // A case that never left the phone is the owner's own to tidy up,
                             // approved or not; a removal already on its way needs no second tap.
@@ -425,12 +428,15 @@ private fun EventCard(event: CaseEvent) {
     }
 }
 
+/** Marks a drawn screenshot, so a test can tell a picture from its placeholder. */
+internal const val THUMBNAIL_TAG = "feedback_thumbnail"
+
 @Composable
 private fun Thumbnail(bitmap: ImageBitmap?, size: Int = 48) {
     val shape = MaterialTheme.shapes.medium
     val modifier = Modifier.size(size.dp).clip(shape)
     if (bitmap != null) {
-        Image(bitmap, contentDescription = null, modifier = modifier, contentScale = ContentScale.Crop)
+        Image(bitmap, contentDescription = null, modifier = modifier.testTag(THUMBNAIL_TAG), contentScale = ContentScale.Crop)
     } else {
         Box(modifier.background(MaterialTheme.colorScheme.secondaryContainer), contentAlignment = Alignment.Center) {
             Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer)

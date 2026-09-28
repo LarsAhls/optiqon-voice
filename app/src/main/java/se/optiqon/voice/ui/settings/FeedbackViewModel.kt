@@ -32,6 +32,7 @@ import se.optiqon.voice.domain.feedback.FeedbackConfig
 import se.optiqon.voice.domain.feedback.FeedbackLimits
 import se.optiqon.voice.domain.feedback.LocalFeedback
 import se.optiqon.voice.domain.feedback.ShotState
+import se.optiqon.voice.domain.feedback.showsContent
 import java.io.File
 import javax.inject.Inject
 
@@ -214,6 +215,8 @@ class FeedbackViewModel @Inject constructor(
                 // The upload is gone from the queue, so nothing will send this copy any more.
                 localCopy?.let { withContext(Dispatchers.IO) { preprocessor.discard(uid, it) } }
                 removals += aid
+                // The picture goes from memory at once, not only from the disk.
+                thumbnails -= aid
                 _state.update { it.copy(notice = null) }
                 restate()
             } else {
@@ -228,7 +231,9 @@ class FeedbackViewModel @Inject constructor(
         val (caseId, attachments) = shotSource ?: return
         val statuses = withContext(Dispatchers.IO) { LocalFeedback.shots(outbox.all(), uid, caseId, attachments) }
         if (shotSource?.first != caseId) return
-        val missing = statuses.filter { it.aid !in thumbnails }
+        val hidden = statuses.filter { !it.state.showsContent || it.aid in removals }.map { it.aid }.toSet()
+        thumbnails -= hidden
+        val missing = statuses.filter { it.aid !in hidden && it.aid !in thumbnails }
         val loaded = withContext(Dispatchers.IO) {
             missing.associate { shot ->
                 shot.aid to when {
@@ -246,7 +251,9 @@ class FeedbackViewModel @Inject constructor(
         _state.update { s ->
             s.copy(
                 detail = s.detail?.takeIf { it.caseId == caseId }?.copy(
-                    shots = statuses.map { Shot(it.aid, it.messageId, it.state, thumbnails[it.aid]) }
+                    shots = statuses.map {
+                        Shot(it.aid, it.messageId, it.state, thumbnails[it.aid].takeIf { _ -> it.aid !in hidden })
+                    }
                 ),
                 notice = if (gone.isNotEmpty()) FeedbackNotice.ScreenshotRemoved else s.notice
             )

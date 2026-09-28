@@ -22,6 +22,14 @@ data class QueuedCase(
  */
 enum class ShotState { UPLOADING, UPLOAD_FAILED, AVAILABLE, REMOVING, REMOVE_FAILED }
 
+/**
+ * Whether the picture itself may be drawn. Once its owner has asked for it to go, it is not
+ * shown again — not while the removal is on its way, and not when it failed. Only the words
+ * saying where the removal stands remain.
+ */
+val ShotState.showsContent: Boolean
+    get() = this != ShotState.REMOVING && this != ShotState.REMOVE_FAILED
+
 /** One screenshot of a case. [file] is the local copy's name while it is still on the device. */
 data class ShotStatus(val aid: String, val messageId: String?, val file: String?, val state: ShotState)
 
