@@ -29,7 +29,10 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      # Default `tools` package is gone from cmdline-tools 16.0; AGP fetches the rest itself.
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - uses: gradle/actions/setup-gradle@v4
 
@@ -175,7 +178,10 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      # Default `tools` package is gone from cmdline-tools 16.0; AGP fetches the rest itself.
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - uses: gradle/actions/setup-gradle@v4
 
