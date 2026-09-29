@@ -56,8 +56,8 @@
   ],
   "scheduler": {
     "name": "voice-feedback-backstop",
-    "location": "europe-north2",
-    "locationNote": "FS-G preflight must confirm Cloud Scheduler is offered in europe-north2. If it is not, europe-north1 is the documented candidate: the job then only holds its schedule and calls the europe-north2 service; no Feedback data is stored or processed there. Choosing it is an FS-G decision, not made here.",
+    "location": "europe-central2",
+    "locationNote": "M7=A, decided in FS-G: Cloud Scheduler is not offered in europe-north2, so the job lives in europe-central2 (Warsaw). It holds only its schedule, target URL and OIDC identity, and calls the europe-north2 service; no Feedback data is stored or processed there. Firestore, Storage, Cloud Run and Eventarc stay in europe-north2.",
     "schedule": "0 */6 * * *",
     "timeZone": "Europe/Stockholm",
     "route": "/jobs/scheduled",
