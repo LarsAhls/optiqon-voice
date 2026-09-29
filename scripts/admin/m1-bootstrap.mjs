@@ -5,7 +5,8 @@
 //   The one place where an administrator's decisions enter Firestore during Mission 1:
 //     init             seed config/limits + config/counters, make the signed-in admin a writer,
 //                      and approve the admin's own pending account (takes one seat)
-//     approve <email>  pending -> approved for one tester (takes one seat)
+//     approve <email>  pending | revoked | rejected -> approved for one tester (takes one
+//                      seat, starts a new approval generation)
 //     revoke  <email>  approved -> revoked for one tester (releases one seat)
 //     status           read-only summary of config/, admins/ and users/
 //
@@ -24,6 +25,9 @@
 //     whose users/{uid}.email equals that email. Anything else aborts.
 //   - Every write is one transaction; the seat counter moves exactly once per real transition
 //     and only alongside that transition (`seatFor` names the account, as the rules demand).
+//   - Every transition into 'approved' writes approvalGeneration = previous + 1 (missing = 0)
+//     in the same transaction (FS-S12); revoke never touches it. The rules refuse a client
+//     create or finalize carrying any other generation, so this is what makes reapproval safe.
 //   - Idempotent: repeating a command that already took effect is a no-op, reported as such.
 //   - No undo, no delete, no counter reset, no field outside the rules' allow-lists.
 //   - Dry run by default. `--apply` performs the writes; both modes print the plan first.
@@ -151,6 +155,7 @@ async function init(ctx) {
     const current = counters.exists ? counters.get('approvedUsers') : INITIAL_COUNTERS.approvedUsers;
     const maxSeats = limits.exists ? limits.get('maxApprovedUsers') : LIMITS.maxApprovedUsers;
     const needsApproval = myStatus === 'pending';
+    const nextGen = (me.get('approvalGeneration') ?? 0) + 1;
 
     const plan = [];
     if (!limits.exists) plan.push({ op: 'create', path: 'config/limits', data: { ...LIMITS } });
@@ -158,7 +163,7 @@ async function init(ctx) {
     if (!admin.exists) plan.push({ op: 'create', path: `admins/${adminUid}`, data: { role: 'writer', grantedAt: '<serverTimestamp>' } });
     if (needsApproval) {
       if (current + 1 > maxSeats) abort('NO_SEAT', `approvedUsers=${current}, maxApprovedUsers=${maxSeats}`);
-      plan.push({ op: 'update', path: `users/${adminUid}`, data: { status: 'approved', decidedBy: adminUid, decidedAt: '<serverTimestamp>' } });
+      plan.push({ op: 'update', path: `users/${adminUid}`, data: { status: 'approved', decidedBy: adminUid, decidedAt: '<serverTimestamp>', approvalGeneration: nextGen } });
       plan.push({ op: 'update', path: 'config/counters', data: { approvedUsers: current + 1, seatFor: adminUid } });
     }
 
@@ -168,7 +173,7 @@ async function init(ctx) {
     if (!counters.exists) tx.create(db.doc('config/counters'), { ...INITIAL_COUNTERS });
     if (!admin.exists) tx.create(db.doc(`admins/${adminUid}`), { role: 'writer', grantedAt: FieldValue.serverTimestamp() });
     if (needsApproval) {
-      tx.update(db.doc(`users/${adminUid}`), { status: 'approved', decidedBy: adminUid, decidedAt: FieldValue.serverTimestamp() });
+      tx.update(db.doc(`users/${adminUid}`), { status: 'approved', decidedBy: adminUid, decidedAt: FieldValue.serverTimestamp(), approvalGeneration: nextGen });
       // `set` with merge rather than `update` so the fresh-counters case (created in this
       // same transaction) is also covered.
       tx.set(db.doc('config/counters'), { approvedUsers: current + 1, seatFor: adminUid }, { merge: true });
@@ -191,7 +196,8 @@ async function decide(ctx, { email, to, lookupUid }) {
   const uid = await lookupUid(email);
   if (!uid) abort('TESTER_NOT_IN_AUTH', `${email} has no Firebase Auth account (accounts:lookup returned nothing)`);
 
-  const from = to === 'approved' ? 'pending' : 'approved';
+  // Reapproval (FS-S12, M1 lifted for this only): approve from pending, revoked or rejected.
+  const from = to === 'approved' ? ['pending', 'revoked', 'rejected'] : ['approved'];
   const delta = to === 'approved' ? +1 : -1;
 
   const result = await db.runTransaction(async (tx) => {
@@ -215,9 +221,11 @@ async function decide(ctx, { email, to, lookupUid }) {
     if (current === to) {
       return { plan: [], changed: false, uid, note: `users/${uid} is already '${to}'` };
     }
-    if (current !== from) {
-      abort('STATUS_BLOCKED', `users/${uid}.status is '${current}'; ${to} requires '${from}'`);
+    if (!from.includes(current)) {
+      abort('STATUS_BLOCKED', `users/${uid}.status is '${current}'; ${to} requires one of ${from.join(', ')}`);
     }
+    const userData = { status: to, decidedBy: adminUid };
+    if (to === 'approved') userData.approvalGeneration = (user.get('approvalGeneration') ?? 0) + 1;
 
     const count = counters.get('approvedUsers');
     const next = count + delta;
@@ -225,12 +233,12 @@ async function decide(ctx, { email, to, lookupUid }) {
     if (next > limits.get('maxApprovedUsers')) abort('NO_SEAT', `approvedUsers=${count}, maxApprovedUsers=${limits.get('maxApprovedUsers')}`);
 
     const plan = [
-      { op: 'update', path: `users/${uid}`, data: { status: to, decidedBy: adminUid, decidedAt: '<serverTimestamp>' } },
+      { op: 'update', path: `users/${uid}`, data: { ...userData, decidedAt: '<serverTimestamp>' } },
       { op: 'update', path: 'config/counters', data: { approvedUsers: next, seatFor: uid } },
     ];
     if (!apply) return { plan, changed: false, uid };
 
-    tx.update(db.doc(`users/${uid}`), { status: to, decidedBy: adminUid, decidedAt: FieldValue.serverTimestamp() });
+    tx.update(db.doc(`users/${uid}`), { ...userData, decidedAt: FieldValue.serverTimestamp() });
     tx.update(db.doc('config/counters'), { approvedUsers: next, seatFor: uid });
     return { plan, changed: true, uid };
   });

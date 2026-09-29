@@ -21,8 +21,10 @@ after(async () => { await env.cleanup(); });
 beforeEach(async () => { await env.clearFirestore(); await seed(env); });
 
 /** The decision half of the commit: the write the counter is supposed to be accounting for. */
-const decide = (batch, db, userId, status) => batch.update(doc(db, `users/${userId}`), {
+// FS-S12: an approval also starts the account's next approval generation.
+const decide = (batch, db, userId, status, gen = 1) => batch.update(doc(db, `users/${userId}`), {
   status, decidedBy: 'lars', decidedAt: serverTimestamp(),
+  ...(status === 'approved' ? { approvalGeneration: gen } : {}),
 });
 
 /** The counter half. `seatFor` names the account whose transition this movement pays for. */
@@ -218,5 +220,105 @@ describe('the real transitions still commit, atomically', () => {
       status: 'rejected', decidedBy: 'lars', decidedAt: serverTimestamp(),
     }));
     await counterIs(db, 4);
+  });
+});
+
+// FS-S12 (M1 lifted for reapproval, Lars 2026-09-29): a revoked or rejected account can be
+// approved again, and every approval starts a new approval generation -- exactly one higher
+// than the last. A client that queued work under the old generation is refused by the case
+// rules; that half is in fs-s12-lifecycle.test.mjs.
+describe('approvalGeneration', () => {
+  async function gen(db, uid) {
+    return (await getDoc(doc(db, `users/${uid}`))).data().approvalGeneration;
+  }
+
+  test('an approval without the next generation is refused', async () => {
+    const db = as(env, 'lars').firestore();
+    for (const g of [undefined, 0, 2]) {
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'users/pat'), {
+        status: 'approved', decidedBy: 'lars', decidedAt: serverTimestamp(),
+        ...(g === undefined ? {} : { approvalGeneration: g }),
+      });
+      moveSeat(batch, db, 5, 'pat');
+      await assertFails(batch.commit(), String(g));
+    }
+  });
+
+  test('approved N, revoked N, reapproved N+1 -- one seat each way', async () => {
+    const db = as(env, 'lars').firestore();
+    let b = writeBatch(db);
+    decide(b, db, 'pat', 'approved', 1);
+    moveSeat(b, db, 5, 'pat');
+    await assertSucceeds(b.commit());
+    assertEq(await gen(db, 'pat'), 1);
+
+    b = writeBatch(db);
+    decide(b, db, 'pat', 'revoked');
+    moveSeat(b, db, 4, 'pat');
+    await assertSucceeds(b.commit());
+    assertEq(await gen(db, 'pat'), 1);
+
+    // Reapproval at the old generation is refused; at N+1 it commits.
+    b = writeBatch(db);
+    decide(b, db, 'pat', 'approved', 1);
+    moveSeat(b, db, 5, 'pat');
+    await assertFails(b.commit());
+    b = writeBatch(db);
+    decide(b, db, 'pat', 'approved', 2);
+    moveSeat(b, db, 5, 'pat');
+    await assertSucceeds(b.commit());
+    assertEq(await gen(db, 'pat'), 2);
+    assertEq((await getDoc(doc(db, 'users/pat'))).data().status, 'approved');
+    await counterIs(db, 5);
+  });
+
+  test('a rejected account can be approved too', async () => {
+    const db = as(env, 'lars').firestore();
+    await assertSucceeds(updateDoc(doc(db, 'users/pat'), {
+      status: 'rejected', decidedBy: 'lars', decidedAt: serverTimestamp(),
+    }));
+    const b = writeBatch(db);
+    decide(b, db, 'pat', 'approved', 1);
+    moveSeat(b, db, 5, 'pat');
+    await assertSucceeds(b.commit());
+  });
+
+  test('a reapproval still needs its seat', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'users/alice'), { status: 'revoked', approvalGeneration: 3 }, { merge: true });
+    });
+    const db = as(env, 'lars').firestore();
+    await assertFails(updateDoc(doc(db, 'users/alice'), {
+      status: 'approved', decidedBy: 'lars', decidedAt: serverTimestamp(), approvalGeneration: 4,
+    }));
+  });
+
+  test('revoke and reject cannot touch the generation', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'users/alice'), { approvalGeneration: 3 }, { merge: true });
+    });
+    const db = as(env, 'lars').firestore();
+    for (const g of [2, 4, 0]) {
+      const b = writeBatch(db);
+      b.update(doc(db, 'users/alice'), {
+        status: 'revoked', decidedBy: 'lars', decidedAt: serverTimestamp(), approvalGeneration: g,
+      });
+      moveSeat(b, db, 3, 'alice');
+      await assertFails(b.commit(), String(g));
+    }
+    await assertFails(updateDoc(doc(db, 'users/pat'), {
+      status: 'rejected', decidedBy: 'lars', decidedAt: serverTimestamp(), approvalGeneration: 1,
+    }));
+  });
+
+  test('the generation cannot be moved on its own', async () => {
+    const db = as(env, 'lars').firestore();
+    await assertFails(updateDoc(doc(db, 'users/alice'), {
+      approvalGeneration: 7, decidedBy: 'lars', decidedAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(doc(as(env, 'alice').firestore(), 'users/alice'), {
+      approvalGeneration: 7,
+    }));
   });
 });

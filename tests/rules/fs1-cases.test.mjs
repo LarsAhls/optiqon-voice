@@ -23,7 +23,8 @@ after(async () => { await env.cleanup(); });
 beforeEach(async () => {
   await env.clearFirestore();
   await seed(env);
-  // The shared seed predates FS-1; give its cases the FS-1 shape.
+  // The shared seed predates FS-1; give its cases the FS-1 shape -- and, since FS-S12, the
+  // shape of a case that has been accepted.
   await env.withSecurityRulesDisabled(async (ctx) => {
     const db = ctx.firestore();
     for (const [caseId, ownerUid] of [['case-alice', 'alice'], ['case-bob', 'bob']]) {
@@ -38,6 +39,10 @@ beforeEach(async () => {
         createdAt: Timestamp.now(),
         updatedAt: Timestamp.now(),
         lastActivityAt: Timestamp.now(),
+        state: 'accepted',
+        acceptedAt: Timestamp.now(),
+        activityRev: 0,
+        approvalGeneration: 0,
       });
     }
   });
@@ -73,6 +78,7 @@ async function attachBatch(uid, caseId, aid, opts = {}) {
   const { messageId = null, maxBytes = 1024, omit = [], extra = {}, also } = opts;
   const c = await peek(`cases/${caseId}`);
   const q = await peek(`users/${uid}/quota/attachments`);
+  const u = await peek(`users/${uid}`);
   const db = as(env, uid).firestore();
   const b = writeBatch(db);
 
@@ -98,6 +104,7 @@ async function attachBatch(uid, caseId, aid, opts = {}) {
   if (!omit.includes('attachment')) {
     b.set(doc(db, `cases/${caseId}/attachments/${aid}`), {
       ownerUid: uid, caseId, messageId, maxBytes, createdAt: serverTimestamp(),
+      approvalGeneration: u?.approvalGeneration ?? 0,
       ...extra.attachment,
     });
   }
@@ -106,6 +113,8 @@ async function attachBatch(uid, caseId, aid, opts = {}) {
       activeAttachmentCount: c.activeAttachmentCount + 1,
       attachmentFor: aid,
       lastActivityAt: serverTimestamp(),
+      activityRev: (c.activityRev ?? 0) + 1,
+      lastRelevantAt: serverTimestamp(),
     };
     if (messageId == null) upd.attachmentCount = c.attachmentCount + 1;
     b.update(doc(db, `cases/${caseId}`), { ...upd, ...extra.case });
@@ -137,21 +146,40 @@ async function tombstoneBatch(uid, caseId, aid, { omit = [], extra = {} } = {}) 
   return b;
 }
 
-async function messageBatch(uid, caseId, eventId, body = 'Ett till problem', { bump = true } = {}) {
+/**
+ * The owner's message, the way the app sends it since FS-S12: the event is created
+ * `submitted` on its own, then finalised to `accepted` in a second commit that bumps the case.
+ * Returned as something with a `commit()` so that call sites read the same as a batch.
+ */
+async function messageBatch(uid, caseId, eventId, body = 'Ett till problem') {
   const db = as(env, uid).firestore();
-  const b = writeBatch(db);
-  b.set(doc(db, `cases/${caseId}/events/${eventId}`), {
-    type: 'message', visibility: 'public', actorUid: uid, body, attachmentCount: 0,
-    createdAt: serverTimestamp(),
-  });
-  if (bump) b.update(doc(db, `cases/${caseId}`), { lastActivityAt: serverTimestamp() });
-  return b;
+  const u = await peek(`users/${uid}`);
+  const gen = u?.approvalGeneration ?? 0;
+  return {
+    async commit() {
+      await setDoc(doc(db, `cases/${caseId}/events/${eventId}`), {
+        type: 'message', visibility: 'public', actorUid: uid, body, attachmentCount: 0,
+        createdAt: serverTimestamp(), state: 'submitted', approvalGeneration: gen,
+      });
+      const c = await peek(`cases/${caseId}`);
+      const b = writeBatch(db);
+      b.update(doc(db, `cases/${caseId}/events/${eventId}`), {
+        state: 'accepted', acceptedAt: serverTimestamp(), approvalGeneration: gen,
+      });
+      b.update(doc(db, `cases/${caseId}`), {
+        activityRev: c.activityRev + 1, lastRelevantAt: serverTimestamp(),
+        lastActivityAt: serverTimestamp(), activityFor: eventId,
+      });
+      await b.commit();
+    },
+  };
 }
 
 const newCase = (uid, over = {}) => ({
   ownerUid: uid, title: 'Knappen fungerar inte', body: 'Detaljer', statusCache: 'Mottaget',
   lastStatusEventId: null, attachmentCount: 0, activeAttachmentCount: 0,
   createdAt: serverTimestamp(), updatedAt: serverTimestamp(), lastActivityAt: serverTimestamp(),
+  state: 'submitted', activityRev: 0, approvalGeneration: 0,
   ...over,
 });
 
@@ -182,6 +210,9 @@ describe('cases', () => {
       { title: '' },
       { title: 'x'.repeat(201) },
       { lastActivityAt: Timestamp.fromMillis(0) },
+      { state: 'accepted' },
+      { activityRev: 1 },
+      { approvalGeneration: 1 },
       { closedAt: serverTimestamp() },
       { sha256: 'a'.repeat(64) },
     ]) {
@@ -200,7 +231,10 @@ describe('cases', () => {
     const db = as(env, 'alice').firestore();
     await assertSucceeds(getDocs(query(collection(db, 'cases'), where('ownerUid', '==', 'alice'))));
     await assertFails(getDocs(collection(db, 'cases')));
-    await assertSucceeds(getDocs(collection(as(env, 'reader').firestore(), 'cases')));
+    // An admin's list must ask for accepted cases only (FS-S12).
+    const reader = as(env, 'reader').firestore();
+    await assertSucceeds(getDocs(query(collection(reader, 'cases'), where('state', '==', 'accepted'))));
+    await assertFails(getDocs(collection(reader, 'cases')));
   });
 
   test('a revoked owner loses its cases at the next request', async () => {
@@ -425,9 +459,26 @@ describe('tombstones', () => {
     await assertSucceeds((await tombstoneBatch('lars', 'case-alice', 'a1')).commit());
   });
 
-  test('a revoked owner cannot take a screenshot down', async () => {
+  // Inverted by FS-S12 (M3=A): taking one's own screenshot down is a withdrawal intent, and
+  // a revoked or pending account may still express that. It gives back exactly one slot and
+  // moves no activity.
+  test('a revoked owner can still take its own screenshot down', async () => {
     await revoke('alice');
-    await assertFails((await tombstoneBatch('alice', 'case-alice', 'a1')).commit());
+    const before = await peek('cases/case-alice');
+    await assertFails((await tombstoneBatch('alice', 'case-alice', 'a1', {
+      extra: { case: { activityRev: before.activityRev + 1 } },
+    })).commit());
+    await assertSucceeds((await tombstoneBatch('alice', 'case-alice', 'a1')).commit());
+    const c = await peek('cases/case-alice');
+    assert(c.activeAttachmentCount === 0 && c.activityRev === before.activityRev);
+  });
+
+  test('an unverified owner cannot take a screenshot down', async () => {
+    const db = as(env, 'alice', { email_verified: false }).firestore();
+    const b = writeBatch(db);
+    b.update(doc(db, 'cases/case-alice/attachments/a1'), { deleteRequestedAt: serverTimestamp() });
+    b.update(doc(db, 'cases/case-alice'), { activeAttachmentCount: 0, attachmentFor: 'a1' });
+    await assertFails(b.commit());
   });
 
   test('the owner can still take a screenshot down after the case is closed', async () => {
@@ -455,12 +506,22 @@ describe('tombstones', () => {
 // ------------------------------------------------------------------ messages
 
 describe('the owner\'s messages', () => {
-  test('an approved owner writes a message and marks the case active in the same commit', async () => {
+  test('an approved owner writes a message, then finalises it and marks the case active', async () => {
     await assertSucceeds((await messageBatch('alice', 'case-alice', 'm1')).commit());
+    const c = await peek('cases/case-alice');
+    assert(c.activityRev === 1 && c.activityFor === 'm1');
+    assert((await peek('cases/case-alice/events/m1')).state === 'accepted');
   });
 
-  test('a message without the activity mark is refused', async () => {
-    await assertFails((await messageBatch('alice', 'case-alice', 'm1', 'x', { bump: false })).commit());
+  test('a message create does not touch the case any more (FS-S12)', async () => {
+    const db = as(env, 'alice').firestore();
+    const b = writeBatch(db);
+    b.set(doc(db, 'cases/case-alice/events/m1'), {
+      type: 'message', visibility: 'public', actorUid: 'alice', body: 'x', attachmentCount: 0,
+      createdAt: serverTimestamp(), state: 'submitted', approvalGeneration: 0,
+    });
+    b.update(doc(db, 'cases/case-alice'), { lastActivityAt: serverTimestamp() });
+    await assertFails(b.commit());
   });
 
   test('only on the caller\'s own open case, and only while approved', async () => {
@@ -476,17 +537,16 @@ describe('the owner\'s messages', () => {
     const db = as(env, 'alice').firestore();
     const base = {
       type: 'message', visibility: 'public', actorUid: 'alice', body: 'Hej', attachmentCount: 0,
-      createdAt: serverTimestamp(),
+      createdAt: serverTimestamp(), state: 'submitted', approvalGeneration: 0,
     };
     for (const over of [
       { type: 'status_change' }, { visibility: 'internal' }, { actorUid: 'lars' }, { body: '' },
-      { attachmentCount: 3 }, { createdAt: Timestamp.fromMillis(0) },
+      { attachmentCount: 3 }, { createdAt: Timestamp.fromMillis(0) }, { state: 'accepted' },
+      { approvalGeneration: 1 },
     ]) {
-      const b = writeBatch(db);
-      b.set(doc(db, 'cases/case-alice/events/m1'), { ...base, ...over });
-      b.update(doc(db, 'cases/case-alice'), { lastActivityAt: serverTimestamp() });
-      await assertFails(b.commit(), JSON.stringify(over));
+      await assertFails(setDoc(doc(db, 'cases/case-alice/events/m1'), { ...base, ...over }), JSON.stringify(over));
     }
+    await assertSucceeds(setDoc(doc(db, 'cases/case-alice/events/m1'), base));
   });
 
   test('a message is append-only', async () => {
@@ -525,7 +585,7 @@ describe('the owner\'s messages', () => {
     await env.withSecurityRulesDisabled(async (ctx) => {
       await setDoc(doc(ctx.firestore(), 'cases/case-alice/events/note'), {
         type: 'note', visibility: 'public', actorUid: 'lars', attachmentCount: 0,
-        createdAt: Timestamp.now(),
+        createdAt: Timestamp.now(), state: 'accepted',
       });
     });
     await assertFails((await attachBatch('alice', 'case-alice', 'a1', { messageId: 'note' })).commit());
@@ -536,9 +596,11 @@ describe('the owner\'s messages', () => {
       const db = ctx.firestore();
       await setDoc(doc(db, 'cases/case-alice/events/pub'), {
         type: 'note', visibility: 'public', actorUid: 'lars', createdAt: Timestamp.now(),
+        state: 'accepted',
       });
       await setDoc(doc(db, 'cases/case-alice/events/int'), {
         type: 'note', visibility: 'internal', actorUid: 'lars', createdAt: Timestamp.now(),
+        state: 'accepted',
       });
     });
     const alice = as(env, 'alice').firestore();

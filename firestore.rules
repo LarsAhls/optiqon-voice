@@ -23,6 +23,28 @@ rules_version = '2';
 // Mission 1 one, and `scripts/deploy/firestore-guard.mjs` refuses any Firestore deploy that
 // was not explicitly allowed. Publishing this file is a provider Gate, not a merge.
 //
+// FS-S12 (Feedback Lifecycle S2) adds, still ahead of production:
+//   * a two-phase lifecycle: a case and an owner message are written `submitted` and made
+//     `accepted` by a second, idempotent commit. Only `accepted` is an admin's to see, and
+//     only an `accepted` parent takes children;
+//   * `approvalGeneration` on users/, one higher on every approval (M1 is lifted for
+//     reapproval only -- Lars 2026-09-29). Create and finalize carry the generation the
+//     client captured and are refused unless it is still current;
+//   * withdrawal intents (M3=A): an ID-only, create-only record any verified account may
+//     write, revoked and pending included. It blocks a later create, finalize or attachment
+//     under that id and can never delete or change anything already accepted -- purging a
+//     `submitted` leftover is server work (S4), which must hold the same invariants itself
+//     because the Admin SDK bypasses these rules;
+//   * `activityRev` / `lastRelevantAt` on the case, moved by exactly one and only together
+//     with an owner message finalize, a screenshot, a public writer reply or a status change;
+//   * `retentionState == 'purging'` refuses every one of those writes.
+//
+// Budget (get and getAfter of one path counted apart): no single allow branch reads more
+// than 7 documents; all branches of one match/op together stay within the platform's 10
+// (case update is at 10 as an upper bound -- every branch opens with cheap identity checks,
+// so a real request spends far less); every commit the app makes stays within 20.
+// `tests/deploy/firestore-rules-budget.test.mjs` holds all three statically.
+//
 // One boundary is unchanged from F1 and worth restating: these rules are the security
 // boundary. The device-side access gate is a product boundary with a grace period; this has
 // none. A revoked account loses cloud access at the next request, not at the next check-in.
@@ -61,6 +83,22 @@ service cloud.firestore {
         && request.auth.token.email_verified == true
         && userData().status == 'approved'
         && userData().email == request.auth.token.email;
+    }
+
+    // The approval generation the caller holds now. A missing field is generation 0: every
+    // account approved before FS-S12 is at 0 until its next approval. Same users/ document as
+    // isApproved(), so it costs no further read.
+    function currentGen() {
+      return userData().get('approvalGeneration', 0);
+    }
+
+    // Signed in as this account with a verified email -- and nothing about its status. The
+    // M3=A paths (withdrawal intents, taking one's own screenshot down) are open to revoked
+    // and pending accounts on purpose; they can only ever take something away.
+    function isVerifiedSelf(userId) {
+      return signedIn()
+        && userId == uid()
+        && request.auth.token.email_verified == true;
     }
 
     function adminData() {
@@ -162,18 +200,27 @@ service cloud.firestore {
       // no profile-editing feature exists — so the rule that would permit one is not live.
       // Reinstating it is the F1 file's business, once there is a screen behind it.
 
+      // FS-S12: approval is possible from pending, revoked and rejected alike (M1 lifted for
+      // reapproval, Lars 2026-09-29), and every approval moves `approvalGeneration` to exactly
+      // one more than it was. An approval that is already in place cannot be repeated, so a
+      // retry cannot bump twice. Revoke and reject leave the generation where it is.
       allow update: if isWriter()
         && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['status', 'decidedBy', 'decidedAt'])
+             .hasOnly(['status', 'decidedBy', 'decidedAt', 'approvalGeneration'])
         && request.resource.data.decidedBy == uid()
         && request.resource.data.decidedAt == request.time
         && (
              (request.resource.data.status == 'approved'
-               && resource.data.status == 'pending'
+               && resource.data.status in ['pending', 'revoked', 'rejected']
+               && request.resource.data.approvalGeneration is int
+               && request.resource.data.approvalGeneration
+                    == resource.data.get('approvalGeneration', 0) + 1
                && seatTaken(userId))
              ||
              (request.resource.data.status in ['rejected', 'revoked']
                && resource.data.status != request.resource.data.status
+               && !request.resource.data.diff(resource.data).affectedKeys()
+                     .hasAny(['approvalGeneration'])
                && (resource.data.status == 'approved'
                      ? seatReleased(userId)
                      : seatUnchanged()))
@@ -209,7 +256,7 @@ service cloud.firestore {
         && request.resource.data.seatFor is string
         && (
              (request.resource.data.approvedUsers == resource.data.approvedUsers + 1
-               && userStatus(request.resource.data.seatFor) == 'pending'
+               && userStatus(request.resource.data.seatFor) in ['pending', 'revoked', 'rejected']
                && userStatusAfter(request.resource.data.seatFor) == 'approved')
              ||
              (request.resource.data.approvedUsers == resource.data.approvedUsers - 1
@@ -258,6 +305,25 @@ service cloud.firestore {
 
     function eventDoc(caseId, eventId) {
       return /databases/$(database)/documents/cases/$(caseId)/events/$(eventId);
+    }
+
+    function withdrawalDoc(userId, targetId) {
+      return /databases/$(database)/documents/users/$(userId)/withdrawals/$(targetId);
+    }
+
+    // FS-S12. A case that takes relevant writes: accepted, not withdrawn, not being purged.
+    // `state` is read with a default so that a pre-FS-S12 document is simply not open.
+    function caseOpen(c) {
+      return c.get('state', '') == 'accepted'
+        && !('withdrawnAt' in c)
+        && c.get('retentionState', '') != 'purging';
+    }
+
+    // The activity mark: one step, stamped now. Two commits racing from the same revision
+    // cannot both satisfy it, so the case document serialises them.
+    function bumped(before, after) {
+      return after.activityRev == before.activityRev + 1
+        && after.lastRelevantAt == request.time;
     }
 
     // See isApproved(): being signed in is not being let in. A revoked owner is not an owner.
@@ -320,6 +386,28 @@ service cloud.firestore {
         && after.lastActivityAt == request.time;
     }
 
+    // The owner message this case bump is spent on moves from submitted to accepted in the
+    // same commit. Naming it in `activityFor` is what stops one bump covering two messages.
+    function messageFinalized(caseId, eventId) {
+      let before = get(eventDoc(caseId, eventId)).data;
+      let after = getAfter(eventDoc(caseId, eventId)).data;
+      return before.get('state', '') == 'submitted'
+        && after.state == 'accepted'
+        && after.type == 'message'
+        && after.actorUid == uid();
+    }
+
+    // A writer's public reply, new in this commit, is what this case bump is spent on.
+    function replyWritten(caseId, eventId) {
+      let e = getAfter(eventDoc(caseId, eventId)).data;
+      return !exists(eventDoc(caseId, eventId))
+        && e.visibility == 'public'
+        && e.type != 'status_change'
+        && e.actorUid == uid()
+        && e.state == 'accepted'
+        && e.createdAt == request.time;
+    }
+
     // One active slot returned, for exactly the attachment being tombstoned in this commit.
     function caseSlotReleased(caseId, aid) {
       let before = get(caseDoc(caseId)).data;
@@ -332,14 +420,22 @@ service cloud.firestore {
     }
 
     match /cases/{caseId} {
-      // A list query must be constrained to ownerUid == the caller, or it is refused whole.
-      allow get, list: if (isApproved() && resource.data.ownerUid == uid()) || isReader();
+      // A list query must be constrained to ownerUid == the caller, or -- for an admin -- to
+      // state == 'accepted', or it is refused whole. A submitted case is its owner's alone.
+      allow get, list: if (isApproved() && resource.data.ownerUid == uid())
+        || (isReader() && resource.data.state == 'accepted');
 
+      // Phase one: `submitted`, at the caller's current approval generation, and never under
+      // an id its owner has already withdrawn.
       allow create: if isApproved()
         && request.resource.data.keys().hasOnly(
              ['ownerUid', 'title', 'body', 'statusCache', 'lastStatusEventId',
               'attachmentCount', 'activeAttachmentCount', 'createdAt', 'updatedAt',
-              'lastActivityAt'])
+              'lastActivityAt', 'state', 'activityRev', 'approvalGeneration'])
+        && request.resource.data.state == 'submitted'
+        && request.resource.data.activityRev == 0
+        && request.resource.data.approvalGeneration == currentGen()
+        && !exists(withdrawalDoc(uid(), caseId))
         && request.resource.data.ownerUid == uid()
         && request.resource.data.statusCache == 'Mottaget'
         && request.resource.data.lastStatusEventId == null
@@ -354,29 +450,64 @@ service cloud.firestore {
         && request.resource.data.updatedAt == request.time
         && request.resource.data.lastActivityAt == request.time;
 
-      // The owner moves the attachment counters, and only in step with an attachment
-      // created or tombstoned in the same commit. A closed case takes no new screenshots,
-      // but its owner can still take one down.
+      // Phase two: the owner makes its own case `accepted`, once, at the generation it holds
+      // now. Re-stamping the generation is allowed so that a held item sent again explicitly
+      // after a reapproval can finish; a stale one is refused. A withdrawn id never finishes.
       allow update: if isApproved()
         && resource.data.ownerUid == uid()
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
-             ['activeAttachmentCount', 'attachmentCount', 'attachmentFor', 'lastActivityAt'])
-        && request.resource.data.attachmentFor is string
-        && (
-             (!('closedAt' in resource.data)
-               && caseSlotTaken(caseId, request.resource.data.attachmentFor))
-             ||
-             (request.resource.data.lastActivityAt == resource.data.lastActivityAt
-               && request.resource.data.attachmentCount == resource.data.attachmentCount
-               && caseSlotReleased(caseId, request.resource.data.attachmentFor))
-           );
+        && resource.data.get('state', '') == 'submitted'
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['state', 'acceptedAt', 'approvalGeneration'])
+        && request.resource.data.state == 'accepted'
+        && request.resource.data.acceptedAt == request.time
+        && request.resource.data.approvalGeneration == currentGen()
+        && !exists(withdrawalDoc(uid(), caseId))
+        && !('withdrawnAt' in resource.data)
+        && resource.data.get('retentionState', '') != 'purging';
 
-      // A new message marks the case active. Nothing else about the case moves with it.
+      // The owner moves the attachment counters up only in step with an attachment created
+      // in the same commit, on an open case -- and a screenshot is relevant activity.
       allow update: if isApproved()
         && resource.data.ownerUid == uid()
         && !('closedAt' in resource.data)
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastActivityAt'])
-        && request.resource.data.lastActivityAt == request.time;
+        && caseOpen(resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+             ['activeAttachmentCount', 'attachmentCount', 'attachmentFor', 'lastActivityAt',
+              'activityRev', 'lastRelevantAt'])
+        && request.resource.data.attachmentFor is string
+        && bumped(resource.data, request.resource.data)
+        && caseSlotTaken(caseId, request.resource.data.attachmentFor);
+
+      // Taking a screenshot down gives its slot back. M3=A: a revoked or pending owner may
+      // still do this -- it only ever removes -- and it is not activity.
+      allow update: if isVerifiedSelf(resource.data.ownerUid)
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['activeAttachmentCount', 'attachmentFor'])
+        && request.resource.data.attachmentFor is string
+        && caseSlotReleased(caseId, request.resource.data.attachmentFor);
+
+      // An owner message becoming accepted marks the case active, bound to that message.
+      // (FS-S12: the create no longer touches the case; the finalize does.)
+      allow update: if isApproved()
+        && resource.data.ownerUid == uid()
+        && !('closedAt' in resource.data)
+        && caseOpen(resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['activityRev', 'lastRelevantAt', 'lastActivityAt', 'activityFor'])
+        && bumped(resource.data, request.resource.data)
+        && request.resource.data.lastActivityAt == request.time
+        && request.resource.data.activityFor is string
+        && messageFinalized(caseId, request.resource.data.activityFor);
+
+      // A writer's public reply marks the case active, bound to that reply. An internal note
+      // cannot: replyWritten() requires the event it names to be public.
+      allow update: if isWriter()
+        && caseOpen(resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['activityRev', 'lastRelevantAt', 'activityFor'])
+        && bumped(resource.data, request.resource.data)
+        && request.resource.data.activityFor is string
+        && replyWritten(caseId, request.resource.data.activityFor);
 
       // A writer may take a screenshot down too, and the count follows it the same way.
       allow update: if isWriter()
@@ -385,10 +516,14 @@ service cloud.firestore {
         && request.resource.data.attachmentFor is string
         && caseSlotReleased(caseId, request.resource.data.attachmentFor);
 
-      // A status change is only ever half of a commit; the other half is its event.
+      // A status change is only ever half of a commit; the other half is its event. It is
+      // relevant activity, so it carries the bump.
       allow update: if isWriter()
+        && caseOpen(resource.data)
         && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['statusCache', 'lastStatusEventId', 'updatedAt'])
+             .hasOnly(['statusCache', 'lastStatusEventId', 'updatedAt',
+                       'activityRev', 'lastRelevantAt'])
+        && bumped(resource.data, request.resource.data)
         && request.resource.data.updatedAt == request.time
         && allowedTransition(resource.data.statusCache, request.resource.data.statusCache)
         && statusEventMatches(caseId, request.resource.data.lastStatusEventId,
@@ -416,15 +551,21 @@ service cloud.firestore {
     match /cases/{caseId}/events/{eventId} {
       // Internal notes and draft personal replies stay invisible to the case owner. An
       // unconstrained query would return a denied document and is rejected in full.
-      allow get, list: if isReader()
+      // An admin sees accepted events only, and a list must say so.
+      allow get, list: if (isReader() && resource.data.state == 'accepted')
         || (isCaseOwner(caseId) && resource.data.visibility == 'public');
 
       // The owner's own message: public, attributed, and fixed in its content once written.
-      // It starts with no screenshots and marks the case active in the same commit.
+      // Phase one writes it alone, `submitted`, with no screenshots, on an open case.
       allow create: if isCaseOwner(caseId)
         && !('closedAt' in get(caseDoc(caseId)).data)
+        && caseOpen(get(caseDoc(caseId)).data)
         && request.resource.data.keys().hasOnly(
-             ['type', 'visibility', 'actorUid', 'body', 'attachmentCount', 'createdAt'])
+             ['type', 'visibility', 'actorUid', 'body', 'attachmentCount', 'createdAt',
+              'state', 'approvalGeneration'])
+        && request.resource.data.state == 'submitted'
+        && request.resource.data.approvalGeneration == currentGen()
+        && !exists(withdrawalDoc(uid(), eventId))
         && request.resource.data.type == 'message'
         && request.resource.data.visibility == 'public'
         && request.resource.data.actorUid == uid()
@@ -432,15 +573,38 @@ service cloud.firestore {
         && request.resource.data.body.size() > 0
         && request.resource.data.body.size() <= 20000
         && request.resource.data.attachmentCount == 0
-        && request.resource.data.createdAt == request.time
-        && getAfter(caseDoc(caseId)).data.lastActivityAt == request.time;
+        && request.resource.data.createdAt == request.time;
 
+      // Phase two: the message becomes accepted in the same commit as the case bump that
+      // names it. Same generation and withdrawal rules as the case finalize.
+      allow update: if isCaseOwner(caseId)
+        && resource.data.type == 'message'
+        && resource.data.actorUid == uid()
+        && resource.data.get('state', '') == 'submitted'
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['state', 'acceptedAt', 'approvalGeneration'])
+        && request.resource.data.state == 'accepted'
+        && request.resource.data.acceptedAt == request.time
+        && request.resource.data.approvalGeneration == currentGen()
+        && !exists(withdrawalDoc(uid(), eventId))
+        && getAfter(caseDoc(caseId)).data.activityFor == eventId
+        && bumped(get(caseDoc(caseId)).data, getAfter(caseDoc(caseId)).data);
+
+      // A writer's event is accepted as written, on an open case. A public reply carries
+      // the case bump; a status change carries it through the case's status branch; an
+      // internal note carries none.
       allow create: if isWriter()
         && request.resource.data.actorUid == uid()
         && request.resource.data.createdAt == request.time
         && request.resource.data.visibility in ['public', 'internal']
-        && (request.resource.data.type != 'status_change'
-            || caseAfterMatches(caseId, eventId, request.resource.data));
+        && request.resource.data.state == 'accepted'
+        && caseOpen(get(caseDoc(caseId)).data)
+        && (request.resource.data.type == 'status_change'
+              ? caseAfterMatches(caseId, eventId, request.resource.data)
+              : (request.resource.data.visibility == 'internal'
+                  || (getAfter(caseDoc(caseId)).data.activityFor == eventId
+                      && bumped(get(caseDoc(caseId)).data,
+                                getAfter(caseDoc(caseId)).data))));
 
       // The one thing that moves on an event after it is written: the screenshot count of
       // the owner's own message, +1 per screenshot, at most 3, in step with that
@@ -449,6 +613,7 @@ service cloud.firestore {
       allow update: if isCaseOwner(caseId)
         && resource.data.type == 'message'
         && resource.data.actorUid == uid()
+        && resource.data.get('state', '') == 'accepted'
         && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['attachmentCount', 'attachmentFor'])
         && request.resource.data.attachmentCount == resource.data.attachmentCount + 1
@@ -472,6 +637,7 @@ service cloud.firestore {
       let after = getAfter(eventDoc(caseId, messageId)).data;
       return before.type == 'message'
         && before.actorUid == uid()
+        && before.get('state', '') == 'accepted'
         && after.attachmentFor == aid
         && after.attachmentCount == before.attachmentCount + 1;
     }
@@ -485,9 +651,11 @@ service cloud.firestore {
       // can read its ceiling here without paying for a third document.
       allow create: if isCaseOwner(caseId)
         && request.resource.data.keys().hasOnly(
-             ['ownerUid', 'caseId', 'messageId', 'maxBytes', 'createdAt'])
+             ['ownerUid', 'caseId', 'messageId', 'maxBytes', 'createdAt', 'approvalGeneration'])
         && request.resource.data.keys().hasAll(
-             ['ownerUid', 'caseId', 'messageId', 'maxBytes', 'createdAt'])
+             ['ownerUid', 'caseId', 'messageId', 'maxBytes', 'createdAt', 'approvalGeneration'])
+        && request.resource.data.approvalGeneration == currentGen()
+        && !exists(withdrawalDoc(uid(), aid))
         && request.resource.data.ownerUid == uid()
         && request.resource.data.caseId == caseId
         && request.resource.data.createdAt == request.time
@@ -504,7 +672,10 @@ service cloud.firestore {
       // as a tombstone, so a spent attachment id can never be reused. The case gives the
       // slot back in the same commit. Recording that the bytes are gone is the server's
       // business, not a client's.
-      allow update: if (resource.data.ownerUid == uid() ? isApproved() : isWriter())
+      // M3=A: the owner may do this whatever its status, as long as it is signed in verified.
+      allow update: if (resource.data.ownerUid == uid()
+                          ? isVerifiedSelf(resource.data.ownerUid)
+                          : isWriter())
         && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['deleteRequestedAt'])
         && !('deleteRequestedAt' in resource.data)
@@ -592,6 +763,76 @@ service cloud.firestore {
       // An administrative reset genuinely lifts the lifetime cap for that user. It is
       // audited, not prevented — see docs/BACKEND_OPEN_CONTRACTS.md.
       allow update: if isWriter()
+        && request.resource.data.resetBy == uid()
+        && request.resource.data.resetAt == request.time;
+    }
+
+    // ------------------------------------------------ withdrawal intents (M3=A)
+    //
+    // "Take this back", recorded by id and nothing else. Any verified, registered account may
+    // write one for its own ids -- revoked and pending included -- because it can only ever
+    // stop something: a case, message or screenshot under that id can no longer be created
+    // or finalized. It deletes nothing and changes nothing already accepted; there is no
+    // client path from an intent to a deletion. Removing a `submitted` leftover is server
+    // work (S4), which runs with the Admin SDK and must itself verify that the intent is the
+    // owner's and that the target is not accepted.
+    //
+    // Rate limited like uploads, by a window of 20 per hour that heals on its own. There is
+    // no lifetime cap to exhaust; the writer reset below is an emergency valve only.
+
+    function withdrawalQuotaDoc(userId) {
+      return /databases/$(database)/documents/users/$(userId)/quota/withdrawals;
+    }
+
+    // The quota step and the intent name each other, so one step covers one intent.
+    function withdrawalBound(userId, targetId) {
+      return !exists(withdrawalDoc(userId, targetId))
+        && getAfter(withdrawalDoc(userId, targetId)).data.createdAt == request.time;
+    }
+
+    match /users/{userId}/withdrawals/{targetId} {
+      allow get: if isVerifiedSelf(userId);
+      allow list: if false;
+
+      allow create: if isVerifiedSelf(userId)
+        && exists(/databases/$(database)/documents/users/$(userId))
+        && request.resource.data.keys().hasOnly(['kind', 'caseId', 'createdAt'])
+        && request.resource.data.keys().hasAll(['kind', 'caseId', 'createdAt'])
+        && request.resource.data.kind in ['case', 'message', 'attachment']
+        && request.resource.data.caseId is string
+        && request.resource.data.caseId.size() > 0
+        && request.resource.data.caseId.size() <= 128
+        && (request.resource.data.kind != 'case' || request.resource.data.caseId == targetId)
+        && request.resource.data.createdAt == request.time
+        && getAfter(withdrawalQuotaDoc(userId)).data.lastWithdrawalId == targetId;
+
+      allow update, delete: if false;
+    }
+
+    match /users/{userId}/quota/withdrawals {
+      allow get: if isVerifiedSelf(userId) || isReader();
+      allow delete: if false;
+
+      allow create: if isVerifiedSelf(userId)
+        && request.resource.data.keys().hasOnly(['windowStart', 'windowCount', 'lastWithdrawalId'])
+        && request.resource.data.keys().hasAll(['windowStart', 'windowCount', 'lastWithdrawalId'])
+        && request.resource.data.windowStart == request.time
+        && request.resource.data.windowCount == 1
+        && request.resource.data.lastWithdrawalId is string
+        && withdrawalBound(userId, request.resource.data.lastWithdrawalId);
+
+      allow update: if isVerifiedSelf(userId)
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['windowStart', 'windowCount', 'lastWithdrawalId'])
+        && request.resource.data.lastWithdrawalId is string
+        && windowOk()
+        && withdrawalBound(userId, request.resource.data.lastWithdrawalId);
+
+      // Emergency valve, audited: empties the current window and nothing else.
+      allow update: if isWriter()
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['resetBy', 'resetAt', 'windowCount'])
+        && request.resource.data.windowCount == 0
         && request.resource.data.resetBy == uid()
         && request.resource.data.resetAt == request.time;
     }
