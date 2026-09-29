@@ -16,6 +16,22 @@
 //                                  token refresh; the mirror has already closed every path).
 //   delete-account <email|uid>     M4: deletes the account and everything linked to it
 //                                  (server/account-deletion.mjs). No self-deletion.
+//   reply <caseId> --event <id> --body-file <path>
+//                                  a public support reply (server/support.mjs): one event, one
+//                                  publicRev/activityRev bump, makes the case unread for the owner.
+//   set-status <caseId> --event <id> --status <S> [--release-tag T --version-code N --distributed-at ISO]
+//                                  a public status change; the evidence flags are Levererat's
+//                                  delivery evidence and are refused for any other status.
+//   note <caseId> --event <id> --body-file <path>
+//                                  an internal note: invisible to the owner, no bump, no unread,
+//                                  never a notification.
+//   close <caseId>                 closes the case (one way; starts the closed-case retention clock).
+//
+// Support commands act as ADMIN_EMAIL and go through the same writer check the rules apply
+// (verified Auth user + approved users/ + live writer admins/). The Admin SDK bypasses the rules,
+// so every invariant lives in server/support.mjs. `--event` is the idempotency key: re-running the
+// same command is reported as already done and bumps nothing; the same id with other content is
+// refused.
 //
 // SAFETY CONTRACT — the same as scripts/admin/m1-bootstrap.mjs:
 //   - Exact project lock, before any read: TARGET_PROJECT only.
@@ -32,10 +48,14 @@
 //   node scripts/admin/voice-admin.mjs grant-admin lars@optiqon.se --role writer --project ... [--apply]
 //   node scripts/admin/voice-admin.mjs revoke-admin someone@example.com --project ... [--apply]
 //   node scripts/admin/voice-admin.mjs delete-account tester@example.com --project ... [--apply]
+//   node scripts/admin/voice-admin.mjs reply <caseId> --event r-1 --body-file reply.txt --project ... [--apply]
+//   node scripts/admin/voice-admin.mjs set-status <caseId> --event s-1 --status Planerat --project ... [--apply]
+//   node scripts/admin/voice-admin.mjs close <caseId> --project ... [--apply]
 
 import { fileURLToPath } from 'node:url';
 import { ADMIN_EMAIL, cliCredential, liveFirestore, TARGET_PROJECT } from './m1-bootstrap.mjs';
 import { authAdapter, deleteAccount } from '../../server/account-deletion.mjs';
+import { caseOpen, closeCase, internalNote, publicReply, statusChange } from '../../server/support.mjs';
 
 export { TARGET_PROJECT };
 
@@ -61,7 +81,9 @@ const ROLES = ['writer', 'reader'];
  *   auth, storage                                        // delete-account (see account-deletion.mjs)
  * }
  */
-export async function run({ command, target, role, until, projectId, apply = false, deps }) {
+export async function run({
+  command, target, role, until, eventId, body, toStatus, evidence, projectId, apply = false, deps,
+}) {
   const { identity, lookupUid, log = () => {} } = deps;
   if (projectId !== TARGET_PROJECT) {
     abort('WRONG_PROJECT', `refusing to run against '${projectId}'; this tool only knows '${TARGET_PROJECT}'`);
@@ -82,6 +104,11 @@ export async function run({ command, target, role, until, projectId, apply = fal
       return revokeAdmin(ctx, { email: target });
     case 'delete-account':
       return deleteAccountCommand(ctx, { target });
+    case 'reply':
+    case 'set-status':
+    case 'note':
+    case 'close':
+      return supportCommand(ctx, command, { caseId: target, eventId, body, toStatus, evidence });
     default:
       abort('UNKNOWN_COMMAND', `'${command}'`);
   }
@@ -234,16 +261,69 @@ async function deleteAccountCommand(ctx, { target }) {
   return { action: 'delete-account', uid, ...r };
 }
 
+// ------------------------------------------------------------------------ support ops
+
+const SUPPORT_OPS = {
+  reply: publicReply,
+  'set-status': statusChange,
+  note: internalNote,
+  close: closeCase,
+};
+
+/**
+ * Dry run: reads the case and the event id and prints what would be written; the support core is
+ * not called. Apply: the core decides everything inside its transaction (writer check, case
+ * state, transition, idempotency), so a dry run that looked fine can still be refused.
+ */
+async function supportCommand(ctx, command, { caseId, eventId, body, toStatus, evidence }) {
+  const { db, log, apply, adminUid } = ctx;
+  if (typeof caseId !== 'string' || caseId.length === 0) abort('BAD_TARGET', 'a caseId is required');
+  if (command !== 'close' && !eventId) abort('BAD_ARGS', '--event <id> is required (it is the idempotency key)');
+  if ((command === 'reply' || command === 'note') && typeof body !== 'string') abort('BAD_ARGS', '--body-file is required');
+  if (command === 'set-status' && !toStatus) abort('BAD_ARGS', '--status is required');
+  const ev = evidence == null ? undefined : { ...evidence, verifiedBy: adminUid };
+  const args = { caseId, eventId, actorUid: adminUid, body, toStatus, evidence: ev };
+
+  const snap = await db.doc(`cases/${caseId}`).get();
+  const c = snap.exists ? snap.data() : null;
+  const existing = eventId ? await db.doc(`cases/${caseId}/events/${eventId}`).get() : null;
+  const step = {
+    op: command, caseId, eventId: eventId ?? null, actorUid: adminUid,
+    case: c ? { state: c.state, status: c.statusCache ?? null, open: caseOpen(c), closed: c.closedAt != null } : 'missing',
+    eventExists: existing?.exists === true,
+  };
+  if (command === 'set-status') step.toStatus = toStatus;
+  if (body != null) step.bodyChars = body.length;
+  if (ev) step.evidence = { ...ev, distributedAt: String(ev.distributedAt) };
+
+  if (!apply) {
+    report(log, `${command} ${caseId}`, [step], false, false);
+    return { action: command, caseId, applied: false, plan: step };
+  }
+  const r = await SUPPORT_OPS[command]({ db, FieldValue: ctx.FieldValue, auth: ctx.auth, now: ctx.now }, args);
+  report(log, `${command} ${caseId}`, [step], true, r.outcome === 'written');
+  return { action: command, caseId, applied: true, outcome: r.outcome };
+}
+
 // ----------------------------------------------------------------------- CLI wiring
 
 function parseArgs(argv) {
-  const args = { apply: false, project: null, command: null, target: null, role: null, until: null };
+  const args = {
+    apply: false, project: null, command: null, target: null, role: null, until: null,
+    event: null, bodyFile: null, status: null, releaseTag: null, versionCode: null, distributedAt: null,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--apply') args.apply = true;
     else if (a === '--project') args.project = argv[++i];
     else if (a === '--role') args.role = argv[++i];
     else if (a === '--until') args.until = argv[++i];
+    else if (a === '--event') args.event = argv[++i];
+    else if (a === '--body-file') args.bodyFile = argv[++i];
+    else if (a === '--status') args.status = argv[++i];
+    else if (a === '--release-tag') args.releaseTag = argv[++i];
+    else if (a === '--version-code') args.versionCode = argv[++i];
+    else if (a === '--distributed-at') args.distributedAt = argv[++i];
     else if (a.startsWith('--')) abort('BAD_FLAG', a);
     else if (!args.command) args.command = a;
     else if (!args.target) args.target = a;
@@ -254,9 +334,21 @@ function parseArgs(argv) {
   return args;
 }
 
+/** Levererat evidence from the flags, or undefined when none is given. */
+export function evidenceFromArgs({ releaseTag, versionCode, distributedAt }) {
+  if (releaseTag == null && versionCode == null && distributedAt == null) return undefined;
+  const at = new Date(distributedAt ?? '');
+  if (!releaseTag || !/^\d+$/.test(String(versionCode ?? '')) || Number.isNaN(at.getTime())) {
+    abort('BAD_EVIDENCE', '--release-tag, --version-code <int> and --distributed-at <ISO time> go together');
+  }
+  return { releaseTag, versionCode: Number(versionCode), distributedAt: at };
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.project !== TARGET_PROJECT) abort('WRONG_PROJECT', `'${args.project}'`);
+  const evidence = evidenceFromArgs(args);
+  const body = args.bodyFile ? (await import('node:fs')).readFileSync(args.bodyFile, 'utf8') : undefined;
   const admin = await import('firebase-admin/app');
   const { FieldValue } = await import('firebase-admin/firestore');
   const { getAuth } = await import('firebase-admin/auth');
@@ -297,6 +389,10 @@ async function main() {
     target: args.target,
     role: args.role,
     until: args.until,
+    eventId: args.event,
+    body,
+    toStatus: args.status,
+    evidence,
     projectId: args.project,
     apply: args.apply,
     deps: {

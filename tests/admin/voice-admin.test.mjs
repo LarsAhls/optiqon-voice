@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { after, before, beforeEach, test } from 'node:test';
 import { deleteApp, initializeApp } from 'firebase-admin/app';
 import { FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore';
-import { AdminToolError, run, TARGET_PROJECT } from '../../scripts/admin/voice-admin.mjs';
+import { AdminToolError, evidenceFromArgs, run, TARGET_PROJECT } from '../../scripts/admin/voice-admin.mjs';
 import { ADMIN_EMAIL } from '../../scripts/admin/m1-bootstrap.mjs';
 import { memoryAuth } from '../../server/account-deletion.mjs';
 import { memoryStorage } from '../../server/storage.mjs';
@@ -237,4 +237,97 @@ test('delete-account: a uid target reaches leftovers whose Auth account is alrea
   const r = await go({ command: 'delete-account', target: 'other', apply: true });
   assert.equal(r.applied, true);
   assert.equal(await peek('users/other'), undefined);
+});
+
+// ------------------------------------------------------------------ support ops
+
+const withWriter = () => ({
+  auth: memoryAuth({ lars: { email: ADMIN_EMAIL, emailVerified: true }, tester: { email: 'tester@example.com' } }),
+});
+async function seedCase() {
+  const t = Timestamp.now();
+  await db.doc('cases/c1').set({
+    ownerUid: 'tester', title: 't', body: '', statusCache: 'Mottaget', lastStatusEventId: null,
+    createdAt: t, updatedAt: t, lastActivityAt: t, state: 'accepted', acceptedAt: t,
+    activityRev: 3, publicRev: 1, approvalGeneration: 0,
+  });
+}
+
+test('support: reply is a dry run by default and writes nothing', async () => {
+  await seedCase();
+  const r = await go({ command: 'reply', target: 'c1', eventId: 'r1', body: 'Tack!' }, withWriter());
+  assert.equal(r.applied, false);
+  assert.equal(r.plan.case.open, true);
+  assert.equal(r.plan.eventExists, false);
+  assert.equal(await peek('cases/c1/events/r1'), undefined);
+  assert.equal((await peek('cases/c1')).publicRev, 1);
+});
+
+test('support: reply --apply bumps once as the admin; a re-run is already_done', async () => {
+  await seedCase();
+  const a = await go({ command: 'reply', target: 'c1', eventId: 'r1', body: 'Tack!', apply: true }, withWriter());
+  assert.equal(a.outcome, 'written');
+  const e = await peek('cases/c1/events/r1');
+  assert.equal(e.actorUid, 'lars');
+  assert.equal(e.visibility, 'public');
+  const b = await go({ command: 'reply', target: 'c1', eventId: 'r1', body: 'Tack!', apply: true }, withWriter());
+  assert.equal(b.outcome, 'already_done');
+  const c = await peek('cases/c1');
+  assert.equal(c.publicRev, 2);
+  assert.equal(c.activityRev, 4);
+  await rejects(go({ command: 'reply', target: 'c1', eventId: 'r1', body: 'Annat', apply: true }, withWriter()), 'EVENT_ID_TAKEN');
+});
+
+test('support: an internal note never bumps', async () => {
+  await seedCase();
+  const r = await go({ command: 'note', target: 'c1', eventId: 'n1', body: 'intern', apply: true }, withWriter());
+  assert.equal(r.outcome, 'written');
+  const c = await peek('cases/c1');
+  assert.equal(c.publicRev, 1);
+  assert.equal(c.activityRev, 3);
+  assert.equal((await peek('cases/c1/events/n1')).visibility, 'internal');
+});
+
+test('support: set-status follows the transitions; Levererat takes evidence verified by the admin', async () => {
+  await seedCase();
+  await rejects(go({ command: 'set-status', target: 'c1', eventId: 's0', toStatus: 'Pågår', apply: true }, withWriter()), 'BAD_TRANSITION');
+  await db.doc('cases/c1').update({ statusCache: 'Planerat' });
+  await go({ command: 'set-status', target: 'c1', eventId: 's1', toStatus: 'Pågår', apply: true }, withWriter());
+  assert.equal((await peek('cases/c1')).statusCache, 'Pågår');
+  await rejects(go({ command: 'set-status', target: 'c1', eventId: 's2', toStatus: 'Levererat', apply: true }, withWriter()), 'BAD_EVIDENCE');
+  const evidence = { releaseTag: 'v1.2.0', versionCode: 12, distributedAt: new Date(Date.now() - 60_000) };
+  const r = await go({ command: 'set-status', target: 'c1', eventId: 's2', toStatus: 'Levererat', evidence, apply: true }, withWriter());
+  assert.equal(r.outcome, 'written');
+  assert.equal((await peek('cases/c1/events/s2')).evidence.verifiedBy, 'lars');
+});
+
+test('support: close is one way and idempotent; required args are enforced', async () => {
+  await seedCase();
+  assert.equal((await go({ command: 'close', target: 'c1', apply: true }, withWriter())).outcome, 'written');
+  assert.equal((await go({ command: 'close', target: 'c1', apply: true }, withWriter())).outcome, 'already_done');
+  // Closed is not the same as not open: a closed case still takes a reply (support.test.mjs).
+  await db.doc('cases/c1').update({ retentionState: 'purging' });
+  await rejects(go({ command: 'reply', target: 'c1', eventId: 'r9', body: 'x', apply: true }, withWriter()), 'PURGING');
+  await rejects(go({ command: 'reply', target: 'c1', body: 'x' }, withWriter()), 'BAD_ARGS');
+  await rejects(go({ command: 'note', target: 'c1', eventId: 'n1' }, withWriter()), 'BAD_ARGS');
+  await rejects(go({ command: 'set-status', target: 'c1', eventId: 's1' }, withWriter()), 'BAD_ARGS');
+});
+
+test('support: without a live writer admins/ entry the core refuses, and the project lock holds', async () => {
+  await seedCase();
+  await db.doc('admins/lars').set({ role: 'reader' });
+  await rejects(go({ command: 'reply', target: 'c1', eventId: 'r1', body: 'x', apply: true }, withWriter()), 'NOT_WRITER');
+  await rejects(run({
+    command: 'reply', target: 'c1', eventId: 'r1', body: 'x', projectId: 'optiqon-voice', apply: true, deps: deps(withWriter()),
+  }), 'WRONG_PROJECT');
+  assert.equal(await peek('cases/c1/events/r1'), undefined);
+});
+
+test('support: evidence flags parse together or not at all', () => {
+  assert.equal(evidenceFromArgs({}), undefined);
+  const e = evidenceFromArgs({ releaseTag: 'v1', versionCode: '7', distributedAt: '2026-09-01T10:00:00Z' });
+  assert.equal(e.versionCode, 7);
+  assert.ok(e.distributedAt instanceof Date);
+  assert.throws(() => evidenceFromArgs({ releaseTag: 'v1', versionCode: 'x', distributedAt: '2026-09-01' }), /BAD_EVIDENCE/);
+  assert.throws(() => evidenceFromArgs({ versionCode: '7', distributedAt: '2026-09-01' }), /BAD_EVIDENCE/);
 });

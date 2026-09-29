@@ -20,7 +20,7 @@
 //
 // The send marker users/{owner}/notificationSends/{caseId}:{eventId} carries the case id and a
 // time, nothing else; it is deleted with the case (retention) and with the account (M4).
-// Nothing here is deployed: FS-G wires `onEventCreated` to an Eventarc trigger on
+// Nothing here is deployed: server/main.mjs `onCaseEventCreated` is the entrypoint FS-G wires to an Eventarc trigger on
 // cases/{caseId}/events/{eventId} and provides a real FCM `messenger`.
 
 import { millis } from './time.mjs';
