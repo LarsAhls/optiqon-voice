@@ -210,4 +210,32 @@ class OutboxPersistenceTest {
         assertEquals(0, dao.releaseHeldFor("uid-a"))
         assertEquals(listOf("1", "2"), dao.pendingFor("uid-a").map { it.id })
     }
+
+    @Test
+    fun `a send's outcome is written only over a row still pending, never over a hold`() = runTest {
+        val dao = db.outboxDao()
+        dao.insert(entry("1", "uid-a"))
+        dao.insert(entry("2", "uid-a"))
+        dao.insert(entry("3", "uid-a"))
+        // Row 2 was inside the sender when the hold landed; row 3 was taken back meanwhile.
+        dao.holdPendingFor("uid-a")
+        dao.releaseHeldFor("uid-a")
+        dao.holdPendingFor("uid-a")
+        dao.discard("3")
+        dao.releaseHeldFor("uid-a")
+        dao.holdPendingFor("uid-a")
+
+        assertEquals(0, dao.completeIfPending("2", OutboxState.SENT, attempts = 1, error = null))
+        assertEquals(0, dao.completeIfPending("2", OutboxState.BLOCKED, attempts = 1, error = "PERMISSION_DENIED"))
+        assertEquals(0, dao.completeIfPending("3", OutboxState.SENT, attempts = 1, error = null))
+        assertEquals(OutboxState.HELD, dao.byId("2")!!.state)
+        assertEquals(0, dao.byId("2")!!.attempts)
+        assertEquals(null, dao.byId("3"))
+
+        dao.releaseHeldFor("uid-a")
+        assertEquals(1, dao.completeIfPending("1", OutboxState.SENT, attempts = 1, error = null))
+        assertEquals(0, dao.completeIfPending("1", OutboxState.PENDING, attempts = 2, error = "late"))
+        assertEquals(OutboxState.SENT, dao.byId("1")!!.state)
+        assertEquals(1, dao.byId("1")!!.attempts)
+    }
 }

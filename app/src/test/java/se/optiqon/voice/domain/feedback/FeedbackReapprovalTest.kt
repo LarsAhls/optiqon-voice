@@ -3,7 +3,9 @@ package se.optiqon.voice.domain.feedback
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -329,6 +331,73 @@ class FeedbackReapprovalTest {
 
         assertTrue("sent=$sent", sent.isEmpty())
         assertTrue(outbox.rows.all { it.state == OutboxState.HELD })
+    }
+
+    /**
+     * The sender is paused on the case opening; a real server verdict revokes the account while
+     * it is inside; then the sender returns success. The remote may well have taken the row, but
+     * the hold came first locally and must not be overwritten by the late success.
+     */
+    @Test
+    fun `a row that succeeds in flight after the hold landed stays held, and so does its case`() = runTest {
+        val f = fixture(backgroundScope)
+        val caseId = approvedWithCase(f)
+        val order = outbox.rows.sortedBy { it.createdAtMs }.map { it.id }
+        val opening = order.first()
+        val inside = CompletableDeferred<String>()
+        val release = CompletableDeferred<Unit>()
+        duringSend = { entry -> duringSend = {}; inside.complete(entry.id); release.await() }
+
+        val run = async { flush(f).run() }
+        assertEquals(opening, inside.await())
+        f.recordServerVerdict(AccountStatus.REVOKED)
+        assertEquals(OutboxState.HELD, outbox.byId(opening)?.state)
+        release.complete(Unit)
+        run.await()
+
+        assertEquals(listOf(opening), sent)
+        assertEquals(order.map { OutboxState.HELD }, order.map { outbox.byId(it)?.state })
+
+        // Reapproval, a message added to the same case, an unrelated run, a restart: nothing.
+        f.recordServerVerdict(AccountStatus.APPROVED)
+        composer(f).addMessage(caseId, "en till", emptyList())
+        flush(f).run()
+        val restarted = fixture(backgroundScope)
+        restarted.signIn("uid-a")
+        restarted.recordServerVerdict(AccountStatus.APPROVED)
+        flush(restarted).run()
+        assertEquals("only the row that was already inside the sender", listOf(opening), sent)
+        assertTrue(outbox.rows.none { it.state == OutboxState.SENT })
+
+        // The owner's word: everything goes, the opening again — the remote is idempotent on it.
+        composer(restarted).releaseHeld()
+        flush(restarted).run()
+        assertEquals(listOf(opening) + outbox.rows.sortedBy { it.createdAtMs }.map { it.id }, sent)
+        assertTrue(outbox.rows.all { it.state == OutboxState.SENT })
+    }
+
+    @Test
+    fun `a screenshot that succeeds in flight after the hold landed stays held`() = runTest {
+        val f = fixture(backgroundScope)
+        approvedWithCase(f)
+        val (opening, upload) = outbox.rows.sortedBy { it.createdAtMs }.map { it.id }
+        val inside = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        duringSend = { entry ->
+            if (entry.id == upload) { duringSend = {}; inside.complete(Unit); release.await() }
+        }
+
+        val run = async { flush(f).run() }
+        inside.await()
+        f.recordServerVerdict(AccountStatus.REVOKED)
+        release.complete(Unit)
+        run.await()
+
+        assertEquals(OutboxState.SENT, outbox.byId(opening)?.state)
+        assertEquals(OutboxState.HELD, outbox.byId(upload)?.state)
+        f.recordServerVerdict(AccountStatus.APPROVED)
+        flush(f).run()
+        assertEquals(listOf(opening, upload), sent)
     }
 
     @Test

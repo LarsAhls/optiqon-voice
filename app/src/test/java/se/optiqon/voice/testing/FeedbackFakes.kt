@@ -3,6 +3,7 @@ package se.optiqon.voice.testing
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import se.optiqon.voice.data.db.dao.OutboxDao
 import se.optiqon.voice.data.db.entity.OutboxEntry
 import se.optiqon.voice.data.db.entity.OutboxState
@@ -47,6 +48,21 @@ class MemoryOutboxDao : OutboxDao {
         table.value = rows.map {
             if (it.id == id) it.copy(state = state, attempts = attempts, lastError = error) else it
         }
+    }
+
+    /** Mirrors the SQL: one step, and only a row still pending moves. */
+    override suspend fun completeIfPending(id: String, state: OutboxState, attempts: Int, error: String?): Int {
+        var changed = 0
+        table.update { current ->
+            changed = 0
+            current.map {
+                if (it.id == id && it.state == OutboxState.PENDING) {
+                    changed = 1
+                    it.copy(state = state, attempts = attempts, lastError = error)
+                } else it
+            }
+        }
+        return changed
     }
 
     override suspend fun discard(id: String) {

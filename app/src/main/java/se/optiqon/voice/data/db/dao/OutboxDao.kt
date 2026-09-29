@@ -39,6 +39,21 @@ interface OutboxDao {
     suspend fun updateState(id: String, state: OutboxState, attempts: Int, error: String?)
 
     /**
+     * Records how a send ended, but only if the row is still waiting to be sent. Returns the rows
+     * changed: 0 when it was held or taken back while it was inside the sender.
+     *
+     * One statement, so SQLite orders it against [holdPendingFor] and [discard] as a whole:
+     * whichever commits first wins, and a success or failure arriving after a hold cannot
+     * overwrite it. Reading the row first and writing afterwards would leave a gap between the
+     * two for the hold to land in.
+     */
+    @Query(
+        "UPDATE outbox SET state = :state, attempts = :attempts, lastError = :error " +
+            "WHERE id = :id AND state = 'PENDING'"
+    )
+    suspend fun completeIfPending(id: String, state: OutboxState, attempts: Int, error: String?): Int
+
+    /**
      * Parks the account's waiting case rows when its approval is withdrawn: see
      * [OutboxState.HELD]. Screenshot removals are left alone — they are the owner's word already
      * given, and holding one would keep a picture readable. Rows of the earlier text-only screen
