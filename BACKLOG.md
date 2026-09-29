@@ -127,8 +127,8 @@ this repository, migrate this backlog file with it.
   - negative probes, then narrowly authorised positive probes and race probes
   - cleanup
   - acceptance
-- **Scheduler region.** If Cloud Scheduler is not available in `europe-north2`, choosing
-  `europe-north1` for the job alone is an FS-G decision.
+- **Scheduler region.** Decided: M7=A. The Scheduler job alone runs in `europe-central2`
+  (Warsaw); Firestore, Storage, Cloud Run and Eventarc remain in `europe-north2`.
 - **Client wiring is done repo-side.** Unread (`FirestoreCaseReads` → `CaseUnread` →
   `UnreadTracker` → the Feedback list) and push (`firebase-messaging`, `FeedbackMessagingService`,
   `FirestoreNotificationTokens`, `NotificationRegistrar`, `FeedbackPushLifecycle`, sign-out

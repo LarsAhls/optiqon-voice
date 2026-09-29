@@ -19,9 +19,11 @@ test('the definitions name the one project, bucket and region', () => {
   assert.equal(targets.region, 'europe-north2');
   assert.equal(targets.service.region, 'europe-north2');
   for (const t of targets.triggers) assert.equal(t.location, 'europe-north2', t.name);
-  // The scheduler is the one place another region may come up; it must stay flagged for FS-G.
-  assert.equal(targets.scheduler.location, 'europe-north2');
-  assert.match(targets.scheduler.locationNote, /FS-G/);
+  // M7=A, decided in FS-G: the scheduler job alone is in europe-central2. It holds only metadata,
+  // so no open fallback may remain in its note.
+  assert.equal(targets.scheduler.location, 'europe-central2');
+  assert.match(targets.scheduler.locationNote, /M7=A/);
+  assert.doesNotMatch(targets.scheduler.locationNote, /europe-north1|candidate|not made here/);
   assert.match(targets.status, /NOT DEPLOYED/);
 });
 

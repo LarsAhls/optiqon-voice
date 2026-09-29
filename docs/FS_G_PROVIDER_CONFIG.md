@@ -25,7 +25,9 @@ The machine-readable version is in `deploy/fs-g/`:
 
 - **Project:** `optiqon-voice-47498`. The server refuses any other project (`server/config.mjs`),
   and so does the admin tool (`scripts/admin/voice-admin.mjs`).
-- **Region:** `europe-north2`, the same region as Firestore `(default)`.
+- **Region:** `europe-north2`, the same region as Firestore `(default)`. Firestore, Storage, Cloud
+  Run and Eventarc are all there. The one exception is the Cloud Scheduler job, in
+  `europe-central2` (M7=A, see § Scheduler region).
 - **Bucket:** `gs://optiqon-voice-47498-eun2`.
 
 ## Runtime shape
@@ -60,6 +62,9 @@ These APIs may not be enabled yet; the runbook's preflight checks each one.
 - Cloud Build (`cloudbuild.googleapis.com`), if the image is built there rather than locally
 - Firebase Cloud Messaging (`fcm.googleapis.com`)
 - Pub/Sub (`pubsub.googleapis.com`). Eventarc uses it for Firestore triggers.
+- Identity and Access Management (`iam.googleapis.com`), to create the three service accounts.
+  FS-G A found it disabled. Enabling it also enables the IAM Service Account Credentials API, so
+  that one is not a separate line. Enabling either creates no key; the no-key rule below stands.
 
 Firestore and Cloud Storage are already enabled.
 
@@ -132,13 +137,17 @@ Nothing secret goes in the environment. FCM authenticates as the attached identi
 
 ## Scheduler region
 
-Cloud Scheduler is planned in `europe-north2`. If FS-G preflight finds that Cloud Scheduler is not
-offered there, the documented candidate is `europe-north1`.
+**Decided: M7=A. The Cloud Scheduler job lives in `europe-central2` (Warsaw).**
 
-In that case the job only holds its schedule and makes an authenticated call to the
-`europe-north2` service. No Feedback data is stored or processed in `europe-north1`.
+FS-G A (2026-09-29) found that Cloud Scheduler is not offered in `europe-north2`. Lars chose
+`europe-central2` for the job.
 
-**Choosing `europe-north1` is an FS-G decision and is not made here.**
+Only the job's own metadata lives in `europe-central2`: its schedule, its target URL and its OIDC
+identity (`voice-feedback-scheduler@`). The job makes an authenticated call to the
+`europe-north2` service and carries no body. No Feedback data is stored or processed in
+`europe-central2`.
+
+Firestore, Storage, Cloud Run and Eventarc stay in `europe-north2`.
 
 The schedule is every 6 h (`0 */6 * * *`, Europe/Stockholm). That keeps the M5 promise — physical
 deletion within 24 h of a tombstone — even when the event-driven purge was lost: the backstop
@@ -167,6 +176,10 @@ FS-G confirms the billing state before enabling anything.
   reads
 - that the IAM set above is sufficient, and that it is minimal on the live project
 - real latency, and the races under it
-- FCM delivery
+- FCM delivery, over the token path the app uses today. FS-G verifies that path live. A move to
+  Firebase Installations IDs is not part of FS-G and does not block it: during Firebase's
+  transition both patterns are supported.
 - the image build
-- Scheduler availability in the region
+- live service availability in the regions above. FS-G A checked it against Google's location
+  documentation only, because the APIs were still disabled. B checks it live right after
+  enabling them.

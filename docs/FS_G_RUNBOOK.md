@@ -6,8 +6,8 @@
 > go-ahead, given in the FS-G thread. Anything that does not match what this runbook expects is a
 > STOP, not something to work around.
 
-Target: project `optiqon-voice-47498`, region `europe-north2`, bucket
-`gs://optiqon-voice-47498-eun2`. The intended provider shape is in
+Target: project `optiqon-voice-47498`, region `europe-north2` (the Cloud Scheduler job alone is in
+`europe-central2`, M7=A), bucket `gs://optiqon-voice-47498-eun2`. The intended provider shape is in
 [FS_G_PROVIDER_CONFIG.md](FS_G_PROVIDER_CONFIG.md) and `deploy/fs-g/`. The product contracts are
 in [BACKEND_OPEN_CONTRACTS.md](BACKEND_OPEN_CONTRACTS.md), § FS-S12, FS-S34 and FS-S468.
 
@@ -33,14 +33,13 @@ in [BACKEND_OPEN_CONTRACTS.md](BACKEND_OPEN_CONTRACTS.md), § FS-S12, FS-S34 and
    No service-account key is present, or used, anywhere.
 4. **Billing and APIs.** Read the billing state. List which of the APIs in
    FS_G_PROVIDER_CONFIG.md § APIs are enabled. Enable nothing yet.
-5. **Region availability.** Confirm the following in `europe-north2`:
-   - Cloud Run
-   - Eventarc Firestore triggers
-   - Cloud Scheduler
-   - Artifact Registry
+5. **Region availability.** The regions are decided (M7=A, see the config doc § Scheduler
+   region). Confirm:
+   - in `europe-north2`: Cloud Run, Eventarc Firestore triggers, Artifact Registry
+   - in `europe-central2`: Cloud Scheduler
 
-   If Scheduler is missing, STOP and let FS-G decide on `europe-north1` (see the config doc). Any
-   other missing service is a STOP too.
+   While the APIs are still disabled this can only be read from Google's location documentation;
+   B.1a checks it live. Any service missing from its region is a STOP.
 6. **Baseline snapshot.** Record, for rollback:
    - the current Firestore rules release
    - the current Storage rules release (deny-all)
@@ -59,7 +58,12 @@ Output: a preflight record. Any deviation → STOP.
 
 Each step is additive and recorded. No broad role is granted, and no key is created.
 
-1. Enable the missing APIs from A.4.
+1. Enable the missing APIs from A.4, including `iam.googleapis.com` (FS-G A found it disabled).
+
+   **Then, before anything is created, check live availability.** With the APIs on, list each
+   service's locations on the live project and confirm the A.5 regions: Cloud Run, Eventarc and
+   Artifact Registry in `europe-north2`, and Cloud Scheduler in `europe-central2`. A mismatch is a
+   STOP: B.2 and every later step wait.
 2. Create the three service accounts from `deploy/fs-g/targets.json`, with no keys.
 3. Grant exactly the roles in the IAM table:
    - project-level roles on the project
