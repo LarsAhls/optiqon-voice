@@ -75,4 +75,32 @@ class AccountSignOutTest {
 
         assertFalse(onboardingCompleteWhenDropped!!)
     }
+
+    @Test
+    fun `the push registration is removed under the account being left, before it is signed out`() = runTest {
+        val leaving = preferencesOn(StorageRoot("signoutc"))
+        auth.signIn("uid-c", "c@example.test")
+        val order = mutableListOf<String>()
+        val recording = object : AuthGateway by auth {
+            override suspend fun signOut() {
+                order += "signOut"
+                auth.signOut()
+            }
+        }
+
+        AccountSignOut(recording, leaving, deviceDataOwner, AccountLeaving { uid -> order += "leaving:$uid" }).signOut()
+
+        org.junit.Assert.assertEquals(listOf("leaving:uid-c", "signOut"), order)
+        assertNull(auth.currentUid)
+    }
+
+    @Test
+    fun `a failing push removal never keeps anyone signed in`() = runTest {
+        val leaving = preferencesOn(StorageRoot("signoutd"))
+        auth.signIn("uid-d", "d@example.test")
+
+        AccountSignOut(auth, leaving, deviceDataOwner, AccountLeaving { error("offline") }).signOut()
+
+        assertNull(auth.currentUid)
+    }
 }

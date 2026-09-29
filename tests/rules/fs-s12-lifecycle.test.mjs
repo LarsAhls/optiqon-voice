@@ -135,7 +135,7 @@ async function writerNote(caseId, eventId, { visibility = 'public', bump = true,
   if (bump) {
     b.update(doc(db, `cases/${caseId}`), {
       activityRev: c.activityRev + 1, lastRelevantAt: serverTimestamp(), activityFor: eventId,
-      ...kase,
+      publicRev: (c.publicRev ?? 0) + 1, lastActivityAt: serverTimestamp(), ...kase,
     });
   }
   return b.commit();
@@ -150,7 +150,12 @@ async function statusBatch(caseId, eventId, to, { bump = true } = {}) {
     toStatus: to, createdAt: serverTimestamp(), state: 'accepted',
   });
   const upd = { statusCache: to, lastStatusEventId: eventId, updatedAt: serverTimestamp() };
-  if (bump) Object.assign(upd, { activityRev: c.activityRev + 1, lastRelevantAt: serverTimestamp() });
+  if (bump) {
+    Object.assign(upd, {
+      activityRev: c.activityRev + 1, lastRelevantAt: serverTimestamp(),
+      publicRev: (c.publicRev ?? 0) + 1, lastActivityAt: serverTimestamp(),
+    });
+  }
   b.update(doc(db, `cases/${caseId}`), upd);
   return b.commit();
 }

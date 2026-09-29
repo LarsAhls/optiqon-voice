@@ -230,8 +230,12 @@ internal fun FeedbackListContent(
                     }
                     state.remoteCases.forEachIndexed { i, c ->
                         if (i > 0 || local.isNotEmpty()) HairlineDivider()
+                        val isUnread = c.id in state.unread
                         ListRow(
                             title = c.title,
+                            modifier = if (isUnread) Modifier.testTag("unread_${c.id}") else Modifier,
+                            subtitle = if (isUnread) stringResource(R.string.feedback_unread) else null,
+                            subtitleColor = if (isUnread) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                             onClick = { onOpen(c.id) },
                             trailing = {
                                 StatusPill(
@@ -338,9 +342,9 @@ internal fun FeedbackDetailContent(
                             // A screenshot on its way out is never drawn, whatever is in memory.
                             leading = { Thumbnail(shot.thumbnail?.takeIf { shot.state.showsContent }) },
                             onClick = { onDeleteShot(shot.aid) },
-                            // A case that never left the phone is the owner's own to tidy up,
-                            // approved or not; a removal already on its way needs no second tap.
-                            enabled = (state.approved || detail.case == null) && shot.state != ShotState.REMOVING,
+                            // The owner may take a screenshot down approved or not (M3); a
+                            // removal already on its way needs no second tap.
+                            enabled = shot.state != ShotState.REMOVING,
                             trailing = { Icon(Icons.Default.Close, contentDescription = null) }
                         )
                     }

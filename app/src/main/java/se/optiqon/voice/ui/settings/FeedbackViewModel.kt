@@ -34,6 +34,7 @@ import se.optiqon.voice.domain.feedback.FeedbackLimits
 import se.optiqon.voice.domain.feedback.HeldOutcome
 import se.optiqon.voice.domain.feedback.LocalFeedback
 import se.optiqon.voice.domain.feedback.ShotState
+import se.optiqon.voice.domain.feedback.UnreadTracker
 import se.optiqon.voice.domain.feedback.showsContent
 import java.io.File
 import javax.inject.Inject
@@ -57,7 +58,8 @@ class FeedbackViewModel @Inject constructor(
     private val outbox: OutboxDao,
     private val auth: AuthGateway,
     private val approval: ApprovalCheck,
-    private val config: FeedbackConfig
+    private val config: FeedbackConfig,
+    private val unread: UnreadTracker
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(FeedbackUiState(remoteEnabled = config.remoteEnabled))
@@ -107,9 +109,16 @@ class FeedbackViewModel @Inject constructor(
         val uid = auth.currentUid ?: return
         if (!config.remoteEnabled) return
         viewModelScope.launch {
-            if (!approval.isApproved()) return@launch
+            if (!approval.isApproved()) {
+                _state.update { it.copy(unread = emptySet()) }
+                return@launch
+            }
             val cases = runCatching { remote.listCases(uid) }
-            _state.update { it.copy(remoteCases = cases.getOrDefault(it.remoteCases), remoteError = cases.isFailure) }
+            val shown = cases.getOrDefault(_state.value.remoteCases)
+            // Firestore's markers decide; a failed read shows nothing as unread rather than guess.
+            val fresh = if (cases.isSuccess) unread.refresh(shown) else _state.value.unread
+            if (auth.currentUid != uid) return@launch
+            _state.update { it.copy(remoteCases = shown, remoteError = cases.isFailure, unread = fresh) }
         }
     }
 
@@ -197,6 +206,9 @@ class FeedbackViewModel @Inject constructor(
                 restate()
                 return@launch
             }
+            // Opening is the one thing that marks a case read; a notification never does.
+            val left = unread.opened(case)
+            _state.update { it.copy(unread = left) }
             val events = runCatching { remote.events(caseId) }
             val attachments = runCatching { remote.attachments(caseId) }
             if (shotSource?.first == caseId) shotSource = caseId to attachments.getOrDefault(emptyList())

@@ -76,6 +76,23 @@ class FeedbackScreenTest {
     }
 
     @Test
+    fun `an unread remote case is marked as a new reply and a read one is not`() {
+        list(
+            FeedbackUiState(
+                remoteEnabled = true,
+                approved = true,
+                signedIn = true,
+                remoteCases = listOf(remoteCase, remoteCase.copy(id = "case-2", title = "Fel språk i menyn")),
+                unread = setOf("case-1")
+            )
+        )
+
+        composeRule.onAllNodesWithTag("unread_case-1").assertCountEquals(1)
+        composeRule.onAllNodesWithTag("unread_case-2").assertCountEquals(0)
+        composeRule.onNodeWithText(string(R.string.feedback_unread)).assertIsDisplayed()
+    }
+
+    @Test
     fun `the list shows the device's queue, the remote cases and the unsent legacy note`() {
         list(
             FeedbackUiState(
@@ -280,6 +297,28 @@ class FeedbackScreenTest {
         }
         composeRule.onNodeWithText(string(R.string.feedback_shot_removing)).assertIsDisplayed()
         composeRule.onNodeWithText(string(R.string.feedback_notice_screenshot_removed)).assertDoesNotExist()
+    }
+
+    @Test
+    fun `an owner who is no longer approved can still take a sent screenshot down`() {
+        val detail = CaseDetail(
+            caseId = "case-1",
+            case = remoteCase,
+            queued = null,
+            shots = listOf(Shot("aid-1", messageId = null, state = ShotState.AVAILABLE, thumbnail = null))
+        )
+        composeRule.setContent {
+            OptiqonVoiceTheme {
+                FeedbackDetailContent(
+                    state = FeedbackUiState(page = FeedbackPage.Detail("case-1"), remoteEnabled = true, approved = false, detail = detail),
+                    padding = padding,
+                    reply = "",
+                    onReply = {}, onPick = {}, onRemoveImage = {}, onSubmit = {}, onDeleteShot = {}, onDiscardQueued = {}
+                )
+            }
+        }
+        // M3: removing the owner's own picture needs no approval.
+        composeRule.onNodeWithText(string(R.string.feedback_delete_screenshot)).assertIsEnabled()
     }
 
     private fun shotsOnly(vararg shots: Shot) {

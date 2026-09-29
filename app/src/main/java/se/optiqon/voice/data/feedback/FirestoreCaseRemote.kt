@@ -231,7 +231,8 @@ class FirestoreCaseRemote(
                     createdAtMs = d.ms("createdAt"),
                     lastActivityAtMs = d.ms("lastActivityAt"),
                     activeAttachmentCount = (d.getLong("activeAttachmentCount") ?: 0L).toInt(),
-                    closed = d.contains("closedAt")
+                    closed = d.contains("closedAt"),
+                    publicRev = d.getLong("publicRev") ?: 0L
                 )
             }
             .sortedByDescending { it.lastActivityAtMs ?: Long.MAX_VALUE }

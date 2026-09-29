@@ -8,6 +8,7 @@ import se.optiqon.voice.data.preferences.PreferencesDataStore
 import se.optiqon.voice.data.repository.ProfileRepository
 import se.optiqon.voice.data.storage.StorageOwnership
 import se.optiqon.voice.domain.access.AccessSession
+import se.optiqon.voice.service.FeedbackPushLifecycle
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -21,6 +22,7 @@ class OptiqonVoiceApp : Application() {
     @Inject lateinit var profileRepository: ProfileRepository
     @Inject lateinit var accessSession: AccessSession
     @Inject lateinit var storageOwnership: StorageOwnership
+    @Inject lateinit var feedbackPush: FeedbackPushLifecycle
 
     private val startupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -30,9 +32,15 @@ class OptiqonVoiceApp : Application() {
         // Started here rather than lazily from a screen: a revocation has to be noticed even
         // when the only thing running is the bubble service, which has no UI to observe it.
         accessSession.start()
+        // Feedback push follows the account and its approval (no-op unless remote Feedback is
+        // built in); the foreground pass catches a permission changed in system settings.
+        feedbackPush.start()
         ProcessLifecycleOwner.get().lifecycle.addObserver(
             object : DefaultLifecycleObserver {
-                override fun onStart(owner: LifecycleOwner) = accessSession.onForeground()
+                override fun onStart(owner: LifecycleOwner) {
+                    accessSession.onForeground()
+                    feedbackPush.onForeground()
+                }
             }
         )
 

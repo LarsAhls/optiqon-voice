@@ -60,6 +60,8 @@ data class FeedbackUiState(
     val approved: Boolean = false,
     val remoteCases: List<FeedbackCase> = emptyList(),
     val remoteError: Boolean = false,
+    /** Remote cases with a public reply or status change the account has not opened (FS-S468). */
+    val unread: Set<String> = emptySet(),
     val queued: List<QueuedCase> = emptyList(),
     val legacy: List<LegacyNote> = emptyList(),
     /** Rows held when approval was withdrawn; nothing sends them until the owner chooses. */

@@ -217,6 +217,10 @@ async function decide(ctx, { email, to, lookupUid }) {
     }
     if (!counters.exists || !limits.exists) abort('NOT_INITIALISED', `config/counters or config/limits missing — run 'init' first`);
 
+    // M4: an account under deletion is on its way out; approving it would hand a seat to it.
+    if (to === 'approved' && user.get('deletionStartedAt') != null) {
+      abort('ACCOUNT_DELETING', `users/${uid} is being deleted (scripts/admin/voice-admin.mjs delete-account)`);
+    }
     const current = user.get('status');
     if (current === to) {
       return { plan: [], changed: false, uid, note: `users/${uid} is already '${to}'` };
@@ -305,7 +309,7 @@ function parseArgs(argv) {
  * The OAuth client id/secret are the Firebase CLI's own public constants, taken from the
  * installed firebase-tools so they are not duplicated here.
  */
-async function cliCredential() {
+export async function cliCredential() {
   const store = JSON.parse(readFileSync(join(homedir(), '.config', 'configstore', 'firebase-tools.json'), 'utf8'));
   const refreshToken = store?.tokens?.refresh_token;
   const email = store?.user?.email;

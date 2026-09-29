@@ -91,10 +91,14 @@ class CaseComposer(
      * on. An earlier removal of the same screenshot still queued is replaced, not doubled.
      *
      * A tombstone follows unless the case itself has not left the device: then nothing of the
-     * screenshot can be on the server, dropping the upload is the whole removal, and it needs no
-     * approval — it is the owner's own unsent picture on the owner's own phone. Otherwise the
+     * screenshot can be on the server, and dropping the upload is the whole removal. Otherwise the
      * tombstone is queued even when the upload looked unsent, because that upload may be under
      * way right now; the tombstone is what makes sure it cannot stay readable.
+     *
+     * Neither needs approval (M3): a revoked or pending owner may still take their own picture
+     * down. The removal is a local-first pending delete (M6): the screenshot is hidden at once,
+     * the row is the durable intent, and it is called removed only once the server has taken
+     * the tombstone.
      */
     suspend fun deleteScreenshot(caseId: String, aid: String): ComposeOutcome {
         val uid = auth.currentUid ?: return ComposeOutcome.SignedOut
@@ -103,7 +107,8 @@ class CaseComposer(
             .mapNotNull { row -> CaseOutboxPayloads.decode(row.kind, row.payload)?.let { row to it } }
             .filter { (_, payload) -> payload.caseId == caseId }
         val caseOnDevice = unsent.any { (_, payload) -> payload is CasePayload.CreateCase }
-        if (!caseOnDevice && !approval.isApproved()) return ComposeOutcome.NotApproved
+        // No approval needed (M3): taking the owner's own screenshot down only ever removes, so a
+        // revoked or pending owner may still do it, and the rules let it through the same way.
         unsent.filter { (_, payload) ->
             (payload as? CasePayload.Upload)?.aid == aid || (payload as? CasePayload.Tombstone)?.aid == aid
         }.forEach { (row, _) -> outbox.discard(row.id) }
