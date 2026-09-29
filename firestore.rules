@@ -326,6 +326,15 @@ service cloud.firestore {
         && after.lastRelevantAt == request.time;
     }
 
+    // FS-S468: what makes a case unread for its owner. Only a writer's public reply or a
+    // status change moves it, by exactly one, alongside the activity bump; the owner's own
+    // messages and screenshots, internal notes and anything the server does for retention
+    // never do. The owner's read marker (users/{uid}/caseReads/{caseId}) is compared to it.
+    function publicBumped(before, after) {
+      return after.publicRev == before.get('publicRev', 0) + 1
+        && after.lastActivityAt == request.time;
+    }
+
     // See isApproved(): being signed in is not being let in. A revoked owner is not an owner.
     function isCaseOwner(caseId) {
       return isApproved() && get(caseDoc(caseId)).data.ownerUid == uid();
@@ -504,8 +513,10 @@ service cloud.firestore {
       allow update: if isWriter()
         && caseOpen(resource.data)
         && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['activityRev', 'lastRelevantAt', 'activityFor'])
+             .hasOnly(['activityRev', 'lastRelevantAt', 'activityFor', 'publicRev',
+                       'lastActivityAt'])
         && bumped(resource.data, request.resource.data)
+        && publicBumped(resource.data, request.resource.data)
         && request.resource.data.activityFor is string
         && replyWritten(caseId, request.resource.data.activityFor);
 
@@ -522,8 +533,9 @@ service cloud.firestore {
         && caseOpen(resource.data)
         && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['statusCache', 'lastStatusEventId', 'updatedAt',
-                       'activityRev', 'lastRelevantAt'])
+                       'activityRev', 'lastRelevantAt', 'publicRev', 'lastActivityAt'])
         && bumped(resource.data, request.resource.data)
+        && publicBumped(resource.data, request.resource.data)
         && request.resource.data.updatedAt == request.time
         && allowedTransition(resource.data.statusCache, request.resource.data.statusCache)
         && statusEventMatches(caseId, request.resource.data.lastStatusEventId,
@@ -835,6 +847,59 @@ service cloud.firestore {
         && request.resource.data.windowCount == 0
         && request.resource.data.resetBy == uid()
         && request.resource.data.resetAt == request.time;
+    }
+
+    // ---------------------------------------------------------- unread (FS-S468)
+    //
+    // The owner's read marker per case: how far into the case's public history it has read.
+    // A case is unread while `cases/{caseId}.publicRev` is ahead of `seenPublicRev`. Only an
+    // approved owner reads or moves it -- a revoked account has no side channel into whether
+    // support answered -- and it only moves forward, never past what exists. Two documents
+    // per evaluation: the caller's users/ record and the case. Not the closed `reads` path.
+    function readMarkerValid(userId, caseId, floor) {
+      let c = get(caseDoc(caseId)).data;
+      return request.resource.data.keys().hasOnly(['seenPublicRev', 'readAt'])
+        && request.resource.data.keys().hasAll(['seenPublicRev', 'readAt'])
+        && request.resource.data.seenPublicRev is int
+        && request.resource.data.seenPublicRev >= floor
+        && request.resource.data.readAt == request.time
+        && c.ownerUid == userId
+        && c.get('state', '') == 'accepted'
+        && request.resource.data.seenPublicRev <= c.get('publicRev', 0);
+    }
+
+    match /users/{userId}/caseReads/{caseId} {
+      allow get, list: if isApprovedSelf(userId);
+
+      allow create: if isApprovedSelf(userId)
+        && readMarkerValid(userId, caseId, 0);
+      allow update: if isApprovedSelf(userId)
+        && readMarkerValid(userId, caseId, resource.data.seenPublicRev);
+
+      allow delete: if false;
+    }
+
+    // ---------------------------------------------------- notifications (FS-S468)
+    //
+    // One push token per installation, under the account that registered it. Registering
+    // needs an approved account; removing it never does, so sign-out, revocation and account
+    // switch can always take a token away. Nobody lists them: the server finds a token by
+    // value to make sure it is bound to exactly one account before it sends anything.
+    match /users/{userId}/notificationTokens/{installationId} {
+      allow get: if isVerifiedSelf(userId);
+      allow list: if false;
+
+      allow create, update: if isApprovedSelf(userId)
+        && installationId.size() <= 128
+        && request.resource.data.keys().hasOnly(['token', 'platform', 'updatedAt'])
+        && request.resource.data.keys().hasAll(['token', 'platform', 'updatedAt'])
+        && request.resource.data.token is string
+        && request.resource.data.token.size() > 0
+        && request.resource.data.token.size() <= 4096
+        && request.resource.data.platform == 'android'
+        && request.resource.data.updatedAt == request.time;
+
+      allow delete: if isVerifiedSelf(userId);
     }
 
     // ------------------------------------------------- not yet in the product
