@@ -525,9 +525,13 @@ withdrawal contract as it was already written.
 
 ### S3 — the client
 
-- Some rows may already have reached the server: a HELD row, or a queued create or message that
-  was tried at least once. Discarding one of these queues an ID-only withdrawal row
-  (`feedback_withdrawal`) instead of dropping it silently.
+- Every discarded opening and message queues an ID-only withdrawal row (`feedback_withdrawal`),
+  whether or not it looks tried. Nothing on the row can show that it never left: `attempts`
+  counts only sends that have returned, so a first send may be in flight, unrecorded, at the
+  moment of the discard.
+- The withdrawal row is inserted and the discarded rows are deleted in one Room transaction
+  (`OutboxDao.enqueueAndDiscard`), the insert first. A process that dies part-way leaves both
+  or neither. A second discard, or one after a restart, finds nothing left and adds nothing.
 - The withdrawal row is never held. It needs auth and a verified address, but not a current
   approval (M3=A), so a revoked or pending account can still take back what it wrote.
 - The row writes the intent once. It reads before it writes, so a lost ACK, a retry or a restart
@@ -539,9 +543,11 @@ withdrawal contract as it was already written.
 - Not knowing is never final. A refusal that did not land is final.
 - Send and Discard of a held row exclude each other. Nothing is sent after a reapproval without an
   explicit Send. Attachment delete keeps its existing tombstone semantics.
-- Known residual: a row that has not been attempted yet may be in flight at the moment of a
-  discard. It leaves no intent. If its first commit lands, the 30-day sweep removes the
-  `submitted` leftover.
+- Invariant: after an explicit discard, an in-flight or late send never leaves a post on the
+  server without a durable withdrawal. Once the intent is there the rules refuse a late create
+  or finalize under that id. One that landed first is reconciled: `submitted` → `withdrawn`,
+  accepted → `ignored_accepted` ("Redan mottaget"); one that never arrived → `absent`.
+  `DiscardDuringFirstSendTest` races each order for a case and a message.
 
 ### S4 — the server core (`server/`)
 

@@ -109,8 +109,8 @@ this repository, migrate this backlog file with it.
 
 - Deploy `server/main.mjs` (the trigger and the scheduled job), its service account and IAM, and
   the sweep's composite indexes. Then verify the races live.
-- Residual: a row not yet attempted, in flight when it is discarded, leaves no intent. The sweep
-  covers it.
+- Verify live that a discard racing a first send ends `withdrawn`, `ignored_accepted` or
+  `absent` (repo-proven by `DiscardDuringFirstSendTest`; no residual left for the sweep).
 - M4, M5 and M6 remain undecided and untouched.
 
 ## Feedback screenshots — orphaned local copies are only swept from the Feedback screen

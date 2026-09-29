@@ -148,10 +148,8 @@ class CaseComposer(
      * No approval check: removing your own unsent words and pictures from your own phone is
      * always allowed, revoked or not.
      *
-     * An opening that may already have reached the server as `submitted` ([mayHaveLeft]) is
-     * also withdrawn there: a withdrawal intent is queued under its id, which the server
-     * reconciles. A message of that case needs none -- nothing can hang off a case that was
-     * never accepted, and the messages of one caught accepted mid-send never went.
+     * Every discarded opening and message is also withdrawn on the server, by id
+     * ([withdrawalFor]), whether or not it looks tried: see [enqueueWithdrawn].
      */
     suspend fun discardQueuedCase(caseId: String): List<String>? {
         val uid = auth.currentUid ?: return null
@@ -160,9 +158,8 @@ class CaseComposer(
             .map { it to CaseOutboxPayloads.decode(it.kind, it.payload) }
             .filter { (_, payload) -> payload?.caseId == caseId }
         if (rows.none { (_, payload) -> payload is CasePayload.CreateCase }) return null
-        rows.forEach { (row, _) -> outbox.discard(row.id) }
-        val intents = rows.mapNotNull { (row, payload) -> payload?.let { withdrawalFor(row, it, openingsOnly = true) } }
-        if (intents.isNotEmpty()) enqueue(uid, intents)
+        val intents = rows.mapNotNull { (_, payload) -> payload?.let(::withdrawalFor) }
+        enqueueWithdrawn(uid, intents, rows.map { (row, _) -> row.id })
         return rows.mapNotNull { (_, payload) -> (payload as? CasePayload.Upload)?.file }
     }
 
@@ -200,9 +197,9 @@ class CaseComposer(
      * its upload may have been under way when approval was withdrawn. Returns the local
      * screenshot copies nothing will send any more, for the caller to delete.
      *
-     * A held opening or a held message may have reached the server as `submitted` -- it may
-     * have been inside the sender when the hold came -- so each is also withdrawn there by id
-     * ([CasePayload.Withdrawal]). An accepted one stays: the server answers "already received".
+     * Every discarded opening and message is also withdrawn on the server by id
+     * ([withdrawalFor], [enqueueWithdrawn]). An accepted one stays: the server answers
+     * "already received".
      * Discarding never sends: nothing held goes out, now or after a later reapproval.
      */
     suspend fun discardHeld(): HeldOutcome {
@@ -220,39 +217,42 @@ class CaseComposer(
         val wholeCases = unsent.filter { (_, payload) -> payload.caseId in heldOpenings }
         val alone = held.filter { (_, payload) -> payload.caseId !in heldOpenings }
 
-        val files = mutableListOf<String>()
-        (wholeCases + alone).forEach { (row, payload) ->
-            outbox.discard(row.id)
-            (payload as? CasePayload.Upload)?.let { files += it.file }
-        }
-        val intents = wholeCases.mapNotNull { (row, payload) -> withdrawalFor(row, payload, openingsOnly = true) } +
-            alone.mapNotNull { (row, payload) -> withdrawalFor(row, payload, openingsOnly = false) }
+        val discarded = wholeCases + alone
+        val files = discarded.mapNotNull { (_, payload) -> (payload as? CasePayload.Upload)?.file }
+        val intents = discarded.mapNotNull { (_, payload) -> withdrawalFor(payload) }
         val removals = alone.mapNotNull { (_, payload) -> payload as? CasePayload.Upload }
             .filter { it.caseId !in onDevice }
             .map { CasePayload.Tombstone(it.caseId, it.aid) }
-        if (intents.isNotEmpty() || removals.isNotEmpty()) enqueue(uid, intents + removals) else scheduler.schedule()
+        enqueueWithdrawn(uid, intents + removals, discarded.map { (row, _) -> row.id })
         return HeldOutcome.Done(files)
     }
 
     /**
-     * The withdrawal a discarded row needs, if any. Only a row that may have left the device
-     * gets one: held (it may have been inside the sender when the hold came), refused, or tried
-     * at least once. A row never tried cannot have written anything. A first send racing the
-     * discard is the one gap, and the server's 30-day sweep of `submitted` leftovers closes it.
+     * The withdrawal a discarded opening or message gets: always, by id only. Nothing on the
+     * row can say it never left -- `attempts` counts only sends that have returned, so a first
+     * send may be inside the sender, unrecorded, at the very moment of the discard. The server
+     * answers `absent` for one that never arrived, `withdrawn` for a `submitted` one, and
+     * "already received" for one accepted; and once the intent is there the rules refuse a
+     * late create or finalize under that id. A screenshot has its own removal, the tombstone.
      */
-    private fun withdrawalFor(row: OutboxEntry, payload: CasePayload, openingsOnly: Boolean): CasePayload.Withdrawal? {
-        if (!mayHaveLeft(row)) return null
-        return when (payload) {
-            is CasePayload.CreateCase ->
-                CasePayload.Withdrawal(payload.caseId, payload.caseId, CasePayload.Withdrawal.TARGET_CASE)
-            is CasePayload.Message -> if (openingsOnly) null
-            else CasePayload.Withdrawal(payload.caseId, payload.messageId, CasePayload.Withdrawal.TARGET_MESSAGE)
-            else -> null
-        }
+    private fun withdrawalFor(payload: CasePayload): CasePayload.Withdrawal? = when (payload) {
+        is CasePayload.CreateCase ->
+            CasePayload.Withdrawal(payload.caseId, payload.caseId, CasePayload.Withdrawal.TARGET_CASE)
+        is CasePayload.Message ->
+            CasePayload.Withdrawal(payload.caseId, payload.messageId, CasePayload.Withdrawal.TARGET_MESSAGE)
+        else -> null
     }
 
-    private fun mayHaveLeft(row: OutboxEntry): Boolean =
-        row.state == OutboxState.HELD || row.state == OutboxState.BLOCKED || row.attempts > 0
+    /**
+     * Queues [payloads] and removes the [discarded] rows in one transaction, the new rows
+     * first. A process that dies part-way can never leave a taken-back row gone with its
+     * withdrawal not yet written: it leaves both or neither, and a second discard of the
+     * same thing finds nothing left to take back.
+     */
+    private suspend fun enqueueWithdrawn(uid: String, payloads: List<CasePayload>, discarded: List<String>) {
+        outbox.enqueueAndDiscard(entriesFor(uid, payloads), discarded)
+        scheduler.schedule()
+    }
 
     private fun refusal(text: String, images: List<PreparedImage>): ComposeOutcome? = when {
         text.isEmpty() -> ComposeOutcome.Empty
@@ -271,21 +271,23 @@ class CaseComposer(
      * them, never a case without its screenshots' uploads or an upload without its case.
      */
     private suspend fun enqueue(uid: String, payloads: List<CasePayload>) {
-        val base = now()
-        outbox.insertAll(
-            payloads.mapIndexed { i, payload ->
-                OutboxEntry(
-                    id = newId(),
-                    ownerUid = uid,
-                    kind = CaseOutboxPayloads.kindOf(payload),
-                    payload = CaseOutboxPayloads.encode(payload),
-                    // One millisecond apart, so the queue's createdAt order is the send order.
-                    createdAtMs = base + i,
-                    state = OutboxState.PENDING
-                )
-            }
-        )
+        outbox.insertAll(entriesFor(uid, payloads))
         scheduler.schedule()
+    }
+
+    private fun entriesFor(uid: String, payloads: List<CasePayload>): List<OutboxEntry> {
+        val base = now()
+        return payloads.mapIndexed { i, payload ->
+            OutboxEntry(
+                id = newId(),
+                ownerUid = uid,
+                kind = CaseOutboxPayloads.kindOf(payload),
+                payload = CaseOutboxPayloads.encode(payload),
+                // One millisecond apart, so the queue's createdAt order is the send order.
+                createdAtMs = base + i,
+                state = OutboxState.PENDING
+            )
+        }
     }
 
     private fun titleOf(text: String): String {

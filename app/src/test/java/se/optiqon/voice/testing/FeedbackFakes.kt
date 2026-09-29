@@ -70,7 +70,25 @@ class MemoryOutboxDao : OutboxDao {
     }
 
     override suspend fun discard(id: String) {
+        if (id == dieDiscarding) {
+            dieDiscarding = null
+            throw IllegalStateException("process died discarding $id")
+        }
         table.value = rows.filterNot { it.id == id }
+    }
+
+    /** The row whose [discard] fails, once: a process that dies part-way through a discard. */
+    var dieDiscarding: String? = null
+
+    /** Like Room's `@Transaction`: an exception part-way leaves the table as it was. */
+    override suspend fun enqueueAndDiscard(added: List<OutboxEntry>, discarded: List<String>) {
+        val before = table.value
+        try {
+            super.enqueueAndDiscard(added, discarded)
+        } catch (e: Throwable) {
+            table.value = before
+            throw e
+        }
     }
 
     /** Mirrors the SQL: case rows only, pending only, this owner only. */

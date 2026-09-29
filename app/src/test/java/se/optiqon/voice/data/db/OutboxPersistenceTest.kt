@@ -238,4 +238,58 @@ class OutboxPersistenceTest {
         assertEquals(OutboxState.SENT, dao.byId("1")!!.state)
         assertEquals(1, dao.byId("1")!!.attempts)
     }
+
+    // FS-S34: a discard and the withdrawal it leaves behind, as one.
+
+    private fun intent(id: String) = entry(id, "uid-a").copy(kind = "feedback_withdrawal", payload = "{}")
+
+    /** Makes SQLite refuse to delete row [id]: a process dying right there, mid-transaction. */
+    private fun dieDeleting(id: String) = db.openHelper.writableDatabase.execSQL(
+        "CREATE TRIGGER die BEFORE DELETE ON outbox WHEN OLD.id = '$id' BEGIN SELECT RAISE(ABORT, 'died'); END"
+    )
+
+    /** The same for writing row [id]. */
+    private fun dieWriting(id: String) = db.openHelper.writableDatabase.execSQL(
+        "CREATE TRIGGER die BEFORE INSERT ON outbox WHEN NEW.id = '$id' BEGIN SELECT RAISE(ABORT, 'died'); END"
+    )
+
+    @Test
+    fun `a discard and its withdrawal land together and survive a restart`() = runTest {
+        val dao = db.outboxDao()
+        dao.insert(entry("1", "uid-a"))
+        dao.insert(entry("2", "uid-a"))
+
+        dao.enqueueAndDiscard(listOf(intent("9")), listOf("1", "2"))
+        restartProcess()
+
+        assertEquals(listOf("9"), db.outboxDao().all().map { it.id })
+    }
+
+    @Test
+    fun `a discard that dies part-way leaves every row and no withdrawal`() = runTest {
+        val dao = db.outboxDao()
+        dao.insert(entry("1", "uid-a"))
+        dao.insert(entry("2", "uid-a"))
+        // The intent is written and row 1 deleted before row 2's delete dies.
+        dieDeleting("2")
+
+        runCatching { dao.enqueueAndDiscard(listOf(intent("9")), listOf("1", "2")) }
+            .also { assertTrue("the delete did die", it.isFailure) }
+        restartProcess()
+
+        assertEquals("both or neither", listOf("1", "2"), db.outboxDao().all().map { it.id })
+    }
+
+    @Test
+    fun `a withdrawal that cannot be written leaves the rows it would take back`() = runTest {
+        val dao = db.outboxDao()
+        dao.insert(entry("1", "uid-a"))
+        dieWriting("9")
+
+        runCatching { dao.enqueueAndDiscard(listOf(intent("9")), listOf("1")) }
+            .also { assertTrue(it.isFailure) }
+        restartProcess()
+
+        assertEquals(listOf("1"), db.outboxDao().all().map { it.id })
+    }
 }

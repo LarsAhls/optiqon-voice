@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 import se.optiqon.voice.data.db.entity.OutboxEntry
 import se.optiqon.voice.data.db.entity.OutboxState
@@ -96,4 +97,16 @@ interface OutboxDao {
      */
     @Query("DELETE FROM outbox WHERE id = :id")
     suspend fun discard(id: String)
+
+    /**
+     * A discard that leaves something behind to send -- a withdrawal intent, a screenshot
+     * removal -- in one transaction: [added] is written first, then the [discarded] rows go.
+     * A process that dies part-way leaves both or neither, never a taken-back row with nothing
+     * queued to take it back on the server.
+     */
+    @Transaction
+    suspend fun enqueueAndDiscard(added: List<OutboxEntry>, discarded: List<String>) {
+        insertAll(added)
+        discarded.forEach { discard(it) }
+    }
 }

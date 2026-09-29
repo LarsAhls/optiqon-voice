@@ -75,7 +75,7 @@ jobs:
       # class dropped from the run by a filter, a rename or an exclusion.
       - name: Check the suite did not shrink
         env:
-          FLOOR: 629
+          FLOOR: 649
         run: |
           total=$(cat app/build/test-results/testDebugUnitTest/*.xml \
                   | grep -o 'tests="[0-9]*"' \
