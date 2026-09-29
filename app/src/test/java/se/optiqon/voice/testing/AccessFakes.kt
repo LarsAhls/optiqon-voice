@@ -18,6 +18,7 @@ import se.optiqon.voice.domain.access.ActiveIdentity
 import se.optiqon.voice.domain.access.AuthGateway
 import se.optiqon.voice.domain.access.Clock
 import se.optiqon.voice.domain.access.RefreshOutcome
+import se.optiqon.voice.domain.access.ServerVerdictListener
 import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -37,7 +38,8 @@ import java.util.concurrent.atomic.AtomicInteger
 class AccessFixture(
     context: Context,
     scope: CoroutineScope,
-    graceMs: Long = 72L * 60L * 60L * 1000L
+    graceMs: Long = 72L * 60L * 60L * 1000L,
+    verdictListener: ServerVerdictListener = ServerVerdictListener.NONE
 ) {
     val clock = MovableClock()
     val auth = FakeAuthGateway()
@@ -51,7 +53,8 @@ class AccessFixture(
         activeIdentity = activeIdentity,
         clock = clock,
         config = AccessConfig(graceMs = graceMs),
-        scope = scope
+        scope = scope,
+        verdictListener = verdictListener
     )
 
     val refresher = AccessRefresher(

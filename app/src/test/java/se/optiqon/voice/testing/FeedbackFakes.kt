@@ -10,6 +10,7 @@ import se.optiqon.voice.domain.access.AuthGateway
 import se.optiqon.voice.domain.feedback.AttachmentStore
 import se.optiqon.voice.domain.feedback.CaseAttachment
 import se.optiqon.voice.domain.feedback.CaseEvent
+import se.optiqon.voice.domain.feedback.CaseOutboxPayloads
 import se.optiqon.voice.domain.feedback.CaseRemote
 import se.optiqon.voice.domain.feedback.FeedbackCase
 import se.optiqon.voice.domain.feedback.RemoteResult
@@ -51,6 +52,24 @@ class MemoryOutboxDao : OutboxDao {
     override suspend fun discard(id: String) {
         table.value = rows.filterNot { it.id == id }
     }
+
+    /** Mirrors the SQL: case rows only, pending only, this owner only. */
+    override suspend fun holdPendingFor(ownerUid: String): Int {
+        val holdable = setOf(CaseOutboxPayloads.KIND_CREATE, CaseOutboxPayloads.KIND_MESSAGE, CaseOutboxPayloads.KIND_UPLOAD)
+        val ids = rows.filter { it.ownerUid == ownerUid && it.state == OutboxState.PENDING && it.kind in holdable }
+            .map { it.id }.toSet()
+        table.value = rows.map { if (it.id in ids) it.copy(state = OutboxState.HELD) else it }
+        return ids.size
+    }
+
+    override suspend fun releaseHeldFor(ownerUid: String): Int {
+        val ids = rows.filter { it.ownerUid == ownerUid && it.state == OutboxState.HELD }.map { it.id }.toSet()
+        table.value = rows.map { if (it.id in ids) it.copy(state = OutboxState.PENDING) else it }
+        return ids.size
+    }
+
+    override suspend fun heldFor(ownerUid: String) =
+        rows.filter { it.ownerUid == ownerUid && it.state == OutboxState.HELD }.sortedBy { it.createdAtMs }
 }
 
 /** An account that can be switched under a running piece of code. */

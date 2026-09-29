@@ -100,7 +100,9 @@ internal fun FeedbackScreen(
                 onNew = viewModel::newCase,
                 onOpen = viewModel::open,
                 onSendLegacy = viewModel::sendLegacy,
-                onDeleteLegacy = viewModel::discardLegacy
+                onDeleteLegacy = viewModel::discardLegacy,
+                onSendHeld = viewModel::sendHeld,
+                onDiscardHeld = viewModel::discardHeld
             )
             FeedbackPage.Compose -> FeedbackComposeContent(
                 state = state,
@@ -133,7 +135,9 @@ internal fun FeedbackListContent(
     onNew: () -> Unit,
     onOpen: (String) -> Unit,
     onSendLegacy: (String) -> Unit,
-    onDeleteLegacy: (String) -> Unit
+    onDeleteLegacy: (String) -> Unit,
+    onSendHeld: () -> Unit = {},
+    onDiscardHeld: () -> Unit = {}
 ) {
     LazyColumn(contentPadding = padding, verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item("intro") { Intro(state) }
@@ -148,6 +152,28 @@ internal fun FeedbackListContent(
         }
         if (state.signedIn && !state.approved) {
             item("not_approved") { Problem(stringResource(R.string.feedback_not_approved)) }
+        }
+        if (state.held > 0) {
+            // Held when approval was withdrawn: nothing sends these until their owner chooses,
+            // and sending waits for approval to be back. Discarding never does.
+            item("held_eyebrow") { SectionEyebrow(stringResource(R.string.feedback_held_eyebrow)) }
+            item("held") {
+                GroupCard {
+                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        BodyText(stringResource(R.string.feedback_held_body))
+                        SecondaryButton(
+                            text = stringResource(R.string.feedback_held_send),
+                            onClick = onSendHeld,
+                            enabled = state.approved
+                        )
+                        GhostButton(
+                            text = stringResource(R.string.feedback_held_discard),
+                            onClick = onDiscardHeld,
+                            modifier = Modifier.align(Alignment.CenterHorizontally)
+                        )
+                    }
+                }
+            }
         }
         if (state.remoteError) {
             item("remote_error") { Problem(stringResource(R.string.feedback_remote_error)) }
@@ -175,7 +201,13 @@ internal fun FeedbackListContent(
                             title = q.title,
                             onClick = { onOpen(q.caseId) },
                             trailing = {
-                                StatusPill(if (q.blocked) stringResource(R.string.feedback_pill_failed) else waiting)
+                                StatusPill(
+                                    when {
+                                        q.blocked -> stringResource(R.string.feedback_pill_failed)
+                                        q.held -> stringResource(R.string.feedback_pill_held)
+                                        else -> waiting
+                                    }
+                                )
                             }
                         )
                     }

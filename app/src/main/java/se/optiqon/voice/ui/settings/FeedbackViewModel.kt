@@ -30,6 +30,7 @@ import se.optiqon.voice.domain.feedback.CaseRemote
 import se.optiqon.voice.domain.feedback.ComposeOutcome
 import se.optiqon.voice.domain.feedback.FeedbackConfig
 import se.optiqon.voice.domain.feedback.FeedbackLimits
+import se.optiqon.voice.domain.feedback.HeldOutcome
 import se.optiqon.voice.domain.feedback.LocalFeedback
 import se.optiqon.voice.domain.feedback.ShotState
 import se.optiqon.voice.domain.feedback.showsContent
@@ -82,8 +83,12 @@ class FeedbackViewModel @Inject constructor(
                 rows = unsent
                 val uid = auth.currentUid
                 _state.update {
-                    if (uid == null) it.copy(queued = emptyList(), legacy = emptyList())
-                    else it.copy(queued = LocalFeedback.queuedCases(unsent, uid), legacy = LocalFeedback.legacy(unsent, uid))
+                    if (uid == null) it.copy(queued = emptyList(), legacy = emptyList(), held = 0)
+                    else it.copy(
+                        queued = LocalFeedback.queuedCases(unsent, uid),
+                        legacy = LocalFeedback.legacy(unsent, uid),
+                        held = LocalFeedback.heldCount(unsent, uid)
+                    )
                 }
                 restate()
             }
@@ -279,6 +284,29 @@ class FeedbackViewModel @Inject constructor(
             val removed = composer.discardQueuedCase(caseId) ?: return@launch
             removed.forEach { preprocessor.discard(uid, it) }
             _state.update { it.copy(page = FeedbackPage.List, detail = null, notice = FeedbackNotice.Removed) }
+        }
+    }
+
+    /** The owner's word on what was held when approval was withdrawn: send it after all. */
+    fun sendHeld() {
+        viewModelScope.launch {
+            val notice = when (composer.releaseHeld()) {
+                is HeldOutcome.Done -> FeedbackNotice.HeldReleased
+                HeldOutcome.NotApproved -> FeedbackNotice.NotApproved
+                HeldOutcome.SignedOut -> FeedbackNotice.SignedOut
+                HeldOutcome.NothingHeld -> return@launch
+            }
+            _state.update { it.copy(notice = notice) }
+        }
+    }
+
+    /** The owner's word on what was held: throw it away, screenshot copies included. */
+    fun discardHeld() {
+        val uid = auth.currentUid ?: return
+        viewModelScope.launch {
+            val outcome = composer.discardHeld() as? HeldOutcome.Done ?: return@launch
+            withContext(Dispatchers.IO) { outcome.files.forEach { preprocessor.discard(uid, it) } }
+            _state.update { it.copy(notice = FeedbackNotice.Removed) }
         }
     }
 

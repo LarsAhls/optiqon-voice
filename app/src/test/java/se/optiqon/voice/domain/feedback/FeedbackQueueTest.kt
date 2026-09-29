@@ -34,6 +34,9 @@ class FeedbackQueueTest {
         override suspend fun byId(id: String) = rows.firstOrNull { it.id == id }
         override suspend fun updateState(id: String, state: OutboxState, attempts: Int, error: String?) = Unit
         override suspend fun discard(id: String) { rows.removeAll { it.id == id } }
+        override suspend fun holdPendingFor(ownerUid: String) = 0
+        override suspend fun releaseHeldFor(ownerUid: String) = 0
+        override suspend fun heldFor(ownerUid: String) = emptyList<OutboxEntry>()
     }
 
     private class FakeAuth(override val currentUid: String?) : AuthGateway {

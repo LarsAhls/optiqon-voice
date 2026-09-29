@@ -30,6 +30,15 @@ sealed interface ComposeOutcome {
     data object NotApproved : ComposeOutcome
 }
 
+/** What became of the owner's choice about rows held when their approval was withdrawn. */
+sealed interface HeldOutcome {
+    /** [files] are local screenshot copies that nothing will send any more. */
+    data class Done(val files: List<String>) : HeldOutcome
+    data object NothingHeld : HeldOutcome
+    data object SignedOut : HeldOutcome
+    data object NotApproved : HeldOutcome
+}
+
 /**
  * Puts a new case, a message or a screenshot deletion on the outbox, in the order it must be
  * sent: the case or message first, then each of its screenshots.
@@ -142,6 +151,55 @@ class CaseComposer(
         if (rows.none { (_, payload) -> payload is CasePayload.CreateCase }) return null
         rows.forEach { (row, _) -> outbox.discard(row.id) }
         return rows.mapNotNull { (_, payload) -> (payload as? CasePayload.Upload)?.file }
+    }
+
+    /**
+     * The owner chose to send what was held when their approval was withdrawn. Every held row
+     * of the signed-in account goes back on the queue in its original order, and nobody else's.
+     * Needs approval now: sending is exactly what a revoked account may not do.
+     */
+    suspend fun releaseHeld(): HeldOutcome {
+        val uid = auth.currentUid ?: return HeldOutcome.SignedOut
+        if (!approval.isApproved()) return HeldOutcome.NotApproved
+        if (outbox.releaseHeldFor(uid) == 0) return HeldOutcome.NothingHeld
+        scheduler.schedule()
+        return HeldOutcome.Done(emptyList())
+    }
+
+    /**
+     * The owner chose to throw away what was held. No approval needed: it is their own unsent
+     * work on their own phone.
+     *
+     * A held case opening takes the whole case with it, as [discardQueuedCase] does. A held
+     * message or screenshot of a case already on the server goes alone, and each screenshot
+     * gets a removal queued, as [deleteScreenshot] does for a case that has left the device —
+     * its upload may have been under way when approval was withdrawn. Returns the local
+     * screenshot copies nothing will send any more, for the caller to delete.
+     */
+    suspend fun discardHeld(): HeldOutcome {
+        val uid = auth.currentUid ?: return HeldOutcome.SignedOut
+        val held = outbox.heldFor(uid)
+            .mapNotNull { row -> CaseOutboxPayloads.decode(row.kind, row.payload)?.let { row to it } }
+        if (held.isEmpty()) return HeldOutcome.NothingHeld
+
+        val unsent = outbox.all()
+            .filter { it.ownerUid == uid && it.state != OutboxState.SENT }
+            .mapNotNull { row -> CaseOutboxPayloads.decode(row.kind, row.payload)?.let { row to it } }
+        val onDevice = unsent.mapNotNull { (_, payload) -> (payload as? CasePayload.CreateCase)?.caseId }.toSet()
+        val heldOpenings = held.mapNotNull { (_, payload) -> (payload as? CasePayload.CreateCase)?.caseId }.toSet()
+        val wholeCases = unsent.filter { (_, payload) -> payload.caseId in heldOpenings }
+        val alone = held.filter { (_, payload) -> payload.caseId !in heldOpenings }
+
+        val files = mutableListOf<String>()
+        (wholeCases + alone).forEach { (row, payload) ->
+            outbox.discard(row.id)
+            (payload as? CasePayload.Upload)?.let { files += it.file }
+        }
+        val removals = alone.mapNotNull { (_, payload) -> payload as? CasePayload.Upload }
+            .filter { it.caseId !in onDevice }
+            .map { CasePayload.Tombstone(it.caseId, it.aid) }
+        if (removals.isNotEmpty()) enqueue(uid, removals) else scheduler.schedule()
+        return HeldOutcome.Done(files)
     }
 
     private fun refusal(text: String, images: List<PreparedImage>): ComposeOutcome? = when {

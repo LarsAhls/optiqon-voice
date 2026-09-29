@@ -10,7 +10,9 @@ data class QueuedCase(
     val images: List<CasePayload.Upload>,
     /** The outbox gave up on it; it waits for the user rather than for the network. */
     val blocked: Boolean,
-    val createdAtMs: Long
+    val createdAtMs: Long,
+    /** Held when approval was withdrawn; it waits for the owner to send or discard it. */
+    val held: Boolean = false
 )
 
 /**
@@ -57,10 +59,18 @@ object LocalFeedback {
                 title = create.title,
                 images = uploads[create.caseId].orEmpty().filter { it.messageId == null },
                 blocked = row.state == OutboxState.BLOCKED,
-                createdAtMs = row.createdAtMs
+                createdAtMs = row.createdAtMs,
+                held = row.state == OutboxState.HELD
             )
         }.sortedByDescending { it.createdAtMs }
     }
+
+    /**
+     * How many of the account's rows wait for their owner's word because approval was
+     * withdrawn — openings, messages and screenshots alike.
+     */
+    fun heldCount(rows: List<OutboxEntry>, uid: String): Int =
+        rows.count { it.ownerUid == uid && it.state == OutboxState.HELD }
 
     fun legacy(rows: List<OutboxEntry>, uid: String): List<LegacyNote> =
         rows.filter { it.ownerUid == uid && it.kind == FeedbackPayloads.KIND && it.state != OutboxState.SENT }

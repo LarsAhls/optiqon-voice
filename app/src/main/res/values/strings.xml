@@ -88,6 +88,11 @@
     <string name="feedback_pill_waiting">Waiting to send</string>
     <string name="feedback_pill_on_device">On this device</string>
     <string name="feedback_pill_failed">Not sent</string>
+    <string name="feedback_pill_held">Waiting for you</string>
+    <string name="feedback_held_eyebrow">Held when your access was withdrawn</string>
+    <string name="feedback_held_body">These reports were waiting to be sent when your account lost its approval. Nothing here is sent unless you choose to.</string>
+    <string name="feedback_held_send">Send</string>
+    <string name="feedback_held_discard">Discard</string>
     <string name="feedback_legacy_eyebrow">Saved earlier, not sent</string>
     <string name="feedback_legacy_body">Written before reports could be sent. Nothing here is sent unless you choose to.</string>
     <string name="feedback_legacy_send">Send</string>
@@ -125,6 +130,7 @@
     <string name="feedback_notice_image_unreadable">That image could not be read.</string>
     <string name="feedback_notice_not_approved">Your account is not approved, so nothing was queued.</string>
     <string name="feedback_notice_removed">Removed from this device.</string>
+    <string name="feedback_notice_held_released">Queued to be sent.</string>
     <string name="feedback_notice_screenshot_removed">Screenshot removed.</string>
     <string name="claim_empty_note">Starting empty leaves the existing data on the device, untouched and unread, and it can still be claimed later.</string>
 </resources>

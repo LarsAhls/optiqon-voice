@@ -50,5 +50,14 @@ enum class OutboxState {
      */
     BLOCKED,
 
-    SENT
+    SENT,
+
+    /**
+     * Queued by an account the server then stopped approving. Nothing moves it back on its own
+     * — not approval returning, not a restart, not the network — only its owner choosing to
+     * send it or to throw it away. Unlike [BLOCKED] the server never refused the row itself.
+     *
+     * Stored as text in the existing column, like every other value here: no schema change.
+     */
+    HELD
 }

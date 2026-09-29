@@ -27,6 +27,9 @@ import se.optiqon.voice.domain.feedback.FeedbackPayloads
  *   that finds nothing new; [OutboxWorker] covers the moment after that last look.
  * - A row that failed after it was taken back asks for no retry: there is nothing left to retry.
  * - If the account changes mid-run, the run stops.
+ * - Rows held because approval was withdrawn ([OutboxState.HELD]) are never sent from here, and
+ *   neither is anything queued after them for the same case. A held row that was already inside
+ *   the sender when the hold came and failed stays held: a failure must not quietly undo it.
  */
 class OutboxFlush(
     private val outbox: OutboxDao,
@@ -44,7 +47,9 @@ class OutboxFlush(
         if (!approval.isApproved()) return Result.DONE
 
         var retry = false
-        val heldCases = mutableSetOf<String>()
+        val heldCases = outbox.heldFor(uid)
+            .mapNotNull { CaseOutboxPayloads.decode(it.kind, it.payload)?.caseId }
+            .toMutableSet()
         val attempted = mutableSetOf<String>()
         while (true) {
             val queue = OutboxPolicy.flushable(outbox.pendingFor(uid), uid)
@@ -65,7 +70,11 @@ class OutboxFlush(
                 when (val failure = sender.send(entry)) {
                     null -> outbox.updateState(entry.id, OutboxState.SENT, entry.attempts + 1, null)
                     else -> {
-                        if (outbox.byId(entry.id) == null) continue
+                        val current = outbox.byId(entry.id) ?: continue
+                        if (current.state == OutboxState.HELD) {
+                            caseId?.let { heldCases += it }
+                            continue
+                        }
                         val updated = OutboxPolicy.afterFailure(entry, failure)
                         outbox.updateState(entry.id, updated.state, updated.attempts, updated.lastError)
                         retry = retry || OutboxPolicy.shouldRetry(failure)
