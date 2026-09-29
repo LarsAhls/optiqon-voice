@@ -37,7 +37,9 @@ data class FeedbackCase(
     val createdAtMs: Long?,
     val lastActivityAtMs: Long?,
     val activeAttachmentCount: Int,
-    val closed: Boolean
+    val closed: Boolean,
+    /** Moves once per public support reply or status change (FS-S468); see CaseUnread. */
+    val publicRev: Long = 0L
 )
 
 data class CaseEvent(

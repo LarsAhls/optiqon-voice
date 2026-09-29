@@ -338,9 +338,9 @@ internal fun FeedbackDetailContent(
                             // A screenshot on its way out is never drawn, whatever is in memory.
                             leading = { Thumbnail(shot.thumbnail?.takeIf { shot.state.showsContent }) },
                             onClick = { onDeleteShot(shot.aid) },
-                            // A case that never left the phone is the owner's own to tidy up,
-                            // approved or not; a removal already on its way needs no second tap.
-                            enabled = (state.approved || detail.case == null) && shot.state != ShotState.REMOVING,
+                            // The owner may take a screenshot down approved or not (M3); a
+                            // removal already on its way needs no second tap.
+                            enabled = shot.state != ShotState.REMOVING,
                             trailing = { Icon(Icons.Default.Close, contentDescription = null) }
                         )
                     }

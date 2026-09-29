@@ -11,8 +11,9 @@ import se.optiqon.voice.domain.feedback.FeedbackPayloads
  * One pass over the signed-in account's queue: the body of [OutboxWorker], without WorkManager.
  *
  * - Nothing is sent for an account that is not approved. Its rows stay pending, untouched --
- *   except withdrawals (M3=A): they can only ever take back the owner's own unaccepted words,
- *   and a revoked or pending account may still say "take this back".
+ *   except removals (M3=A): a withdrawal can only ever take back the owner's own unaccepted
+ *   words, and a screenshot removal only ever makes the owner's own picture unreadable, so a
+ *   revoked or pending account may still say "take this back" (M6: once online, it goes).
  * - Rows saved by the earlier text-only feedback screen are never sent and never changed here.
  *   They leave the device only when their owner chooses to send them.
  * - Rows are sent oldest first. Once a row of a case fails, the rest of that case waits: a
@@ -61,7 +62,7 @@ class OutboxFlush(
         while (true) {
             val queue = OutboxPolicy.flushable(outbox.pendingFor(uid), uid)
                 .filter { it.kind != FeedbackPayloads.KIND && it.id !in attempted }
-                .filter { approved || it.kind == CaseOutboxPayloads.KIND_WITHDRAW }
+                .filter { approved || it.kind in CaseOutboxPayloads.REMOVALS }
                 .sortedBy {
                     when (it.kind) {
                         CaseOutboxPayloads.KIND_WITHDRAW -> 0

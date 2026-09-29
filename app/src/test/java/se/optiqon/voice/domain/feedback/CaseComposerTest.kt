@@ -86,7 +86,6 @@ class CaseComposerTest {
         approved = false
         assertEquals(ComposeOutcome.NotApproved, composer.createCase("hej", listOf(image())))
         assertEquals(ComposeOutcome.NotApproved, composer.addMessage("c", "hej", emptyList()))
-        assertEquals(ComposeOutcome.NotApproved, composer.deleteScreenshot("c", "a"))
         assertTrue(outbox.rows.isEmpty())
         assertEquals(0, scheduled)
     }

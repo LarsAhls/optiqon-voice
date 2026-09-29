@@ -282,6 +282,28 @@ class FeedbackScreenTest {
         composeRule.onNodeWithText(string(R.string.feedback_notice_screenshot_removed)).assertDoesNotExist()
     }
 
+    @Test
+    fun `an owner who is no longer approved can still take a sent screenshot down`() {
+        val detail = CaseDetail(
+            caseId = "case-1",
+            case = remoteCase,
+            queued = null,
+            shots = listOf(Shot("aid-1", messageId = null, state = ShotState.AVAILABLE, thumbnail = null))
+        )
+        composeRule.setContent {
+            OptiqonVoiceTheme {
+                FeedbackDetailContent(
+                    state = FeedbackUiState(page = FeedbackPage.Detail("case-1"), remoteEnabled = true, approved = false, detail = detail),
+                    padding = padding,
+                    reply = "",
+                    onReply = {}, onPick = {}, onRemoveImage = {}, onSubmit = {}, onDeleteShot = {}, onDiscardQueued = {}
+                )
+            }
+        }
+        // M3: removing the owner's own picture needs no approval.
+        composeRule.onNodeWithText(string(R.string.feedback_delete_screenshot)).assertIsEnabled()
+    }
+
     private fun shotsOnly(vararg shots: Shot) {
         val detail = CaseDetail(caseId = "case-1", case = remoteCase, queued = null, shots = shots.toList())
         composeRule.setContent {
