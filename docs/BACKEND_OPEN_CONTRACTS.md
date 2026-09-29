@@ -4,7 +4,13 @@ Durable record of what is **not** settled. Written during Mission 1 (F0–F2) so
 later phases do not have to rediscover it. Nothing here is approved work; each item is
 a dependency or an explicit stop.
 
-## F3 — attachments (Worker + R2): hard stop before deploy
+## F3 — attachments (Worker + R2): SUPERSEDED by FS-1 (Cloud Storage)
+
+**Updated 2026-09-28.** Attachments no longer go through a Worker and R2. They are private
+screenshots in `gs://optiqon-voice-47498-eun2` (europe-north2), guarded by `storage.rules` and
+the Firestore attachment document -- see *FS-1 — Feedback attachments on Cloud Storage* below.
+The four points are kept as the record of why the R2 route stopped; none of them is open work.
+
 
 1. **Resurrection after delete is not solved.** A conditional create-only PUT
    (`onlyIf: { etagDoesNotMatch: "*" }`) does not prevent an in-flight PUT from landing
@@ -65,11 +71,20 @@ The Firestore rules tests in F1 prove none of the above.
 
 ## F6 — retention, deletion, privacy
 
-- Retention for attachments is proposed at 12 months. Not decided.
-- Account deletion must cover Auth, Firestore, R2 and dependent documents. No live
-  deletion without exact approval.
-- Workers execute at the global edge, so request *processing* may happen outside the EU
-  even though the bucket is EU-resident. This needs to be stated in the privacy text.
+- Retention for attachments: `lastActivityAt + 12 months` while a case is open,
+  `closedAt + 30 days` once closed, whichever is earlier. Enforced by the server actor, which
+  does not exist yet (FS-SA).
+- Account deletion must cover Auth, Firestore, the `case-attachments/{uid}/` prefix in the
+  feedback bucket, and dependent documents. No live deletion without exact approval.
+- **Deletion SLA — candidate only, not locked.** The recommended HOW is an event-driven purge on
+  tombstone plus a daily backstop sweep, which would allow the promise *"physically deleted
+  within 24 hours"*. It is preferred because it keeps the download-token window short (see
+  FS-1, *Download tokens*) and a missed event is still caught within a day. The user-facing SLA
+  is fixed only after FS-SA has verified the actor's provider, mechanism, region and cost. No
+  privacy text may state 24 hours before then.
+- The compute region of the server actor is open. If it is not europe-north2, the privacy text
+  must say where processing happens; that is a material trigger for FS-SA, not a detail.
+- The Worker/edge note that used to stand here belonged to the R2 route and no longer applies.
 
 ## Undecided policy values
 
@@ -81,6 +96,15 @@ The Firestore rules tests in F1 prove none of the above.
 - Monotonic quota without refund: proposed for V1.
 
 ## Two rule sets: what is deployed, and what is merely written
+
+**Updated 2026-09-28 (FS-1).** The repo's `firestore.rules` now runs **ahead** of the deployed
+ruleset: it opens `cases`, their `events` and `attachments`, `users/{uid}/uploads` and
+`users/{uid}/quota` for the Feedback case model. The paragraphs below describe the Mission 1 set,
+which is still what production runs. Because the repo copy is no longer the live copy, a
+Firestore deploy is now a provider Gate: `firebase.json` carries a predeploy
+`scripts/deploy/firestore-guard.mjs` that refuses unless `OPTIQON_ALLOW_DEPLOY` names
+`firestore` and the project is `optiqon-voice-47498`. `sync`, `reads`, `news`, `invites` and
+`deletionRequests` stay shut.
 
 `firestore.rules` is the **Mission 1** set and the only file `firebase.json` names, so an
 ordinary `firebase deploy --only firestore:rules` cannot pick up anything else. It opens
@@ -375,3 +399,78 @@ policy (`iam.allowedPolicyMemberDomains` = `["C01qej65i"]`) **did not block it**
 principal is a Google-owned service agent outside the customer, and the removal left the policy
 byte-identical apart from its etag. Production wiring needs no org-policy exemption and no
 service-account key.
+
+## FS-1 — Feedback attachments on Cloud Storage
+
+Added 2026-09-28 with FS-1 PR-A. Nothing below is deployed: production Storage still carries the
+deny-all release, and production Firestore still carries the Mission 1 set.
+
+### The model
+
+- One object per screenshot at `case-attachments/{ownerUid}/{caseId}/{aid}` in
+  `gs://optiqon-voice-47498-eun2`. `firebase.json` names it only as the deploy target
+  `feedback`; `.firebaserc` maps that target to the one bucket, so the only deploy that can
+  reach it is `firebase deploy --only storage:feedback`, behind `storage-guard.mjs`.
+- The authority is the Firestore document `cases/{caseId}/attachments/{aid}` with exactly
+  `ownerUid, caseId, messageId|null, maxBytes, createdAt` at creation. It is written in one batch
+  with the reservation `users/{uid}/uploads/{aid}`, the quota step, the case counter and, for a
+  message, the message counter. **No `sha256` and no other content fingerprint**: the document
+  outlives the bytes as a tombstone and must not identify them.
+- The quota document `users/{uid}/quota/attachments` is created by the first upload's batch at
+  count 1; later batches step it by one.
+- Limits: 3 per message (the opening text counts as a message, `messageId == null`), 10 active
+  per case. Active means not tombstoned; a tombstone releases the slot in the same batch.
+- Deletion by the user is one Firestore write, `deleteRequestedAt`, one way. From that write on,
+  both Storage `get` paths deny. The client never updates or deletes an object; physical removal
+  and `purgedAt` belong to the server actor (FS-SA).
+- Admin read needs the `admin` custom claim **and** `users/{uid}.adminActive == true` (with
+  `adminActiveUntil` in the future if present). Nothing writes either yet; the grant belongs to
+  the Gate.
+
+### Lookup budget
+
+Every Storage path reads at most two distinct documents: the attachment plus exactly one
+`users/` document (the owner's on the owner paths, the caller's on the admin path). uid or
+claim is compared before the first read, so a non-owner never pays for the owner's document.
+`tests/deploy/storage-rules-text.test.mjs` pins that shape against the text, because the
+emulator cannot (see the section above). The changed block is **not** byte-identical to the F-a
+block that was measured live, so the budget must be re-measured in the Gate (P2).
+
+The largest Firestore batch (reservation, quota, attachment, case, message) touches about
+seven distinct documents by inspection, under the 20-per-batch access-call limit. It passes in
+the emulator.
+
+### Download tokens (plan 4.4)
+
+A Firebase download URL is read without rules. Mitigation in three layers: (a) the client never
+calls `getDownloadUrl`, pinned by a source contract test in PR-B; (b) the rules deny any
+client-set custom metadata; (c) the server actor strips `firebaseStorageDownloadTokens` on
+tombstone.
+
+**Measured in the emulator (firebase-tools 13.35.1):** the emulator removes a client-chosen
+`firebaseStorageDownloadTokens` from custom metadata *before* rules evaluation, so it is allowed
+and not stored, and (b) is **unproven for that key**. Any other custom key is denied as designed.
+The emulator mints no token on a plain upload. Neither fact says anything about production.
+
+### What the FS-1 suites prove, and what they do not
+
+- `tests/rules/fs1-cases.test.mjs` (Firestore emulator) covers the case, message, attachment,
+  reservation, quota and tombstone rules. Mutation runs killed every mutant but one, and that one
+  is equivalent: `caseSlotTaken` is called with `request.resource.data.attachmentFor`, so its own
+  `after.attachmentFor == aid` check is a tautology. The "two attachments under one +1" attack is
+  also refused by `quotaBound` (`lastUploadId`), so that test proves the combined defence rather
+  than isolating the case binding.
+- `tests/storage/case-attachments.test.mjs` (Storage + Firestore emulators) covers matrix rows
+  N1–N21 and P1/P2 against documents in the real `firestore.rules` shape. It proves logic and deny
+  reasons, **not** the document ceiling, not when a real resumable upload is evaluated, and not
+  how production treats download tokens.
+- Open provider questions, answerable only in the Gate:
+  - **P1**: the SDK works against this imported, non-default bucket;
+  - **P2**: the two-document budget holds for the changed block;
+  - **P3**: when rules evaluate on a resumable upload, i.e. what `request.time` means for the
+    72 h window;
+  - **P4**: an authenticated client gets the same allow/deny for real;
+  - **P5**: is a download token minted on upload, and is a client-chosen one honoured?
+  - **P6**: does a token URL fail after tombstone and strip?
+  - **P7**: server-actor latency against the candidate SLA;
+  - **P8**: revocation is refused by the cloud (the open item in the section above).

@@ -5,6 +5,10 @@
 // that the one chain Mission 1 ships still works end to end, and prove that every path
 // belonging to a feature Mission 1 does not ship is shut.
 //
+// FS-1 opened the feedback-case paths -- cases, their events, attachment metadata, upload
+// reservations and the upload quota. What they allow is proven in `fs1-cases.test.mjs`; they
+// are no longer on the closed list here.
+//
 // The closure tests deny an approved writer-admin, not a stranger. That is deliberate: an
 // admin is the strongest caller these rules recognise, so a path that denies Lars denies
 // everybody, and the test does not have to enumerate weaker callers to be convincing.
@@ -150,17 +154,6 @@ describe('the features Mission 1 does not ship are shut', () => {
   beforeEach(async () => {
     await env.withSecurityRulesDisabled(async (ctx) => {
       const db = ctx.firestore();
-      await setDoc(doc(db, 'cases/case-alice/events/e1'), {
-        type: 'note', visibility: 'public', actorUid: 'lars', createdAt: serverTimestamp(),
-      });
-      await setDoc(doc(db, 'cases/case-alice/attachments/a1'), {
-        ownerUid: 'alice', caseId: 'case-alice', sha256: 'a'.repeat(64),
-        createdAt: serverTimestamp(),
-      });
-      await setDoc(doc(db, 'users/alice/uploads/a1'), {
-        caseId: 'case-alice', maxBytes: 1024, sha256: 'a'.repeat(64),
-        createdAt: serverTimestamp(),
-      });
       await setDoc(doc(db, 'users/alice/sync/state'), { cursor: 12 });
       await setDoc(doc(db, 'users/alice/reads/news-1'), { readAt: serverTimestamp() });
       await setDoc(doc(db, 'news/n1'), { title: 'Hello' });
@@ -171,11 +164,6 @@ describe('the features Mission 1 does not ship are shut', () => {
   });
 
   const closed = [
-    ['a case', 'cases/case-alice'],
-    ['a case event', 'cases/case-alice/events/e1'],
-    ['attachment metadata', 'cases/case-alice/attachments/a1'],
-    ['an upload reservation', 'users/alice/uploads/a1'],
-    ['an upload quota', 'users/alice/quota/attachments'],
     ['a private sync document', 'users/alice/sync/state'],
     ['a private read marker', 'users/alice/reads/news-1'],
     ['a news item', 'news/n1'],
@@ -202,11 +190,19 @@ describe('the features Mission 1 does not ship are shut', () => {
   test('the collections behind them do not list either', async () => {
     for (const uid of ['lars', 'alice', 'pat']) {
       const db = as(env, uid).firestore();
-      await assertFails(getDocs(collection(db, 'cases')));
       await assertFails(getDocs(collection(db, 'news')));
       await assertFails(getDocs(collection(db, 'invites')));
       await assertFails(getDocs(collection(db, 'deletionRequests')));
       await assertFails(getDocs(collection(db, 'users/alice/reads')));
+    }
+  });
+
+  // Cases are open since FS-1, but only as far as the caller's own: an admin lists them all,
+  // anyone else's unconstrained list is refused whole.
+  test('an unconstrained list of cases is refused to everyone but an admin', async () => {
+    await assertSucceeds(getDocs(collection(as(env, 'lars').firestore(), 'cases')));
+    for (const uid of ['alice', 'pat']) {
+      await assertFails(getDocs(collection(as(env, uid).firestore(), 'cases')));
     }
   });
 

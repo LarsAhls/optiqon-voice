@@ -1,0 +1,11 @@
+{
+  "targets": {
+    "optiqon-voice-47498": {
+      "storage": {
+        "feedback": [
+          "optiqon-voice-47498-eun2"
+        ]
+      }
+    }
+  }
+}

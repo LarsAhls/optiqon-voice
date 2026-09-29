@@ -2,12 +2,20 @@ rules_version = '2';
 
 // OPTIQON Voice — Cloud Storage rules for the Mission D case-attachment path.
 //
-// The contract block below is the ruleset F-a verified live on 2026-09-11 against the
-// real Cloud Storage Rules engine (`docs/F_A_STORAGE_RULES_VERIFICATION_2026-09-11.md`):
-// lines 21-88 of `tests/storage-live/storage.verify.rules` on `verify/storage-rules-fa`,
-// which are in turn lines 21-88 of `storage.future.rules` on `spike/storage-rules-pr0`.
-// All three are byte-identical. Do not edit the block to make a test pass — F-a measured
-// this exact text, and an edit voids the measurement.
+// The ruleset F-a verified live on 2026-09-11 against the real Cloud Storage Rules engine
+// (`docs/F_A_STORAGE_RULES_VERIFICATION_2026-09-11.md`) is the base of the block below. FS-1
+// tightened it, and the text is therefore NO LONGER byte-identical to what F-a measured:
+//
+//   * `allow read` is split into `allow get` and `allow list: if false`. Listing goes
+//     through Firestore, where the attachment documents already are.
+//   * create requires a non-empty object, an upload inside 72 hours of the attachment
+//     document, and no custom metadata — which is what closes a client-chosen
+//     `firebaseStorageDownloadTokens`. A download token is served without these rules.
+//
+// None of the three adds a Firestore document: they read `request.*` or the attachment
+// document already paid for. The two-document ceiling is a property of the text, though,
+// not of the intent, so the changed block must be probed live again before it is relied on
+// (FS-1 P2). The emulator enforces no ceiling at all and proves nothing about it.
 //
 // What F-a established, and what the block depends on:
 //
@@ -18,19 +26,23 @@ rules_version = '2';
 //     document plus one users/ document — the owner's on the owner paths, the caller's
 //     own on the admin path. The two liveness sources are never paid for in the same
 //     evaluation, which is why admin read is a separate `allow`.
+//   * Each allow opens with its uid or claim comparison, BEFORE any `firestore.get()`.
+//     That order is what keeps an evaluation that runs both get-allows at two documents:
+//     a non-owner never reaches owner(), a non-admin never reaches me(). Keep it first.
 //   * `config/limits.uploadsEnabled` is deliberately absent. It gates reservations on the
 //     Firestore side; spending it again on the byte path would cost the document that
 //     revocation needs.
 //   * `liveAdmin()` is written in positive form so an incomplete admin mirror raises an
 //     evaluation error and denies. F-a probes C11 and C13b confirmed it fails closed.
 //
-// The PR-0 spike probe blocks (`/probe-2doc-manycalls`, `/probe-3doc`, `/probe-5doc`) are
-// measurement scaffolding, not contract, and are NOT carried over. Those paths now fall to
-// the terminal `allPaths` deny, so their removal is strictly more restrictive.
+// The one deny flag every path checks is the attachment's `deleteRequestedAt` — owner
+// delete, admin delete, retention and account deletion all set that one field
+// (`firestore.rules`, attachments). A client never updates or deletes an object.
 //
-// NOT YET DEPLOYED. As of this commit `optiqon-voice-47498` has no bucket,
-// `firebasestorage.googleapis.com` is not enabled and billing is disabled, so a deploy of
-// this file cannot succeed. Provisioning is a separate, explicitly approved Gate.
+// NOT YET DEPLOYED. `gs://optiqon-voice-47498-eun2` exists and is linked to Firebase, but
+// the release it carries is `storage.denyall.rules`. This file reaches it only through
+// `firebase deploy --only storage:feedback` behind `scripts/deploy/storage-guard.mjs`, and
+// only as a separately approved provider Gate.
 service firebase.storage {
   match /b/{bucket}/o {
 
@@ -71,19 +83,22 @@ service firebase.storage {
           && (!('adminActiveUntil' in me()) || me().adminActiveUntil > request.time);
       }
 
-      // OWNER READ — distinct documents: users/{ownerUid}, attachment. (2 of 2)
-      allow read: if request.auth != null
+      // OWNER GET — distinct documents: users/{ownerUid}, attachment. (2 of 2)
+      allow get: if request.auth != null
         && request.auth.uid == ownerUid
         && liveOwner()
         && !('deleteRequestedAt' in att());
 
-      // ADMIN READ — distinct documents: users/{request.auth.uid}, attachment. (2 of 2)
+      // ADMIN GET — distinct documents: users/{request.auth.uid}, attachment. (2 of 2)
       // Kept as its own allow statement so the two liveness sources are never paid for
       // in the same evaluation, and so each path can be tested on its own.
-      allow read: if request.auth != null
+      allow get: if request.auth != null
         && request.auth.token.admin == true
         && liveAdmin()
         && !('deleteRequestedAt' in att());
+
+      // No listing of a prefix, by anyone. Firestore holds the index.
+      allow list: if false;
 
       // OWNER CREATE — distinct documents: users/{ownerUid}, attachment. (2 of 2)
       allow create: if request.auth != null
@@ -93,9 +108,12 @@ service firebase.storage {
         && att().ownerUid == ownerUid
         && att().caseId == caseId
         && !('deleteRequestedAt' in att())
+        && request.time < att().createdAt + duration.value(72, 'h')
+        && request.resource.size > 0
         && request.resource.size <= att().maxBytes
         && request.resource.size <= 2097152
-        && request.resource.contentType.matches('image/(png|jpeg|webp)');
+        && request.resource.contentType.matches('image/(png|jpeg|webp)')
+        && (request.resource.metadata == null || request.resource.metadata.size() == 0);
 
       allow update, delete: if false;
     }

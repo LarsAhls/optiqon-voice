@@ -29,7 +29,10 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      # Default `tools` package is gone from cmdline-tools 16.0; AGP fetches the rest itself.
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - uses: gradle/actions/setup-gradle@v4
 
@@ -109,11 +112,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The emulator is a Java program; the tests themselves are Node.
+      # The emulators are Java programs; the tests themselves are Node. 21 is the JDK the
+      # Firestore and Storage suites were verified on locally.
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
 
       - uses: actions/setup-node@v4
         with:
@@ -126,11 +130,21 @@ jobs:
       # No emulator: the deploy guard is a plain process whose exit code is the whole contract.
       # It rides in this job because it is the one job that already has Node and the dev
       # dependencies installed.
-      - name: Run the Storage deploy-guard regression tests
+      - name: Run the deploy-guard, target-mapping and storage.rules text tests
         run: npm run test:deploy-guard
 
       - name: Run Firestore rules and bootstrap tests against the emulator
         run: npm run test:rules
+
+      # The exit status of `emulators:exec` has been misleading before, so the node test
+      # runner's own summary is required as well: at least one test, and zero failures.
+      - name: Run Storage rules tests against the Storage and Firestore emulators
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run test:storage-rules 2>&1 | tee storage-rules.log
+          grep -Eq '^.{0,12}fail 0$' storage-rules.log
+          ! grep -Eq '^.{0,12}tests 0$' storage-rules.log
 
   # The commit gate, enforced where it cannot be skipped. .githooks/pre-commit only runs in a clone
   # that has executed scripts/install-hooks.sh -- git cannot version core.hooksPath -- so by itself
@@ -164,7 +178,10 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      # Default `tools` package is gone from cmdline-tools 16.0; AGP fetches the rest itself.
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - uses: gradle/actions/setup-gradle@v4
 
