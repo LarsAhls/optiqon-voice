@@ -38,6 +38,8 @@ class FeedbackQueueTest {
         override suspend fun holdPendingFor(ownerUid: String) = 0
         override suspend fun releaseHeldFor(ownerUid: String) = 0
         override suspend fun updateHeldPayload(id: String, payload: String) = 0
+        override suspend fun updatePendingPayload(id: String, payload: String) = 0
+        override fun observeKind(kind: String): Flow<List<OutboxEntry>> = flowOf(rows.filter { it.kind == kind })
         override suspend fun heldFor(ownerUid: String) = emptyList<OutboxEntry>()
     }
 

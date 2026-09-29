@@ -89,6 +89,36 @@ fun interface ApprovalGeneration {
     suspend fun current(): Long?
 }
 
+/** A withdrawal intent as the server holds it. */
+sealed interface WithdrawalStatus {
+    /** No intent under this id: never written, or the write never landed. */
+    data object Missing : WithdrawalStatus
+
+    /** Written, not yet reconciled by the server. */
+    data object Pending : WithdrawalStatus
+
+    /** Reconciled; [outcome] is the server's wire value, see [WithdrawalOutcome]. */
+    data class Reconciled(val outcome: String) : WithdrawalStatus
+}
+
+/**
+ * The server's verdict on a withdrawal intent (S4). Only a `submitted` case or message is ever
+ * removed; accepted history is never withdrawal-deleted.
+ */
+object WithdrawalOutcome {
+    /** The `submitted` leftover was removed. */
+    const val WITHDRAWN = "withdrawn"
+
+    /** It had already been received (accepted) and stays: "redan mottaget". */
+    const val IGNORED_ACCEPTED = "ignored_accepted"
+
+    /** Under that id there is someone else's document; nothing was touched. */
+    const val IGNORED_FOREIGN = "ignored_foreign"
+
+    /** Nothing under that id: it never reached the server, or is already gone. */
+    const val ABSENT = "absent"
+}
+
 /** The account's approval as the server holds it at the moment of asking. */
 data class ServerApproval(val approved: Boolean, val generation: Long)
 
@@ -145,6 +175,17 @@ interface CaseRemote {
      * down, or never committed at all, is success.
      */
     suspend fun tombstoneAttachment(caseId: String, aid: String): RemoteResult
+
+    /**
+     * Records the owner's withdrawal intent for one of their own ids, with the window step
+     * that pays for it, in one transaction. Idempotent: an intent already there is success, so
+     * a lost acknowledgement costs nothing. Deletes nothing -- the server reconciles the intent.
+     * [target] is `case` or `message`; for a case, [targetId] is [caseId].
+     */
+    suspend fun requestWithdrawal(uid: String, target: String, targetId: String, caseId: String): RemoteResult
+
+    /** Where the owner's intent for [targetId] stands, read from the server. Null when unknown. */
+    suspend fun withdrawalStatus(uid: String, targetId: String): WithdrawalStatus?
 
     suspend fun listCases(uid: String): List<FeedbackCase>
 

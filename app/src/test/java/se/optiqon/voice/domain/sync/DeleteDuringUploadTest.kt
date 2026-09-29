@@ -99,7 +99,7 @@ class DeleteDuringUploadTest {
 
     private fun tombstonedAt(path: String) = path.split("/").takeLast(2).joinToString("/") in remote.tombstoned
 
-    private val sender by lazy { CaseOutboxSender(gatedRemote, gatedBucket, files, auth, { 0L }) }
+    private val sender by lazy { CaseOutboxSender(gatedRemote, gatedBucket, files, auth, { 0L }, outbox) }
     private fun flush() = OutboxFlush(outbox, auth, { true }, sender, remoteEnabled = true)
 
     private val path = AttachmentStore.path("uid-a", "c1", "a1")

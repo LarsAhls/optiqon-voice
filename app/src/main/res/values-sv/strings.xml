@@ -96,6 +96,8 @@
     <string name="feedback_held_body">De här rapporterna väntade på att skickas när ditt konto förlorade sitt godkännande. Inget här skickas om du inte själv väljer det.</string>
     <string name="feedback_held_send">Skicka</string>
     <string name="feedback_held_discard">Kasta</string>
+    <string name="feedback_already_received">Redan mottaget — Optiqon hade den här rapporten innan du kastade den, så den kunde inte tas tillbaka.</string>
+    <string name="feedback_already_received_ok">OK</string>
     <string name="feedback_legacy_eyebrow">Sparat tidigare – inte skickat</string>
     <string name="feedback_legacy_body">Skrivet innan rapporter kunde skickas. Inget här skickas om du inte själv väljer det.</string>
     <string name="feedback_legacy_send">Skicka</string>

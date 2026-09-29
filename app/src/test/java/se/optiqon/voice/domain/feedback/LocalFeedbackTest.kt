@@ -22,6 +22,7 @@ class LocalFeedbackTest {
             is CasePayload.Message -> CaseOutboxPayloads.KIND_MESSAGE
             is CasePayload.Upload -> CaseOutboxPayloads.KIND_UPLOAD
             is CasePayload.Tombstone -> CaseOutboxPayloads.KIND_DELETE
+            is CasePayload.Withdrawal -> CaseOutboxPayloads.KIND_WITHDRAW
         }
         return OutboxEntry("row-${ids++}", owner, kind, CaseOutboxPayloads.encode(payload), at, state)
     }
@@ -154,5 +155,20 @@ class LocalFeedbackTest {
             setOf(ShotState.UPLOADING, ShotState.UPLOAD_FAILED, ShotState.AVAILABLE),
             ShotState.entries.filter { it.showsContent }.toSet()
         )
+    }
+
+    @Test
+    fun `only the account's delivered withdrawals answered already-received are told`() {
+        fun w(id: String, outcome: String?) = CasePayload.Withdrawal(id, id, CasePayload.Withdrawal.TARGET_CASE, outcome)
+        val told = row(w("c1", WithdrawalOutcome.IGNORED_ACCEPTED), state = OutboxState.SENT)
+        val rows = listOf(
+            told,
+            row(w("c2", WithdrawalOutcome.WITHDRAWN), state = OutboxState.SENT),
+            row(w("c3", WithdrawalOutcome.ABSENT), state = OutboxState.SENT),
+            row(w("c4", null)),
+            row(w("c5", WithdrawalOutcome.IGNORED_ACCEPTED), owner = "uid-b", state = OutboxState.SENT)
+        )
+        assertEquals(listOf(told.id), LocalFeedback.alreadyReceived(rows, "uid-a"))
+        assertTrue("a withdrawal is never shown as a queued case", LocalFeedback.queuedCases(rows, "uid-a").isEmpty())
     }
 }

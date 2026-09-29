@@ -129,8 +129,9 @@ object FeedbackStorageModule {
         store: AttachmentStore,
         files: UserScopedStorage,
         auth: AuthGateway,
-        generation: ApprovalGeneration
-    ): OutboxSender = CaseOutboxSender(remote, store, files, auth, generation)
+        generation: ApprovalGeneration,
+        outbox: OutboxDao
+    ): OutboxSender = CaseOutboxSender(remote, store, files, auth, generation, outbox)
 
     @Provides
     fun provideOutboxFlush(

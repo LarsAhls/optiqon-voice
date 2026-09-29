@@ -262,8 +262,12 @@ class CaseComposerTest {
         val files = composer.discardQueuedCase(caseId)
 
         assertEquals(listOf("a.png", "b.png"), files)
-        assertTrue(decoded().none { it!!.caseId == caseId })
-        assertEquals(2, outbox.rows.size)
+        // Only its ID-only withdrawal is left of it; the other case is untouched.
+        assertEquals(
+            listOf(CasePayload.Withdrawal(caseId, caseId, CasePayload.Withdrawal.TARGET_CASE)),
+            decoded().filter { it!!.caseId == caseId }
+        )
+        assertEquals(3, outbox.rows.size)
     }
 
     @Test
@@ -278,5 +282,73 @@ class CaseComposerTest {
         auth.currentUid = "uid-b"
         assertEquals(null, composer.discardQueuedCase(caseId))
         assertEquals(before, outbox.rows)
+    }
+
+    @Test
+    fun `a queued case is withdrawn there by id, opening and messages alike, tried or not`() = runTest {
+        val caseId = (composer.createCase("hej", emptyList()) as ComposeOutcome.Queued).caseId
+        val create = outbox.rows.single()
+        composer.addMessage(caseId, "mer", emptyList())
+        val messageId = (decoded()[1] as CasePayload.Message).messageId
+        // Tried once: the opening may sit on the server as submitted.
+        outbox.updateState(create.id, OutboxState.PENDING, 1, "offline")
+
+        assertEquals(emptyList<String>(), composer.discardQueuedCase(caseId))
+
+        assertEquals(
+            listOf(
+                CasePayload.Withdrawal(caseId, caseId, CasePayload.Withdrawal.TARGET_CASE),
+                CasePayload.Withdrawal(caseId, messageId, CasePayload.Withdrawal.TARGET_MESSAGE)
+            ),
+            decoded()
+        )
+        assertTrue(outbox.rows.all { it.state == OutboxState.PENDING })
+    }
+
+    @Test
+    fun `a queued case never tried still leaves its ID-only withdrawal, and nothing of its content`() = runTest {
+        // D: attempts == 0 is no evidence -- a first send may be inside the sender right now.
+        val caseId = (composer.createCase("hemligt innehåll", listOf(image("a.png"))) as ComposeOutcome.Queued).caseId
+        assertEquals(0, outbox.rows.first().attempts)
+
+        assertEquals(listOf("a.png"), composer.discardQueuedCase(caseId))
+
+        val row = outbox.rows.single()
+        assertEquals(CaseOutboxPayloads.KIND_WITHDRAW, row.kind)
+        assertEquals(CasePayload.Withdrawal(caseId, caseId, CasePayload.Withdrawal.TARGET_CASE), decoded().single())
+        assertTrue("the intent carries no content", "hemligt" !in row.payload && "a.png" !in row.payload)
+    }
+
+    @Test
+    fun `a second discard, or one after a restart, adds nothing`() = runTest {
+        // E: the first discard took the case away whole; nothing is left to take back again.
+        val caseId = (composer.createCase("hej", emptyList()) as ComposeOutcome.Queued).caseId
+        composer.discardQueuedCase(caseId)
+        val after = outbox.rows.toList()
+
+        assertEquals(null, composer.discardQueuedCase(caseId))
+        val restarted = CaseComposer(
+            outbox, auth, { approved }, { gen }, { scheduled++ },
+            FeedbackBuildInfo("1.2.3", 34, "Pixel Test"), { 2_000L }, { "id-${ids++}" }
+        )
+        assertEquals(null, restarted.discardQueuedCase(caseId))
+        assertEquals(after, outbox.rows)
+    }
+
+    @Test
+    fun `a discard that dies part-way leaves the case and no intent, and a retry finishes it`() = runTest {
+        // C: never the content gone with its withdrawal not yet written.
+        val caseId = (composer.createCase("hej", listOf(image("a.png"))) as ComposeOutcome.Queued).caseId
+        composer.addMessage(caseId, "mer", emptyList())
+        val before = outbox.rows.toList()
+        // The opening and its screenshot are gone by the time the message's delete dies.
+        outbox.dieDiscarding = outbox.rows.last().id
+
+        runCatching { composer.discardQueuedCase(caseId) }
+
+        assertEquals("all or nothing: the queue is as it was", before, outbox.rows)
+        composer.discardQueuedCase(caseId)
+        assertTrue(outbox.rows.all { it.kind == CaseOutboxPayloads.KIND_WITHDRAW })
+        assertEquals(2, outbox.rows.size)
     }
 }

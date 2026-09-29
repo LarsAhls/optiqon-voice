@@ -26,6 +26,7 @@ import se.optiqon.voice.domain.feedback.ApprovalCheck
 import se.optiqon.voice.domain.feedback.AttachmentStore
 import se.optiqon.voice.domain.feedback.CaseAttachment
 import se.optiqon.voice.domain.feedback.CaseComposer
+import se.optiqon.voice.domain.feedback.CaseOutboxPayloads
 import se.optiqon.voice.domain.feedback.CaseRemote
 import se.optiqon.voice.domain.feedback.ComposeOutcome
 import se.optiqon.voice.domain.feedback.FeedbackConfig
@@ -63,6 +64,7 @@ class FeedbackViewModel @Inject constructor(
     val state: StateFlow<FeedbackUiState> = _state.asStateFlow()
 
     private var rows: List<OutboxEntry> = emptyList()
+    private var receivedIds: List<String> = emptyList()
 
     /** The open case and the attachments the server last reported for it. */
     private var shotSource: Pair<String, List<CaseAttachment>>? = null
@@ -91,6 +93,12 @@ class FeedbackViewModel @Inject constructor(
                     )
                 }
                 restate()
+            }
+        }
+        viewModelScope.launch {
+            outbox.observeKind(CaseOutboxPayloads.KIND_WITHDRAW).collect { withdrawals ->
+                receivedIds = auth.currentUid?.let { LocalFeedback.alreadyReceived(withdrawals, it) }.orEmpty()
+                _state.update { it.copy(alreadyReceived = receivedIds.size) }
             }
         }
     }
@@ -307,6 +315,18 @@ class FeedbackViewModel @Inject constructor(
             val outcome = composer.discardHeld() as? HeldOutcome.Done ?: return@launch
             withContext(Dispatchers.IO) { outcome.files.forEach { preprocessor.discard(uid, it) } }
             _state.update { it.copy(notice = FeedbackNotice.Removed) }
+        }
+    }
+
+    /**
+     * The owner has read that a discard came too late. The delivered rows are let go of; the
+     * intent on the server is permanent and the report itself stays in the list.
+     */
+    fun acknowledgeAlreadyReceived() {
+        val ids = receivedIds
+        viewModelScope.launch {
+            ids.forEach { outbox.discard(it) }
+            refreshRemote()
         }
     }
 

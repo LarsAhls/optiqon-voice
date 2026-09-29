@@ -154,4 +154,30 @@ class CaseDocumentsTest {
         val bytes = CaseDocuments.quotaAfter(Quota(1, CaseDocuments.QUOTA_MAX_BYTES, 0, 0), "a", 1, 0)
         assertTrue((bytes as QuotaWrite.Refused).result is RemoteResult.Denied)
     }
+
+    @Test
+    fun `a withdrawal intent carries an id and nothing else of the report`() {
+        val doc = CaseDocuments.withdrawal("case", "c1")
+        assertEquals(setOf("kind", "caseId", "createdAt"), doc.keys)
+        assertEquals("case", doc["kind"])
+        assertEquals("c1", doc["caseId"])
+    }
+
+    @Test
+    fun `the withdrawal window allows twenty an hour and then waits, never refuses for good`() {
+        val first = CaseDocuments.withdrawalWindowAfter(null, "c1", 0) as QuotaWrite.Create
+        assertEquals(setOf("windowStart", "windowCount", "lastWithdrawalId"), first.fields.keys)
+        assertEquals(1L, first.fields["windowCount"])
+
+        val next = CaseDocuments.withdrawalWindowAfter(CaseDocuments.WithdrawalWindow(0, 19), "c2", 1) as QuotaWrite.Update
+        assertEquals(mapOf("windowCount" to 20L, "lastWithdrawalId" to "c2"), next.fields)
+
+        val full = CaseDocuments.WithdrawalWindow(0, CaseDocuments.WINDOW_MAX)
+        val early = CaseDocuments.withdrawalWindowAfter(full, "c3", 1000)
+        assertTrue(((early as QuotaWrite.Refused).result as RemoteResult.Failed).failure is SendFailure.Transient)
+
+        val later = CaseDocuments.withdrawalWindowAfter(full, "c3", CaseDocuments.WINDOW_MS + 1) as QuotaWrite.Update
+        assertEquals(1L, later.fields["windowCount"])
+        assertEquals(setOf("windowStart", "windowCount", "lastWithdrawalId"), later.fields.keys)
+    }
 }

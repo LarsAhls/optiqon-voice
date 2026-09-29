@@ -514,4 +514,110 @@ ruleset, so there are no case documents to backfill.
 ### Still open for FS-G
 
 Rules deploy; `approvalGeneration` backfill on existing prod users; the S4 server (withdrawal
-handler, submitted sweep, retention R1–R6); live verification.
+handler, submitted sweep, retention R1–R6); live verification. FS-S34 below supplies the S4
+withdrawal handler and the submitted sweep as repository code; their provider side is still FS-G.
+
+## FS-S34 — Discard as withdrawal (S3) and server reconciliation (S4)
+
+Repository only. Nothing was deployed, and no provider resource was created or changed. This
+mission leaves `firestore.rules` and `storage.rules` **unchanged**: S3 and S4 use the FS-S12
+withdrawal contract as it was already written.
+
+### S3 — the client
+
+- Every discarded opening and message queues an ID-only withdrawal row (`feedback_withdrawal`),
+  whether or not it looks tried. Nothing on the row can show that it never left: `attempts`
+  counts only sends that have returned, so a first send may be in flight, unrecorded, at the
+  moment of the discard.
+- The withdrawal row is inserted and the discarded rows are deleted in one Room transaction
+  (`OutboxDao.enqueueAndDiscard`), the insert first. A process that dies part-way leaves both
+  or neither. A second discard, or one after a restart, finds nothing left and adds nothing.
+- The withdrawal row is never held. It needs auth and a verified address, but not a current
+  approval (M3=A), so a revoked or pending account can still take back what it wrote.
+- The row writes the intent once. It reads before it writes, so a lost ACK, a retry or a restart
+  never writes twice. It then waits for the server's verdict and keeps it on the row:
+  - `withdrawn`: the target is gone.
+  - `ignored_accepted`: the row ends SENT, and the Feedback screen says "already received" once.
+  - `ignored_foreign`: nobody else is affected.
+  - `absent`: reconciled locally.
+- Not knowing is never final. A refusal that did not land is final.
+- Send and Discard of a held row exclude each other. Nothing is sent after a reapproval without an
+  explicit Send. Attachment delete keeps its existing tombstone semantics.
+- Invariant: after an explicit discard, an in-flight or late send never leaves a post on the
+  server without a durable withdrawal. Once the intent is there the rules refuse a late create
+  or finalize under that id. One that landed first is reconciled: `submitted` → `withdrawn`,
+  accepted → `ignored_accepted` ("Redan mottaget"); one that never arrived → `absent`.
+  `DiscardDuringFirstSendTest` races each order for a case and a message.
+
+### S4 — the server core (`server/`)
+
+- `server/withdrawal.mjs`:
+  - `reconcileWithdrawal` handles one intent.
+  - `reconcilePending` is the backstop over every intent without an outcome.
+  - `sweepSubmitted` is the 30-day sweep.
+- `server/config.mjs` provides `loadConfig(env)`:
+  - Project lock `optiqon-voice-47498`; a test keeps it equal to the M1 bootstrap's lock. Any
+    other project is refused unless `FIRESTORE_EMULATOR_HOST` is set.
+  - It writes only when `APPLY` is exactly `true`. Anything else is a dry run.
+  - `SWEEP_TTL_DAYS` must be at least 30 and defaults to 30.
+- `server/main.mjs`:
+  - `onWithdrawalCreated(cloudEvent)` is the handler for a document-created trigger.
+  - `scheduledRun()` is for a scheduled job: the backstop, then the sweep.
+  - A CLI: `node server/main.mjs reconcile|sweep [--apply]`, a dry run by default.
+- `firebase.json` names none of this; a deploy-guard test keeps it that way.
+
+The Admin SDK bypasses the rules, so these invariants are held in code:
+
+- Only `submitted` is removed. `accepted` is received history and is **never** removed by a
+  withdrawal or the sweep. So is a legacy document with no state.
+- A case is removed only if the intent's uid owns it and it has no events or attachments. The rules
+  make children impossible; if there are some anyway, the outcome is `ignored_inconsistent` and a
+  person handles it.
+- A message is removed only if it is `type == message`, its `actorUid` is the intent's uid, and it
+  has no screenshot. The parent case and every other event stay untouched, and the case is not
+  bumped.
+- Removal has two phases:
+  1. Stamp `withdrawnAt` on the target. From then on the rules refuse finalize.
+  2. In a second transaction, re-read everything and delete only a target that is still
+     `submitted` and still stamped.
+
+  If the process crashes between the two, the next run finishes the job.
+- The outcome is written once, with `reconciledAt`, and read back on every retry, duplicate or
+  restart. An attachment intent gets `not_applicable`; a malformed one gets `ignored_invalid`.
+- The sweep writes no intent, tombstone or fingerprint, so the same id may be sent again (a held
+  Send). It never resurrects anything; it only deletes.
+
+### What the repository proves
+
+`tests/server/*.test.mjs` runs under `npm run test:rules`, against the emulator, with the deployed
+`firestore.rules` in front of the clients. It covers:
+
+- every outcome above;
+- duplicate, retry and restart, and a crash between the phases;
+- finalize vs withdrawal in both orders, and a state that changes between the phases;
+- sweep vs finalize and sweep vs withdrawal, each in both orders;
+- a stale client's late create;
+- repeated reconciliation and repeated sweeps;
+- a dry run writing nothing, the TTL floor, and the project lock.
+
+A mutation check that removes the `submitted` test turns six of these tests red.
+
+### What FS-G must still prove on the provider
+
+- The deploy itself: runtime, region, and a service account whose IAM is Firestore read/write only.
+- The trigger (Eventarc document-created on `users/{uid}/withdrawals/{targetId}`) and the
+  scheduled job, and that the backstop catches a failed trigger.
+- The indexes the emulator does not need: composite indexes for the sweep on `cases`
+  (`state`, `createdAt`) and on collection group `events` (`state`, `createdAt`), plus the
+  `messageId` lookup on `attachments`.
+- The same races live, with real latency.
+- The rules release that lets S3 reach a server.
+
+### Boundaries not decided here
+
+- **M4**, self-service account deletion, is not touched. The withdrawal handler and the sweep act
+  on single documents only.
+- **M5**, the physical-deletion SLA for screenshots, is not touched. Attachment intents are
+  `not_applicable`, and S4 never deletes a Storage object.
+- **M6**, what "immediate" means for an offline delete, is not decided. S3 delivers the intent
+  when the device is next online, and the UI claims nothing about timing.

@@ -18,9 +18,11 @@ import se.optiqon.voice.domain.feedback.ApprovalGeneration
 import se.optiqon.voice.domain.feedback.RemoteResult
 import se.optiqon.voice.domain.feedback.RemoteState
 import se.optiqon.voice.domain.feedback.StoreResult
+import se.optiqon.voice.domain.feedback.WithdrawalOutcome
 import se.optiqon.voice.domain.sync.SendFailure
 import se.optiqon.voice.testing.FakeAttachmentStore
 import se.optiqon.voice.testing.FakeCaseRemote
+import se.optiqon.voice.testing.MemoryOutboxDao
 import se.optiqon.voice.testing.SwitchableAuth
 import se.optiqon.voice.testing.TRANSIENT
 import java.io.File
@@ -39,7 +41,8 @@ class CaseOutboxSenderTest {
     private val files by lazy { UserScopedStorage(tmp.root) }
     private var currentGen: Long? = 0L
     private val generation = ApprovalGeneration { currentGen }
-    private val sender by lazy { CaseOutboxSender(remote, store, files, auth, generation) }
+    private val outbox = MemoryOutboxDao()
+    private val sender by lazy { CaseOutboxSender(remote, store, files, auth, generation, outbox) }
 
     private fun entry(payload: CasePayload, owner: String = "uid-a") = OutboxEntry(
         id = "row",
@@ -414,5 +417,107 @@ class CaseOutboxSenderTest {
     fun `an unreadable row is parked`() = runTest {
         val bad = entry(create).copy(payload = "{")
         assertTrue(sender.send(bad) is SendFailure.Permanent)
+    }
+
+    // --- S3: withdrawal by id (M3=A) ---
+
+    private val withdrawCase = CasePayload.Withdrawal("c1", "c1", CasePayload.Withdrawal.TARGET_CASE)
+    private val withdrawMessage = CasePayload.Withdrawal("c1", "m1", CasePayload.Withdrawal.TARGET_MESSAGE)
+
+    private suspend fun queued(payload: CasePayload): OutboxEntry = entry(payload).also { outbox.insert(it) }
+
+    private suspend fun storedOutcome(): String? =
+        (CaseOutboxPayloads.decode(outbox.byId("row")!!.kind, outbox.byId("row")!!.payload) as CasePayload.Withdrawal).outcome
+
+    @Test
+    fun `a withdrawal records the intent and waits for the server's verdict`() = runTest {
+        val row = queued(withdrawCase)
+        assertTrue(sender.send(row) is SendFailure.Transient)
+        assertEquals(CasePayload.Withdrawal.TARGET_CASE, remote.withdrawals["uid-a/c1"]?.target)
+        assertEquals(listOf("withdraw:c1"), remote.calls)
+
+        // Retry, restart, lost ack: the intent is read first and never written twice.
+        assertTrue(sender.send(row) is SendFailure.Transient)
+        assertEquals(listOf("withdraw:c1"), remote.calls)
+    }
+
+    @Test
+    fun `a submitted case is withdrawn and the verdict is kept on the row`() = runTest {
+        remote.createCase("uid-a", "c1", "t", "b", 0L)
+        val row = queued(withdrawCase)
+        sender.send(row)
+        remote.reconcileWithdrawals()
+
+        assertNull(sender.send(row))
+        assertFalse("c1" in remote.cases)
+        assertEquals(WithdrawalOutcome.WITHDRAWN, storedOutcome())
+    }
+
+    @Test
+    fun `an accepted case is not withdrawn - the row ends sent as already received`() = runTest {
+        assertNull(sender.send(entry(create)))
+        val row = queued(withdrawCase)
+        sender.send(row)
+        remote.reconcileWithdrawals()
+
+        assertNull(sender.send(row))
+        assertEquals("accepted", remote.caseStates["c1"])
+        assertEquals(WithdrawalOutcome.IGNORED_ACCEPTED, storedOutcome())
+    }
+
+    @Test
+    fun `nothing on the server is reconciled as absent, and someone else's message is left alone`() = runTest {
+        val row = queued(withdrawCase)
+        sender.send(row)
+        remote.reconcileWithdrawals()
+        assertNull(sender.send(row))
+        assertEquals(WithdrawalOutcome.ABSENT, storedOutcome())
+
+        remote.messages["c1/m1"] = "uid-b"
+        remote.messageStates["c1/m1"] = "submitted"
+        outbox.discard("row")
+        val msg = queued(withdrawMessage)
+        sender.send(msg)
+        remote.reconcileWithdrawals()
+        assertNull(sender.send(msg))
+        assertEquals(WithdrawalOutcome.IGNORED_FOREIGN, storedOutcome())
+        assertEquals("uid-b", remote.messages["c1/m1"])
+    }
+
+    @Test
+    fun `a withdrawal needs a verified address but no current approval`() = runTest {
+        auth.isEmailVerified = false
+        assertTrue(sender.send(queued(withdrawCase)) is SendFailure.Transient)
+        assertTrue("nothing is written unverified", remote.calls.isEmpty())
+
+        auth.isEmailVerified = true
+        currentGen = null
+        remote.unapproved += "uid-a"
+        assertTrue(sender.send(outbox.byId("row")!!) is SendFailure.Transient)
+        assertTrue("uid-a/c1" in remote.withdrawals)
+    }
+
+    @Test
+    fun `a refused intent that did not land is final, and not knowing is never final`() = runTest {
+        remote.withdrawalUnknown = true
+        assertTrue(sender.send(queued(withdrawCase)) is SendFailure.Transient)
+
+        remote.withdrawalUnknown = false
+        remote.scripted["withdraw"] = ArrayDeque(listOf(RemoteResult.Denied("quota")))
+        assertTrue(sender.send(outbox.byId("row")!!) is SendFailure.Permanent)
+
+        remote.scripted["withdraw"] = ArrayDeque(listOf<RemoteResult>(TRANSIENT))
+        assertEquals(TRANSIENT.failure, sender.send(outbox.byId("row")!!))
+    }
+
+    @Test
+    fun `an intent blocks a late phase two of the same case`() = runTest {
+        remote.createCase("uid-a", "c1", "t", "b", 0L)
+        sender.send(queued(withdrawCase))
+        // The create row's retry reaches finalize after the owner discarded: the rules refuse it.
+        assertTrue(sender.send(entry(create)) is SendFailure.Permanent)
+        assertEquals("submitted", remote.caseStates["c1"])
+        remote.reconcileWithdrawals()
+        assertFalse("c1" in remote.cases)
     }
 }

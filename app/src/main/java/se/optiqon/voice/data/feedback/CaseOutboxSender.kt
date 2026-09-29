@@ -1,5 +1,6 @@
 package se.optiqon.voice.data.feedback
 
+import se.optiqon.voice.data.db.dao.OutboxDao
 import se.optiqon.voice.data.db.entity.OutboxEntry
 import se.optiqon.voice.data.storage.UserScopedStorage
 import se.optiqon.voice.domain.access.AuthGateway
@@ -11,6 +12,7 @@ import se.optiqon.voice.domain.feedback.CaseRemote
 import se.optiqon.voice.domain.feedback.RemoteResult
 import se.optiqon.voice.domain.feedback.RemoteState
 import se.optiqon.voice.domain.feedback.StoreResult
+import se.optiqon.voice.domain.feedback.WithdrawalStatus
 import se.optiqon.voice.domain.sync.OutboxSender
 import se.optiqon.voice.domain.sync.SendFailure
 import java.io.File
@@ -36,13 +38,18 @@ import java.io.File
  * held up against the approval the server holds right now ([CaseRemote.approvalOf]). An
  * approval that has moved holds the row; an unchanged one leaves the refusal as it was, so a
  * closed, foreign or full case is not dressed up as a reapproval.
+ *
+ * A withdrawal is not stamped and needs no current approval (M3=A): it can only ever stop or
+ * take back the owner's own `submitted` leftovers. It is sent once the server has reconciled
+ * it, and the server's verdict is recorded on the row ([outbox]) before the row is marked sent.
  */
 class CaseOutboxSender(
     private val remote: CaseRemote,
     private val store: AttachmentStore,
     private val files: UserScopedStorage,
     private val auth: AuthGateway,
-    private val generation: ApprovalGeneration
+    private val generation: ApprovalGeneration,
+    private val outbox: OutboxDao
 ) : OutboxSender {
 
     override suspend fun send(entry: OutboxEntry): SendFailure? {
@@ -84,7 +91,46 @@ class CaseOutboxSender(
                 is RemoteResult.Denied -> SendFailure.Permanent(r.message)
                 is RemoteResult.Failed -> r.failure
             }
+
+            is CasePayload.Withdrawal -> withdraw(entry, uid, payload)
         }
+    }
+
+    /**
+     * Intent first, verdict second. Every step starts by reading where the intent stands, so a
+     * lost acknowledgement, a retry or a restart simply picks up from there: an intent is never
+     * written twice, and a verdict already given is recorded rather than asked for again.
+     */
+    private suspend fun withdraw(entry: OutboxEntry, uid: String, p: CasePayload.Withdrawal): SendFailure? {
+        // The rules let only a verified account write or read its intents; waiting is right,
+        // the owner's word stands until it can be delivered.
+        if (!auth.isEmailVerified) return SendFailure.Transient("Waiting for a verified e-mail address.")
+        when (val before = remote.withdrawalStatus(uid, p.targetId)) {
+            is WithdrawalStatus.Reconciled -> return reconciled(entry, p, before.outcome)
+            WithdrawalStatus.Pending -> return AWAITING_SERVER
+            null -> return SendFailure.Transient("Could not check the withdrawal.")
+            WithdrawalStatus.Missing -> Unit
+        }
+        val refusal = when (val r = remote.requestWithdrawal(uid, p.target, p.targetId, p.caseId)) {
+            RemoteResult.Ok -> null
+            is RemoteResult.Failed -> return r.failure
+            is RemoteResult.Denied -> r.message
+        }
+        return when (val after = remote.withdrawalStatus(uid, p.targetId)) {
+            is WithdrawalStatus.Reconciled -> reconciled(entry, p, after.outcome)
+            WithdrawalStatus.Pending -> AWAITING_SERVER
+            null -> SendFailure.Transient(refusal ?: "Could not check the withdrawal.")
+            // Written and gone again cannot happen: no one may delete an intent. Refused and
+            // absent is a refusal for good -- no account document to hold it, for one.
+            WithdrawalStatus.Missing -> SendFailure.Permanent(refusal ?: "The withdrawal was not recorded.")
+        }
+    }
+
+    private suspend fun reconciled(entry: OutboxEntry, p: CasePayload.Withdrawal, outcome: String): SendFailure? {
+        if (p.outcome != outcome) {
+            outbox.updatePendingPayload(entry.id, CaseOutboxPayloads.encode(p.copy(outcome = outcome)))
+        }
+        return null
     }
 
     /**
@@ -128,6 +174,11 @@ class CaseOutboxSender(
                 else -> approvalMoved(uid, gen, finalized.message) ?: SendFailure.Permanent(finalized.message)
             }
         }
+    }
+
+    private companion object {
+        /** Not a fault: the intent is in place and the server has not given its verdict yet. */
+        val AWAITING_SERVER = SendFailure.Transient("Waiting for Optiqon to confirm the withdrawal.")
     }
 
     private suspend fun upload(uid: String, p: CasePayload.Upload, gen: Long): SendFailure? {

@@ -93,6 +93,8 @@
     <string name="feedback_held_body">These reports were waiting to be sent when your account lost its approval. Nothing here is sent unless you choose to.</string>
     <string name="feedback_held_send">Send</string>
     <string name="feedback_held_discard">Discard</string>
+    <string name="feedback_already_received">Already received — Optiqon had this report before your discard arrived, so it could not be taken back.</string>
+    <string name="feedback_already_received_ok">OK</string>
     <string name="feedback_legacy_eyebrow">Saved earlier, not sent</string>
     <string name="feedback_legacy_body">Written before reports could be sent. Nothing here is sent unless you choose to.</string>
     <string name="feedback_legacy_send">Send</string>

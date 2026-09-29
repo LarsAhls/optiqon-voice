@@ -17,11 +17,13 @@ class CaseOutboxPayloadsTest {
         roundTrip(CasePayload.Upload("c1", "m1", "a1", "a1.png", "image/png", 1234))
         roundTrip(CasePayload.Upload("c1", null, "a2", "a2.jpg", "image/jpeg", 99))
         roundTrip(CasePayload.Tombstone("c1", "a1"))
+        roundTrip(CasePayload.Withdrawal("c1", "c1", CasePayload.Withdrawal.TARGET_CASE))
+        roundTrip(CasePayload.Withdrawal("c1", "m1", CasePayload.Withdrawal.TARGET_MESSAGE, WithdrawalOutcome.IGNORED_ACCEPTED))
     }
 
     @Test
     fun `each kind has its own marker and none is the legacy one`() {
-        assertEquals(4, CaseOutboxPayloads.KINDS.size)
+        assertEquals(5, CaseOutboxPayloads.KINDS.size)
         assert(FeedbackPayloads.KIND !in CaseOutboxPayloads.KINDS)
     }
 

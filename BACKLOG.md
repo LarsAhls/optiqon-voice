@@ -102,6 +102,17 @@ Deferred. Not started, and not to be started without an explicit decision.
 If OPTIQON Voice is moved into a new `LarsAhls/optiqon-voice` repository instead of renaming
 this repository, migrate this backlog file with it.
 
+## FS-S34 follow-ups — withdrawal and sweep, provider side (FS-G)
+
+**Status:** Open, blocked on FS-G. The repository code is in `server/`; see
+`docs/BACKEND_OPEN_CONTRACTS.md` § FS-S34.
+
+- Deploy `server/main.mjs` (the trigger and the scheduled job), its service account and IAM, and
+  the sweep's composite indexes. Then verify the races live.
+- Verify live that a discard racing a first send ends `withdrawn`, `ignored_accepted` or
+  `absent` (repo-proven by `DiscardDuringFirstSendTest`; no residual left for the sweep).
+- M4, M5 and M6 remain undecided and untouched.
+
 ## Feedback screenshots — orphaned local copies are only swept from the Feedback screen
 
 **Status:** Open, residual risk accepted in FS-1 PR-B (2026-09-28). Not a leak.

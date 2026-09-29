@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "test:deploy-guard": "node --test tests/deploy/*.test.mjs",
-    "test:rules": "firebase emulators:exec --config firebase.rules-test.json --project optiqon-voice-rules-test --only firestore \"node --test --test-concurrency=1 tests/rules/*.test.mjs tests/admin/*.test.mjs\"",
+    "test:rules": "firebase emulators:exec --config firebase.rules-test.json --project optiqon-voice-rules-test --only firestore \"node --test --test-concurrency=1 tests/rules/*.test.mjs tests/admin/*.test.mjs tests/server/*.test.mjs\"",
     "test:storage-rules": "firebase emulators:exec --config firebase.rules-test.json --project optiqon-voice-rules-test --only firestore,storage \"node --test --test-concurrency=1 tests/storage/*.test.mjs\""
   },
   "devDependencies": {
