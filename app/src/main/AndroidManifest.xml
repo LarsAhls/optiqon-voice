@@ -92,6 +92,25 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_service_config" />
         </service>
+
+        <!--
+            Feedback push (FS-S468, S6). The server sends data-only messages, so every one lands
+            in this service and the visible notification is built on the device from fixed,
+            neutral text. Not exported beyond what Firebase Messaging needs to deliver to it.
+            Auto-init is off: no FCM token exists until the registrar asks for one, which it does
+            only for an approved account in a build with remote Feedback on.
+        -->
+        <service
+            android:name=".service.FeedbackMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <meta-data
+            android:name="firebase_messaging_auto_init_enabled"
+            android:value="false" />
     </application>
 
 </manifest>

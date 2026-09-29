@@ -129,9 +129,11 @@ this repository, migrate this backlog file with it.
   - acceptance
 - **Scheduler region.** If Cloud Scheduler is not available in `europe-north2`, choosing
   `europe-north1` for the job alone is an FS-G decision.
-- **Client wiring.** Wire the unread signal (`CaseUnread` / `CaseReads`) and notification token
-  registration (`NotificationRegistrar`) into DI and the Feedback UI. Add the FCM client SDK.
-  This is a separate Mission; the interfaces and decision cores exist and are tested.
+- **Client wiring is done repo-side.** Unread (`FirestoreCaseReads` → `CaseUnread` →
+  `UnreadTracker` → the Feedback list) and push (`firebase-messaging`, `FeedbackMessagingService`,
+  `FirestoreNotificationTokens`, `NotificationRegistrar`, `FeedbackPushLifecycle`, sign-out
+  `AccountLeaving`) are wired through Hilt and tested on the JVM. **FCM delivery is not
+  provider-proven**: FS-G owns the provider, IAM, deploy and the first live FCM send.
 - **Remote Feedback flag.** Turning `FEEDBACK_REMOTE_ENABLED` on for a release is a separate
   release decision after FS-G.
 - **Self-service account deletion.** Product intent, not built. Today M4 is admin-only through

@@ -1,5 +1,7 @@
 package se.optiqon.voice.domain.access
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeoutOrNull
 import se.optiqon.voice.data.preferences.PreferencesDataStore
 import se.optiqon.voice.data.storage.DeviceDataOwner
 import javax.inject.Inject
@@ -20,19 +22,49 @@ import javax.inject.Singleton
  *    root being left *and* into the root the next process will open, because they are separate
  *    files and only the second one will be read.
  *
- * Nothing here deletes anything. The account's database, settings, keys and audio stay exactly
+ * Nothing on the device is deleted; the one server-side removal is this installation's push
+ * registration ([AccountLeaving]). The account's database, settings, keys and audio stay exactly
  * where they are and are opened again, untouched, the next time it signs in.
  */
 @Singleton
 class AccountSignOut @Inject constructor(
     private val authGateway: AuthGateway,
     private val preferencesDataStore: PreferencesDataStore,
-    private val deviceDataOwner: DeviceDataOwner
+    private val deviceDataOwner: DeviceDataOwner,
+    private val leaving: AccountLeaving = AccountLeaving.NONE
 ) {
 
     suspend fun signOut() {
+        // While the account is still signed in: what it holds server-side for this installation
+        // (its push registration) can only be removed with its own credential. Bounded and
+        // best-effort, so no network state can keep anyone signed in.
+        authGateway.currentUid?.let { uid ->
+            try {
+                withTimeoutOrNull(LEAVING_TIMEOUT_MS) { leaving.leaving(uid) }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
+                // The server drops a token bound to two accounts in favour of the newer one.
+            }
+        }
         preferencesDataStore.setOnboardingComplete(false)
         preferencesDataStore.setOnboardingComplete(false, deviceDataOwner.rootFor(null))
         authGateway.signOut()
+    }
+
+    private companion object {
+        const val LEAVING_TIMEOUT_MS = 5_000L
+    }
+}
+
+/**
+ * What has to happen, under the account's own credential, before it is signed out. Today:
+ * removing this installation's push registration from it (FS-S468).
+ */
+fun interface AccountLeaving {
+    suspend fun leaving(uid: String)
+
+    companion object {
+        val NONE = AccountLeaving {}
     }
 }

@@ -88,6 +88,8 @@
     <string name="feedback_not_approved">Ditt konto är inte godkänt, så ingen ny rapport kan köas.</string>
     <string name="feedback_pill_open">Öppen</string>
     <string name="feedback_pill_closed">Stängd</string>
+    <string name="feedback_unread">Nytt svar</string>
+    <string name="feedback_reply_channel">Svar på feedback</string>
     <string name="feedback_pill_waiting">Väntar på att skickas</string>
     <string name="feedback_pill_on_device">På enheten</string>
     <string name="feedback_pill_failed">Inte skickad</string>

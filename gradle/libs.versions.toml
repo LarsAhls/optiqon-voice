@@ -70,6 +70,7 @@ firebase-auth = { group = "com.google.firebase", name = "firebase-auth" }
 firebase-firestore = { group = "com.google.firebase", name = "firebase-firestore" }
 # Feedback screenshots. Always reached through the named bucket, never the default instance.
 firebase-storage = { group = "com.google.firebase", name = "firebase-storage" }
+firebase-messaging = { group = "com.google.firebase", name = "firebase-messaging" }
 
 # Sign-in and background work
 androidx-credentials = { group = "androidx.credentials", name = "credentials", version.ref = "credentials" }

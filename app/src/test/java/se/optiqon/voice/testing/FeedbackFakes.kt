@@ -154,6 +154,7 @@ class FakeCaseRemote : CaseRemote {
     val caseStates = mutableMapOf<String, String>()     // caseId -> submitted | accepted
     val messageStates = mutableMapOf<String, String>()  // caseId/messageId -> submitted | accepted
     val activityRev = mutableMapOf<String, Long>()      // caseId -> revision
+    val publicRev = mutableMapOf<String, Long>()        // caseId -> public revision (FS-S468)
 
     /** The server's approval generation per uid; the rules refuse any other stamp. */
     val generations = mutableMapOf<String, Long>()
@@ -352,7 +353,7 @@ class FakeCaseRemote : CaseRemote {
 
     override suspend fun listCases(uid: String): List<FeedbackCase> =
         cases.filterValues { it == uid }.keys.map {
-            FeedbackCase(it, "t", "b", "Mottaget", null, null, 0, false)
+            FeedbackCase(it, "t", "b", "Mottaget", null, null, 0, false, publicRev[it] ?: 0L)
         }
 
     override suspend fun events(caseId: String): List<CaseEvent> = emptyList()

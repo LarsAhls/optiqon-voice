@@ -61,6 +61,10 @@ describe('decision', () => {
       assert.ok(!text.includes(secret), `payload leaks ${secret}`);
     }
     assert.deepEqual({ ...msg, token: undefined }, { ...neutralPayload(), token: undefined });
+    // Data-only: the provider has nothing to display, so only the app's fixed text is shown.
+    assert.equal(msg.notification, undefined);
+    assert.equal(msg.android.notification, undefined);
+    assert.deepEqual(msg.data, { kind: 'feedback_reply' });
     assert.equal((await notifyForEvent(deps(), 'c1', 'r1')).outcome, NOTIFY.ALREADY);
     assert.equal(messenger.sent.length, 1);
     const marker = await peek('users/alice/notificationSends/c1:r1');

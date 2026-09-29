@@ -85,6 +85,8 @@
     <string name="feedback_not_approved">Your account is not approved, so no new report can be queued.</string>
     <string name="feedback_pill_open">Open</string>
     <string name="feedback_pill_closed">Closed</string>
+    <string name="feedback_unread">New reply</string>
+    <string name="feedback_reply_channel">Feedback replies</string>
     <string name="feedback_pill_waiting">Waiting to send</string>
     <string name="feedback_pill_on_device">On this device</string>
     <string name="feedback_pill_failed">Not sent</string>

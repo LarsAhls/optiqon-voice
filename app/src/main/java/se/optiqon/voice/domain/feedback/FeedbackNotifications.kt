@@ -32,8 +32,9 @@ interface NotificationTokens {
  * permission leaves nothing behind. An account switch removes the token from the account being
  * left ([leaving]) before [sync] gives it to the one signed in.
  *
- * What a notification says is the server's business (server/notify.mjs): a neutral text for a
- * public support reply, nothing for internal events, nothing for a status change.
+ * Whether to send is the server's business (server/notify.mjs): a data-only message for a public
+ * support reply, nothing for internal events, nothing for a status change. What is shown is the
+ * device's: fixed neutral text ([FeedbackReplyNotice]), never anything the message carries.
  */
 class NotificationRegistrar(
     private val tokens: NotificationTokens,

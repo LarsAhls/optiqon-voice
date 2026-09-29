@@ -9,8 +9,9 @@
 //     notify — the product has not asked for it and this does not invent it. Internal notes,
 //     the owner's own messages and screenshots, and anything retention or deletion does never
 //     notify;
-//   * the payload is neutral: no case title, no reply text, no status, no case id, nothing
-//     private. It says that there is an answer and nothing else;
+//   * the payload is neutral and data-only: no case title, no reply text, no status, no case
+//     id, no display text at all. It says that there is an answer and nothing else; the device
+//     shows its own fixed text;
 //   * only an approved owner is notified. A revoked or pending account gets nothing — the
 //     notification would otherwise be a side channel into whether support wrote;
 //   * a token is bound to the account that registered it. If the same device token has since
@@ -35,15 +36,19 @@ export const NOTIFY = Object.freeze({
   DRY: 'would_send',
 });
 
-/** The whole payload. Changing a word here is a privacy review, not a copy edit. */
+/**
+ * The whole payload. Changing a word here is a privacy review, not a copy edit.
+ *
+ * Data-only on purpose: there is no `notification` block, so the provider never displays text
+ * of its own. The app builds the visible notification locally from its own fixed strings
+ * ("OPTIQON Voice" / "Du har fått svar på din feedback.", FeedbackReplyNotice on the device), and
+ * only after checking that the signed-in account is approved. Nothing the server sends can end
+ * up on the lock screen.
+ */
 export function neutralPayload() {
   return Object.freeze({
-    notification: Object.freeze({
-      title: 'OPTIQON Voice',
-      body: 'Du har fått svar på din feedback.',
-    }),
     data: Object.freeze({ kind: 'feedback_reply' }),
-    android: Object.freeze({ priority: 'normal', notification: Object.freeze({ tag: 'feedback_reply' }) }),
+    android: Object.freeze({ priority: 'normal' }),
   });
 }
 

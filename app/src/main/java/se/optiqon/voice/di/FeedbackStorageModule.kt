@@ -13,25 +13,42 @@ import se.optiqon.voice.BuildConfig
 import se.optiqon.voice.data.db.dao.OutboxDao
 import se.optiqon.voice.data.feedback.CaseOutboxSender
 import se.optiqon.voice.data.feedback.FirebaseAttachmentStore
+import se.optiqon.voice.data.feedback.FirebasePushTokenSource
+import se.optiqon.voice.data.feedback.FirestoreCaseReads
 import se.optiqon.voice.data.feedback.FirestoreCaseRemote
+import se.optiqon.voice.data.feedback.FirestoreNotificationTokens
+import se.optiqon.voice.data.feedback.InstallationId
+import se.optiqon.voice.data.feedback.SystemNoticePoster
+import se.optiqon.voice.data.feedback.SystemNotificationPermission
 import se.optiqon.voice.data.feedback.ScreenshotPreprocessor
 import se.optiqon.voice.data.storage.UserScopedStorage
 import se.optiqon.voice.domain.access.AccessDecision
 import se.optiqon.voice.domain.access.AccessRepository
+import se.optiqon.voice.domain.access.AccountLeaving
 import se.optiqon.voice.domain.access.AuthGateway
 import se.optiqon.voice.domain.access.ServerVerdictListener
 import se.optiqon.voice.domain.feedback.ApprovalCheck
 import se.optiqon.voice.domain.feedback.ApprovalGeneration
 import se.optiqon.voice.domain.feedback.AttachmentStore
 import se.optiqon.voice.domain.feedback.CaseComposer
+import se.optiqon.voice.domain.feedback.CaseReads
+import se.optiqon.voice.domain.feedback.CaseUnread
+import se.optiqon.voice.domain.feedback.UnreadTracker
 import se.optiqon.voice.domain.feedback.CaseRemote
 import se.optiqon.voice.domain.feedback.FeedbackBuildInfo
 import se.optiqon.voice.domain.feedback.FeedbackConfig
 import se.optiqon.voice.domain.feedback.FeedbackHold
+import se.optiqon.voice.domain.feedback.FeedbackNotificationSync
+import se.optiqon.voice.domain.feedback.FeedbackPushHandler
+import se.optiqon.voice.domain.feedback.NotificationPermission
+import se.optiqon.voice.domain.feedback.NotificationRegistrar
+import se.optiqon.voice.domain.feedback.NotificationTokens
 import se.optiqon.voice.domain.feedback.OutboxScheduler
 import se.optiqon.voice.domain.sync.OutboxFlush
 import se.optiqon.voice.domain.sync.OutboxSender
 import se.optiqon.voice.domain.sync.OutboxWorker
+import se.optiqon.voice.service.FeedbackPushLifecycle
+import kotlinx.coroutines.CoroutineScope
 import javax.inject.Provider
 import javax.inject.Qualifier
 import javax.inject.Singleton
@@ -141,4 +158,84 @@ object FeedbackStorageModule {
         sender: OutboxSender,
         config: FeedbackConfig
     ): OutboxFlush = OutboxFlush(outbox, auth, approval, sender, config.remoteEnabled)
+
+    // ------------------------------------------------ unread and push (FS-S468, S6)
+
+    @Provides
+    @Singleton
+    fun provideCaseReads(firestore: Provider<FirebaseFirestore>): CaseReads = FirestoreCaseReads(firestore)
+
+    @Provides
+    @Singleton
+    fun provideCaseUnread(reads: CaseReads, auth: AuthGateway, approval: ApprovalCheck): CaseUnread =
+        CaseUnread(reads, auth, approval)
+
+    @Provides
+    @Singleton
+    fun provideUnreadTracker(unread: CaseUnread, auth: AuthGateway): UnreadTracker = UnreadTracker(unread, auth)
+
+    @Provides
+    @Singleton
+    fun provideNotificationTokens(firestore: Provider<FirebaseFirestore>): NotificationTokens =
+        FirestoreNotificationTokens(firestore)
+
+    @Provides
+    @Singleton
+    fun provideNotificationPermission(@ApplicationContext context: Context): NotificationPermission =
+        SystemNotificationPermission(context)
+
+    @Provides
+    @Singleton
+    fun provideNotificationRegistrar(
+        @ApplicationContext context: Context,
+        tokens: NotificationTokens,
+        permission: NotificationPermission,
+        auth: AuthGateway,
+        approval: ApprovalCheck,
+        config: FeedbackConfig
+    ): NotificationRegistrar = NotificationRegistrar(
+        tokens = tokens,
+        source = FirebasePushTokenSource(),
+        permission = permission,
+        auth = auth,
+        approval = approval,
+        // A build without remote Feedback never registers, so it never needs an id either.
+        installationId = if (config.remoteEnabled) InstallationId.of(context).get() else "",
+        remoteEnabled = config.remoteEnabled
+    )
+
+    @Provides
+    @Singleton
+    fun provideFeedbackNotificationSync(registrar: NotificationRegistrar): FeedbackNotificationSync =
+        FeedbackNotificationSync(registrar)
+
+    @Provides
+    @Singleton
+    fun provideFeedbackPushHandler(
+        @ApplicationContext context: Context,
+        auth: AuthGateway,
+        approval: ApprovalCheck,
+        permission: NotificationPermission,
+        sync: FeedbackNotificationSync,
+        config: FeedbackConfig
+    ): FeedbackPushHandler = FeedbackPushHandler(
+        auth, approval, permission, SystemNoticePoster(context, permission), sync, config.remoteEnabled
+    )
+
+    @Provides
+    @Singleton
+    fun provideFeedbackPushLifecycle(
+        sync: FeedbackNotificationSync,
+        auth: AuthGateway,
+        access: AccessRepository,
+        scope: CoroutineScope,
+        config: FeedbackConfig
+    ): FeedbackPushLifecycle =
+        FeedbackPushLifecycle(sync, auth.uidChanges(), access.decision, scope, config.remoteEnabled)
+
+    /** Sign-out takes this installation's push registration off the account first. */
+    @Provides
+    @Singleton
+    fun provideAccountLeaving(registrar: NotificationRegistrar): AccountLeaving =
+        AccountLeaving { uid -> registrar.leaving(uid) }
 }

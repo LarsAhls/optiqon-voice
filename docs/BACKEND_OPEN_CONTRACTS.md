@@ -760,8 +760,14 @@ The rules make `caseReads`:
 
 A revoked user has no read path, so the unread signal gives no side channel.
 
-**The client side.** On the client, `CaseUnread` and `CaseReads` are the interfaces plus the core
-that decides. **They are not wired into DI or UI yet** (see BACKLOG).
+**The client side (wired).** `FirestoreCaseReads` reads and writes the markers (a transaction
+that writes only when the view is newer than the stored marker, with a server timestamp, and
+tells failures without provider text). `CaseUnread` decides and `UnreadTracker` keeps the
+Feedback list's unread set for one account: the list is refreshed from Firestore, a case opened
+by the owner is marked seen at the `publicRev` the screen showed, an older late view never moves
+the marker back, and a later public revision makes the case unread again. An account switch
+forgets everything; a revoked or pending account reads and writes nothing. A notification never
+marks anything read.
 
 ### Notifications (S6)
 
@@ -771,8 +777,12 @@ reply notifies. Everything else does not:
   include status notifications.
 - An internal note, a system event or an owner's own message never notifies.
 
-**Payload.** Neutral: a fixed title and body only. It carries no case id, case title, reply text,
-status or name.
+**Payload.** Data-only: `{ data: { kind: 'feedback_reply' } }`, with no `notification` block.
+It carries no case id, case title, reply text, status or name. The device builds the visible
+notification itself from fixed text (`FeedbackReplyNotice`: "OPTIQON Voice" / "Du har fått svar
+på din feedback."), after checking that someone is signed in, the account is approved now,
+remote Feedback is on and notifications are permitted. Because nothing the provider carries is
+ever displayed, a provider payload cannot expose private text.
 
 **Who receives it.** Only an approved owner. A revoked or pending owner gets nothing.
 
@@ -786,8 +796,24 @@ status or name.
 **Idempotency.** `users/{owner}/notificationSends/{caseId}:{eventId}` makes a replayed event send
 nothing.
 
-**Provider.** The provider sits behind an adapter; tests use a fake. **No live FCM is used, and
-the app has no FCM SDK yet.** `NotificationRegistrar` on the client is interface and core only.
+**Provider.** The server's provider sits behind an adapter; tests use a fake. No live FCM is used.
+
+**The client side (wired).** The app depends on `firebase-messaging` with auto-init off, so no
+token exists until the registrar asks for one:
+- `FeedbackMessagingService` is the receive and token-refresh path. `onMessageReceived` hands the
+  data to `FeedbackPushHandler`; `onNewToken` re-syncs the registration.
+- `FirestoreNotificationTokens` writes `{token, platform: 'android', updatedAt}` at
+  `users/{uid}/notificationTokens/{installationId}`. The installation id is a random UUID in the
+  device-level preferences file `feedback_installation`, created only in a remote build.
+- `NotificationRegistrar.sync()` registers only for signed in + approved + remote on + permission
+  granted, and removes the registration otherwise. `FeedbackPushLifecycle` runs it at startup,
+  on every identity or access-decision change (approval, revoke), and on every return to the
+  foreground (permission changes in system settings). Sign-out removes the registration first
+  (`AccountLeaving`, bounded, best-effort); an account switch restarts the process, so the next
+  account starts clean.
+- POST_NOTIFICATIONS is a runtime permission on API 33+ and is asked for in onboarding. Denied is
+  ordinary: no registration, no notification, Feedback works as before.
+- With `FEEDBACK_REMOTE_ENABLED=false` nothing starts: no token, no registration, no notification.
 
 ### Account deletion scope (M4)
 
@@ -852,7 +878,9 @@ those cases, not the deleted user's data.
 **Not deployed:** nothing is deployed. There is no Cloud Run, Eventarc, Scheduler or index; no
 rules release; and no FCM.
 
-**Not wired:** client wiring of unread and notification registration, and the FCM SDK.
+**Wired repo-side, not provider-proven:** unread in the Feedback list, notification token
+registration, and the FCM receive and refresh paths. FS-G owns the provider, IAM, deploy and
+the first live FCM delivery.
 
 **Remote Feedback:** still off by default.
 

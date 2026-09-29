@@ -140,7 +140,8 @@ Only with explicitly approved test accounts, and only data that G removes again.
    - `set-status`: along an allowed transition only.
    - `close`: sets `closedAt`, and leaves `statusCache` unchanged.
 4. **Notification.** With the service switched to `APPLY=true` (a separate go-ahead), a public
-   reply sends exactly one neutral notification to the approved owner's registered token.
+   reply sends exactly one data-only message (`kind: feedback_reply`, no case id, no text) to the
+   approved owner's registered token, and the device shows only its fixed neutral text.
    - A note sends nothing.
    - A status change sends nothing.
    - A revoked owner gets nothing.
@@ -213,7 +214,7 @@ FS-G is accepted only when all of these hold:
 - A decision is recorded on turning `FEEDBACK_REMOTE_ENABLED` on for the beta build. That is a
   separate release step, not part of this runbook.
 - The support@optiqon.se fallback is still shown while remote Feedback is off.
-- A follow-up owner is named for:
-  - FCM client wiring (the app has the interfaces, not the SDK)
-  - the unread UI wiring
-  - self-service account deletion (product intent, not built)
+- Live FCM delivery is proven end to end: a public reply reaches a device registered by the
+  wired client (repo-side since FS-S468) as a data-only message, and the device shows only the
+  fixed neutral text.
+- A follow-up owner is named for self-service account deletion (product intent, not built).

@@ -230,8 +230,12 @@ internal fun FeedbackListContent(
                     }
                     state.remoteCases.forEachIndexed { i, c ->
                         if (i > 0 || local.isNotEmpty()) HairlineDivider()
+                        val isUnread = c.id in state.unread
                         ListRow(
                             title = c.title,
+                            modifier = if (isUnread) Modifier.testTag("unread_${c.id}") else Modifier,
+                            subtitle = if (isUnread) stringResource(R.string.feedback_unread) else null,
+                            subtitleColor = if (isUnread) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                             onClick = { onOpen(c.id) },
                             trailing = {
                                 StatusPill(

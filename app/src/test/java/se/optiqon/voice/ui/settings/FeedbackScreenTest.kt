@@ -76,6 +76,23 @@ class FeedbackScreenTest {
     }
 
     @Test
+    fun `an unread remote case is marked as a new reply and a read one is not`() {
+        list(
+            FeedbackUiState(
+                remoteEnabled = true,
+                approved = true,
+                signedIn = true,
+                remoteCases = listOf(remoteCase, remoteCase.copy(id = "case-2", title = "Fel språk i menyn")),
+                unread = setOf("case-1")
+            )
+        )
+
+        composeRule.onAllNodesWithTag("unread_case-1").assertCountEquals(1)
+        composeRule.onAllNodesWithTag("unread_case-2").assertCountEquals(0)
+        composeRule.onNodeWithText(string(R.string.feedback_unread)).assertIsDisplayed()
+    }
+
+    @Test
     fun `the list shows the device's queue, the remote cases and the unsent legacy note`() {
         list(
             FeedbackUiState(
