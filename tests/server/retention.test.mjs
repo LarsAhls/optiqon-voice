@@ -241,12 +241,16 @@ describe('retention', () => {
     await db.doc('cases/c2/events/m1').set({ type: 'message', visibility: 'public', state: 'accepted' });
     await db.doc('cases/c2/events/s1').set({ type: 'status_change', visibility: 'public', state: 'accepted' });
     await db.doc('users/alice/caseReads/c2').set({ seenPublicRev: 1, readAt: T(NOW) });
+    await db.doc('users/alice/notificationSends/c2:r1').set({ caseId: 'c2', sentAt: T(NOW) });
+    await db.doc('users/alice/notificationSends/c1:r1').set({ caseId: 'c1', sentAt: T(NOW) });
     r = await sweepRetention(deps(s));
     assert.deepEqual(r.casesPurged, ['c2']);
     assert.equal(await peek('cases/c2'), undefined);
     assert.equal((await db.collection('cases/c2/events').get()).size, 0);
     assert.equal((await db.collection('cases/c2/attachments').get()).size, 0);
     assert.equal(await peek('users/alice/caseReads/c2'), undefined);
+    assert.equal(await peek('users/alice/notificationSends/c2:r1'), undefined);
+    assert.ok(await peek('users/alice/notificationSends/c1:r1'), 'another case keeps its marker');
     assert.equal(s.objects.size, 0);
   });
 

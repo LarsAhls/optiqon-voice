@@ -92,7 +92,7 @@ export async function expireAttachments(deps, caseId) {
   return result;
 }
 
-async function deleteAll(db, query) {
+export async function deleteAll(db, query) {
   for (;;) {
     const page = await query.limit(200).get();
     if (page.empty) return;
@@ -103,9 +103,43 @@ async function deleteAll(db, query) {
 }
 
 /**
- * Deletes a closed case whose text deadline has passed: screenshots first (tombstone → Storage
- * delete), then every event and attachment document, the owner's read marker and withdrawal
- * intents for the case, and the case document last, so an interrupted run is found again.
+ * Deletes a case that is already stamped `purging` (or whose owner is being deleted), in the
+ * one order that is safe to interrupt: screenshots first (tombstone → Storage delete), then
+ * every child document, the owner's read marker, withdrawal intents and notification send
+ * markers for the case, and the case document last — so an interrupted run is found again.
+ * Shared by retention and account deletion (M4).
+ */
+export async function eraseCase(deps, caseId, ownerUid) {
+  const { db, FieldValue } = deps;
+  const caseRef = db.doc(`cases/${caseId}`);
+  const atts = await caseRef.collection('attachments').get();
+  const active = atts.docs.filter((d) => d.data().deleteRequestedAt == null);
+  if (active.length > 0) {
+    const batch = db.batch();
+    for (const d of active) batch.update(d.ref, { deleteRequestedAt: FieldValue.serverTimestamp() });
+    batch.update(caseRef, { activeAttachmentCount: 0 });
+    await batch.commit();
+  }
+  for (const d of atts.docs) {
+    const { outcome } = await purgeAttachment(deps, caseId, d.id);
+    if (![PURGE.PURGED, PURGE.ALREADY, PURGE.ABSENT].includes(outcome)) {
+      throw new Error(`screenshot ${d.id} of ${caseId} not purged: ${outcome}`);
+    }
+  }
+
+  // Text and history. Children first, the case document last.
+  for (const sub of await caseRef.listCollections()) await deleteAll(db, sub);
+  if (typeof ownerUid === 'string' && ownerUid.length > 0) {
+    await db.doc(`users/${ownerUid}/caseReads/${caseId}`).delete();
+    await deleteAll(db, db.collection(`users/${ownerUid}/withdrawals`).where('caseId', '==', caseId));
+    await deleteAll(db, db.collection(`users/${ownerUid}/notificationSends`).where('caseId', '==', caseId));
+  }
+  await caseRef.delete();
+}
+
+/**
+ * Deletes a closed case whose text deadline has passed: stamps it `purging` in a transaction
+ * that re-reads the deadline, then erases it (eraseCase).
  *
  * `hooks.afterMark` runs between the stamp and the deletion (race tests).
  */
@@ -128,30 +162,7 @@ export async function purgeCase(deps, caseId, hooks = {}) {
   });
   if (marked.outcome !== 'marked') return marked;
   await hooks.afterMark?.();
-
-  // Screenshots: tombstone what is still active, then physically delete every one.
-  const atts = await caseRef.collection('attachments').get();
-  const active = atts.docs.filter((d) => d.data().deleteRequestedAt == null);
-  if (active.length > 0) {
-    const batch = db.batch();
-    for (const d of active) batch.update(d.ref, { deleteRequestedAt: FieldValue.serverTimestamp() });
-    batch.update(caseRef, { activeAttachmentCount: 0 });
-    await batch.commit();
-  }
-  for (const d of atts.docs) {
-    const { outcome } = await purgeAttachment({ ...deps, now: nowMs }, caseId, d.id);
-    if (![PURGE.PURGED, PURGE.ALREADY, PURGE.ABSENT].includes(outcome)) {
-      throw new Error(`screenshot ${d.id} of ${caseId} not purged: ${outcome}`);
-    }
-  }
-
-  // Text and history. Children first, the case document last.
-  for (const sub of await caseRef.listCollections()) await deleteAll(db, sub);
-  if (typeof marked.ownerUid === 'string' && marked.ownerUid.length > 0) {
-    await db.doc(`users/${marked.ownerUid}/caseReads/${caseId}`).delete();
-    await deleteAll(db, db.collection(`users/${marked.ownerUid}/withdrawals`).where('caseId', '==', caseId));
-  }
-  await caseRef.delete();
+  await eraseCase({ ...deps, now: nowMs }, caseId, marked.ownerUid);
   return { outcome: RETENTION.CASE_PURGED };
 }
 
