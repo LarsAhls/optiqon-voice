@@ -621,3 +621,247 @@ A mutation check that removes the `submitted` test turns six of these tests red.
   `not_applicable`, and S4 never deletes a Storage object.
 - **M6**, what "immediate" means for an offline delete, is not decided. S3 delivers the intent
   when the device is next online, and the UI claims nothing about timing.
+
+> **Superseded by § FS-S468.** M4, M5 and M6 have been decided since. The paragraph above records
+> what FS-S34 left open; FS-S468 closes it.
+
+## FS-S468 — Feedback repository completion (S4 retention/purge, S6 notifications, S7 tooling, S8 docs)
+
+FS-S468 finishes the Feedback repository before FS-G. **Everything here is repo-only.** Nothing
+has been deployed, published or run against production:
+
+- production Storage is still deny-all;
+- the server does not exist on the provider;
+- the app builds with `FEEDBACK_REMOTE_ENABLED=false`.
+
+The provider shape is in [FS_G_PROVIDER_CONFIG.md](FS_G_PROVIDER_CONFIG.md), and the go-live
+procedure is in [FS_G_RUNBOOK.md](FS_G_RUNBOOK.md). Neither document authorises running anything.
+
+### Locked decisions
+
+- **M2 — approvalGeneration is active.** Every approval bumps it. The rules compare it, and the
+  client queues against it. `voice-admin backfill-generation` sets it on older `users/`
+  documents: dry run by default, project-locked, idempotent, and it never changes an existing
+  value.
+- **M3 — narrow withdrawal for revoked or pending owners.** A verified owner may:
+  - write a withdrawal intent (`users/{uid}/withdrawals/{targetId}`) even while revoked or
+    pending, and
+  - set `deleteRequestedAt` on their own attachment.
+
+  Nothing else is allowed in that state: no create, no upload, no read of cases. Accepted history
+  stays protected, as FS-S34 decided.
+- **M4 — account deletion is an admin operation.** It runs as `voice-admin delete-account`,
+  executing `server/account-deletion.mjs` under the administrator's own credential.
+  - It is **not** app self-service.
+  - Self-service account deletion in the app is recorded as **product intent for a later
+    Mission. It is not implemented, and nothing in the app offers it.**
+- **M5 — a valid screenshot tombstone leads to physical deletion within 24 h.**
+  - The object becomes unreadable first (rules), and is then physically deleted (server).
+  - The event-driven purge (`onAttachmentWritten`) is primary; the scheduled sweep
+    (`sweepPurges`, every 6 h) is the backstop.
+- **M6 — offline delete is local-first pending delete.**
+  - On the device, the screenshot is hidden at once, and a durable intent survives a restart.
+  - The UI never says the server copy is deleted until the server has acknowledged the
+    tombstone.
+  - Once online, the tombstone goes first, then the purge (M5).
+
+### Retention
+
+`server/retention.mjs` computes deadlines from anchors only.
+
+**Screenshot deadlines.** The earliest applicable deadline wins:
+- open case: `lastRelevantAt` + 12 months;
+- closed case: `closedAt` + 30 days.
+
+**Case text.** A closed case is deleted at `closedAt` + 12 months.
+
+Open cases never close automatically, and account deletion overrides everything.
+
+**What counts as relevant activity.** Only these move `lastRelevantAt`:
+- an owner message;
+- an owner screenshot;
+- a public support reply;
+- a public status change.
+
+These never move it: internal notes, reads, system events, retention events, tombstones and
+deletes. With no relevant activity, `acceptedAt` is the anchor.
+
+**Order of operations.** Every decision is re-read inside a transaction before it acts. So a
+reply that lands during a retention run moves the anchor, and that reply wins.
+
+A case purge happens in this order:
+1. Stamp `retentionState: 'purging'`. From then on, support refuses new events with `PURGING`.
+2. Tombstone the attachments.
+3. Delete the Storage objects.
+4. Delete the documents.
+
+A crash anywhere in that sequence resumes from the stamp.
+
+### The purge (M5)
+
+`server/purge.mjs` works in this order:
+
+1. **Tombstone.** `deleteRequestedAt` is on the attachment. `storage.rules` already refuses reads
+   and writes of the object at this point, still within two Firestore documents per evaluation.
+2. **Delete.** The server deletes the object. An object that is already gone counts as success.
+3. **Record.** The server records `purgedAt`. It records `purgeFinalAt` once the 72 h upload
+   window has closed.
+
+**No fingerprint.** No hash, size or content fingerprint is kept.
+
+**Late uploads.** A late upload is refused by the rules because of the tombstone. An upload
+already in flight is purged again by the backstop until `purgeFinalAt`.
+
+**Idempotency.** Double purges and replayed events do nothing.
+
+### Support operations and the unread signal
+
+The Admin SDK bypasses the rules. So `server/support.mjs` enforces every invariant in code, and
+`voice-admin reply | set-status | note | close` runs through it: dry run by default,
+project-locked.
+
+**The writer check** is the same as the rules':
+- a verified Auth e-mail equal to `users.email`;
+- an approved `users/` entry;
+- a live writer `admins/` entry.
+
+A claim alone is not enough.
+
+**Operations:**
+- **Public reply.** Writes exactly one event and bumps `publicRev` and `activityRev` once each.
+  The event id is the idempotency key: a retry is `already_done`, and the same id with different
+  content is `EVENT_ID_TAKEN`.
+- **Status change.** A public event along the allowed transitions only:
+  - Mottaget → Under granskning, Parkerat, Inte planerat
+  - Under granskning → Planerat, Parkerat, Inte planerat
+  - Planerat → Pågår, Parkerat, Inte planerat
+  - Pågår → Levererat, Parkerat
+  - Parkerat → Under granskning, Planerat, Inte planerat
+  - Inte planerat → Under granskning
+
+  `Levererat` requires delivery evidence, verified by the admin. It bumps like a reply.
+- **Close.** Sets `closedAt` once and is one-way. Open or closed is separate from the status.
+  A closed case still accepts a reply; that can only postpone the screenshot deadline to at most
+  `closedAt` + 30 days.
+- **Internal note.** Invisible to the owner. It never bumps, never marks the case unread, and
+  never notifies.
+
+**The unread signal** is `publicRev` on the case against the owner's
+`users/{uid}/caseReads/{caseId}.seenPublicRev`.
+
+The rules make `caseReads`:
+- readable and writable by the approved owner only (`isApprovedSelf`);
+- forward-only, never above `case.publicRev`;
+- only for a case the owner owns that is accepted;
+- never deletable by the client.
+
+`publicBumped` in `firestore.rules` holds a writer's public event to exactly +1 and
+`lastActivityAt == request.time`.
+
+A revoked user has no read path, so the unread signal gives no side channel.
+
+**The client side.** On the client, `CaseUnread` and `CaseReads` are the interfaces plus the core
+that decides. **They are not wired into DI or UI yet** (see BACKLOG).
+
+### Notifications (S6)
+
+`server/notify.mjs` decides and `onCaseEventCreated` is its entrypoint. Only a writer's public
+reply notifies. Everything else does not:
+- A status change marks the case unread but sends nothing, because the canonical product does not
+  include status notifications.
+- An internal note, a system event or an owner's own message never notifies.
+
+**Payload.** Neutral: a fixed title and body only. It carries no case id, case title, reply text,
+status or name.
+
+**Who receives it.** Only an approved owner. A revoked or pending owner gets nothing.
+
+**Tokens.** `users/{uid}/notificationTokens/{installationId}`:
+- The rules allow create and update for an approved self and get or delete for a verified self.
+  List is never allowed.
+- A token belongs to one account: the newer registration wins, and the older copy is removed.
+- Tokens the provider reports as invalid are removed.
+- Denied notification permission is harmless: there is simply no token.
+
+**Idempotency.** `users/{owner}/notificationSends/{caseId}:{eventId}` makes a replayed event send
+nothing.
+
+**Provider.** The provider sits behind an adapter; tests use a fake. **No live FCM is used, and
+the app has no FCM SDK yet.** `NotificationRegistrar` on the client is interface and core only.
+
+### Account deletion scope (M4)
+
+**Deleted:**
+- every case the user owns, in any state, including accepted ones, with its events and
+  attachments;
+- the whole Storage prefix `case-attachments/{uid}/`, including orphans;
+- all of `users/{uid}`: reservations, quota, withdrawals, `caseReads`, `notificationTokens`,
+  `notificationSends`;
+- `admins/{uid}`;
+- the Auth user, reached through an adapter.
+
+**Kept:** a writer's public replies in other people's cases. They are the support history of
+those cases, not the deleted user's data.
+
+**Order:**
+1. Lock out: revoke, release the seat, set `deletionStartedAt`, disable Auth, revoke the refresh
+   tokens.
+2. Stamp every case `purging` and tombstone its attachments.
+3. Delete Storage.
+4. Erase the cases, then the `users/{uid}` children, then `admins/`.
+5. List the prefix again.
+6. Delete `users/{uid}`, then the Auth user.
+
+**Guarantees:**
+- The inventory is deterministic.
+- It runs as a dry run by default.
+- It is project-locked to `optiqon-voice-47498`.
+- It is idempotent and resumable after a crash at any step.
+- It never copies data into a side collection.
+
+### Rules changes in FS-S468
+
+- `firestore.rules`: `publicBumped`, `caseReads` and `notificationTokens` as described above.
+  The M3 tombstone path is allowed for `isVerifiedSelf(owner)` or a writer.
+- `storage.rules`: **unchanged.** There is still no third Firestore read.
+
+### What the repository proves
+
+- **Emulator suites (Firestore rules, admin, server):**
+  - retention anchors and the moved-anchor race;
+  - purge order, idempotency, late upload and no resurrection;
+  - account deletion scope, dry run, resume and idempotency;
+  - support bumps, idempotency, transitions and the writer check;
+  - unread isolation;
+  - the notification decision, token binding and neutral payload;
+  - the backfill guard, with existing generations preserved;
+  - the HTTP routing.
+- **The Storage rules suite, unchanged.**
+- **The deploy guard, plus the FS-G configuration consistency test.**
+- **JVM:** M6 and M3 on the client (`ScreenshotPendingDeleteTest`):
+  - offline hide;
+  - restart;
+  - the acknowledgement-only confirmation;
+  - duplicates;
+  - a late document;
+  - account switch;
+  - revoke and reapprove.
+
+### Not done, not deployed, or not proven
+
+**Not deployed:** nothing is deployed. There is no Cloud Run, Eventarc, Scheduler or index; no
+rules release; and no FCM.
+
+**Not wired:** client wiring of unread and notification registration, and the FCM SDK.
+
+**Remote Feedback:** still off by default.
+
+**Not proven, until FS-G:**
+- live latency and the races under it;
+- that the IAM set is sufficient and minimal;
+- the Eventarc header shape in `europe-north2`;
+- Scheduler availability in the region;
+- FCM delivery;
+- the 24 h SLA on the real backstop.
+
+**Not built:** self-service account deletion. It is product intent only.

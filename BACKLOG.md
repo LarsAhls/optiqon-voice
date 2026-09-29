@@ -111,7 +111,31 @@ this repository, migrate this backlog file with it.
   the sweep's composite indexes. Then verify the races live.
 - Verify live that a discard racing a first send ends `withdrawn`, `ignored_accepted` or
   `absent` (repo-proven by `DiscardDuringFirstSendTest`; no residual left for the sweep).
-- M4, M5 and M6 remain undecided and untouched.
+- M4, M5 and M6 were decided and implemented repo-side in FS-S468; see the FS-S468 entry below.
+
+## FS-S468 follow-ups — provider go-live and client wiring (FS-G and after)
+
+**Status:** Open. FS-S468 made the Feedback repository complete, but nothing is deployed. See
+`docs/BACKEND_OPEN_CONTRACTS.md` § FS-S468, `docs/FS_G_PROVIDER_CONFIG.md` and
+`docs/FS_G_RUNBOOK.md`. The runbook grants no approval.
+
+- **FS-G.** Execute the runbook, sections A–H, under its own approval:
+  - APIs, service accounts and IAM
+  - indexes and the rules release
+  - the backfill
+  - the Cloud Run service, three Eventarc triggers and the Scheduler backstop
+  - negative probes, then narrowly authorised positive probes and race probes
+  - cleanup
+  - acceptance
+- **Scheduler region.** If Cloud Scheduler is not available in `europe-north2`, choosing
+  `europe-north1` for the job alone is an FS-G decision.
+- **Client wiring.** Wire the unread signal (`CaseUnread` / `CaseReads`) and notification token
+  registration (`NotificationRegistrar`) into DI and the Feedback UI. Add the FCM client SDK.
+  This is a separate Mission; the interfaces and decision cores exist and are tested.
+- **Remote Feedback flag.** Turning `FEEDBACK_REMOTE_ENABLED` on for a release is a separate
+  release decision after FS-G.
+- **Self-service account deletion.** Product intent, not built. Today M4 is admin-only through
+  `voice-admin delete-account`.
 
 ## Feedback screenshots — orphaned local copies are only swept from the Feedback screen
 
