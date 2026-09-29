@@ -8,12 +8,16 @@
 // network call and no write: nothing here contacts Google, and the refresh token is a
 // literal string that could not authenticate anything if it did.
 import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { initializeApp, deleteApp, refreshToken } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { Firestore, FieldValue as GcpFieldValue } from '@google-cloud/firestore';
 import { UserRefreshClient } from 'google-auth-library';
+import { getStorage } from 'firebase-admin/storage';
+import { Storage } from '@google-cloud/storage';
 import { liveFirestore, TARGET_PROJECT } from '../../scripts/admin/m1-bootstrap.mjs';
+import { liveBucket } from '../../scripts/admin/voice-admin.mjs';
 
 /** Shaped like cliCredential()'s return value. Deliberately not a real token. */
 const FAKE = Object.freeze({
@@ -89,4 +93,69 @@ test('regression guard: firebase-admin still refuses the refresh-token credentia
       await deleteApp(app);
     }
   });
+});
+
+// ------------------------------------------------------------------ Storage (delete-account)
+// FS-G C.4 found the same defect for Storage: firebase-admin's Storage refused the CLI refresh
+// token. liveBucket() builds the @google-cloud/storage client directly, like liveFirestore().
+
+test('liveBucket: the target bucket, the target project, the CLI refresh token and nothing else', async () => {
+  const saved = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  try {
+    const bucket = await liveBucket(FAKE, TARGET_PROJECT);
+    assert.equal(bucket.name, 'optiqon-voice-47498-eun2', 'the one Feedback bucket');
+    assert.ok(bucket.storage instanceof Storage, 'must be a real @google-cloud/storage client');
+    assert.equal(bucket.storage.projectId, TARGET_PROJECT);
+
+    const auth = bucket.storage.authClient;
+    const client = auth.cachedCredential;
+    assert.ok(client instanceof UserRefreshClient, 'must authenticate as the logged-in CLI user');
+    assert.equal(client._refreshToken, FAKE.refreshToken, 'must reuse the existing credential');
+    assert.equal(client._clientId, FAKE.clientId);
+    assert.equal(client._clientSecret, FAKE.clientSecret, 'the CLI secret, nothing else');
+    assert.equal(auth.keyFilename, undefined, 'no key file');
+    assert.equal(auth.jsonContent, null, 'no service-account JSON');
+    assert.equal(process.env.GOOGLE_APPLICATION_CREDENTIALS, undefined, 'no ADC variable was set');
+  } finally {
+    if (saved !== undefined) process.env.GOOGLE_APPLICATION_CREDENTIALS = saved;
+  }
+});
+
+test('liveBucket keeps the project lock', async () => {
+  await assert.rejects(liveBucket(FAKE, 'optiqon-voice'), (e) => e.code === 'WRONG_PROJECT');
+});
+
+test('regression guard: firebase-admin still refuses the refresh-token credential for Storage', async () => {
+  // The error FS-G C.4 stopped on. If a future firebase-admin accepts it, this fails and
+  // liveBucket() can be reconsidered deliberately.
+  const app = initializeApp(
+    {
+      credential: refreshToken({
+        type: 'authorized_user',
+        client_id: FAKE.clientId,
+        client_secret: FAKE.clientSecret,
+        refresh_token: FAKE.refreshToken,
+      }),
+      projectId: TARGET_PROJECT,
+      storageBucket: 'optiqon-voice-47498-eun2',
+    },
+    'live-credential-storage-regression'
+  );
+  try {
+    assert.throws(() => getStorage(app).bucket(), /certificate credential or application default/i);
+  } finally {
+    await deleteApp(app);
+  }
+});
+
+test('CLI wiring: firebase-admin Storage is gone and Storage is only opened on demand', () => {
+  // main() is not unit-callable (it needs a live login), so its wiring is held by its source,
+  // the way tests/deploy/fs-g-config.test.mjs holds the server's queries.
+  const src = readFileSync('scripts/admin/voice-admin.mjs', 'utf8');
+  assert.doesNotMatch(src, /firebase-admin\/storage|getStorage\(/, 'the credential path that stopped FS-G C.4');
+  assert.doesNotMatch(src, /\bstorage:\s*bucketStorage/, 'no eagerly built adapter in deps');
+  assert.match(src, /openStorage: async \(\) => bucketStorage\(await liveBucket\(cred, args\.project\)\)/);
+  const code = src.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*\*)/.test(l)).join('\n');
+  assert.doesNotMatch(code, /GOOGLE_APPLICATION_CREDENTIALS|keyFilename|applicationDefault|credentials:/, 'no key, no ADC');
 });

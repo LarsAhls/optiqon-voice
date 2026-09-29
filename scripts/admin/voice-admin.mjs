@@ -56,6 +56,7 @@ import { fileURLToPath } from 'node:url';
 import { ADMIN_EMAIL, cliCredential, liveFirestore, TARGET_PROJECT } from './m1-bootstrap.mjs';
 import { authAdapter, deleteAccount } from '../../server/account-deletion.mjs';
 import { caseOpen, closeCase, internalNote, publicReply, statusChange } from '../../server/support.mjs';
+import { TARGET_BUCKET } from '../../server/config.mjs';
 
 export { TARGET_PROJECT };
 
@@ -78,8 +79,13 @@ const ROLES = ['writer', 'reader'];
  *   db, FieldValue, identity: { email }, log,
  *   lookupUid(email) → uid | null,
  *   claims: { get(uid) → object, set(uid, claims) },     // grant/revoke
- *   auth, storage                                        // delete-account (see account-deletion.mjs)
+ *   auth,                                                // delete-account (see account-deletion.mjs)
+ *   openStorage() → storage adapter                      // delete-account only, called on demand
  * }
+ *
+ * Storage is opened only by the command that needs it. Every other command runs without a
+ * Cloud Storage client ever being constructed, so a Storage credential problem cannot stop a
+ * Firestore-only command (FS-G C.4 was stopped exactly that way).
  */
 export async function run({
   command, target, role, until, eventId, body, toStatus, evidence, projectId, apply = false, deps,
@@ -254,7 +260,8 @@ async function deleteAccountCommand(ctx, { target }) {
     const user = await ctx.db.doc(`users/${uid}`).get();
     if (user.exists && user.get('email') !== target) abort('IDENTITY_MISMATCH', `users/${uid} does not carry ${target}`);
   }
-  const r = await deleteAccount({ ...ctx, actorUid: ctx.adminUid, apply }, uid);
+  const storage = await ctx.openStorage();
+  const r = await deleteAccount({ ...ctx, storage, actorUid: ctx.adminUid, apply }, uid);
   log(`== voice-admin: delete-account ${uid} (${apply ? 'APPLY' : 'DRY RUN'})`);
   log(JSON.stringify(r.inventory, null, 2));
   log(r.applied ? (r.alreadyDeleted ? '   -> nothing left to delete' : '   -> deleted') : '   -> not written (add --apply)');
@@ -344,6 +351,32 @@ export function evidenceFromArgs({ releaseTag, versionCode, distributedAt }) {
   return { releaseTag, versionCode: Number(versionCode), distributedAt: at };
 }
 
+/**
+ * The Storage adapter for a live delete-account run.
+ *
+ * `firebase-admin`'s Storage, like its Firestore, accepts only a certificate credential or
+ * application default credentials; the `firebase login` refresh token is rejected ("Failed to
+ * initialize Google Cloud Storage client with the available credential"). So, exactly as
+ * liveFirestore() does, the client underneath — the `@google-cloud/storage` firebase-admin
+ * already installs — is built directly with the CLI's own refresh token. No ADC, no key file,
+ * no service account, no GOOGLE_APPLICATION_CREDENTIALS. The adapter only lists, checks and
+ * deletes (server/storage.mjs); it never reads bytes.
+ */
+export async function liveBucket(cred, projectId) {
+  if (projectId !== TARGET_PROJECT) abort('WRONG_PROJECT', `'${projectId}'`);
+  const { UserRefreshClient } = await import('google-auth-library');
+  const { Storage } = await import('@google-cloud/storage');
+  const client = new Storage({
+    projectId,
+    authClient: new UserRefreshClient({
+      clientId: cred.clientId,
+      clientSecret: cred.clientSecret,
+      refreshToken: cred.refreshToken,
+    }),
+  });
+  return client.bucket(TARGET_BUCKET);
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.project !== TARGET_PROJECT) abort('WRONG_PROJECT', `'${args.project}'`);
@@ -352,10 +385,11 @@ async function main() {
   const admin = await import('firebase-admin/app');
   const { FieldValue } = await import('firebase-admin/firestore');
   const { getAuth } = await import('firebase-admin/auth');
-  const { getStorage } = await import('firebase-admin/storage');
   const { bucketStorage } = await import('../../server/storage.mjs');
 
   const cred = await cliCredential();
+  // Auth accepts the refresh-token credential; Firestore and Storage do not — see
+  // liveFirestore() and liveBucket().
   admin.initializeApp({
     credential: admin.refreshToken({
       type: 'authorized_user',
@@ -364,7 +398,6 @@ async function main() {
       refresh_token: cred.refreshToken,
     }),
     projectId: args.project,
-    storageBucket: `${TARGET_PROJECT}-eun2`,
   });
   const db = await liveFirestore(cred, args.project);
   const fbAuth = getAuth();
@@ -397,7 +430,8 @@ async function main() {
     apply: args.apply,
     deps: {
       db, FieldValue, identity: { email: cred.email }, lookupUid, claims,
-      auth: authAdapter(fbAuth), storage: bucketStorage(getStorage().bucket()),
+      auth: authAdapter(fbAuth),
+      openStorage: async () => bucketStorage(await liveBucket(cred, args.project)),
       log: (l) => console.log(l),
     },
   });
