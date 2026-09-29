@@ -27,6 +27,12 @@ import se.optiqon.voice.domain.feedback.FeedbackPayloads
  *   that finds nothing new; [OutboxWorker] covers the moment after that last look.
  * - A row that failed after it was taken back asks for no retry: there is nothing left to retry.
  * - If the account changes mid-run, the run stops.
+ * - Rows held because approval was withdrawn ([OutboxState.HELD]) are never sent from here, and
+ *   neither is anything queued after them for the same case. A held row that was already inside
+ *   the sender when the hold came stays held whether the send then failed or succeeded: the
+ *   outcome is written only if the row is still pending, in one statement, so a late answer
+ *   cannot undo the hold. A success after the hold may mean the remote has the row; explicit
+ *   Send sends it again and relies on the remote accepting a repeat.
  */
 class OutboxFlush(
     private val outbox: OutboxDao,
@@ -44,7 +50,9 @@ class OutboxFlush(
         if (!approval.isApproved()) return Result.DONE
 
         var retry = false
-        val heldCases = mutableSetOf<String>()
+        val heldCases = outbox.heldFor(uid)
+            .mapNotNull { CaseOutboxPayloads.decode(it.kind, it.payload)?.caseId }
+            .toMutableSet()
         val attempted = mutableSetOf<String>()
         while (true) {
             val queue = OutboxPolicy.flushable(outbox.pendingFor(uid), uid)
@@ -62,15 +70,18 @@ class OutboxFlush(
                 } else null
                 if (caseId != null && caseId in heldCases && !removal) continue
 
-                when (val failure = sender.send(entry)) {
-                    null -> outbox.updateState(entry.id, OutboxState.SENT, entry.attempts + 1, null)
-                    else -> {
-                        if (outbox.byId(entry.id) == null) continue
-                        val updated = OutboxPolicy.afterFailure(entry, failure)
-                        outbox.updateState(entry.id, updated.state, updated.attempts, updated.lastError)
-                        retry = retry || OutboxPolicy.shouldRetry(failure)
-                        if (!removal) caseId?.let { heldCases += it }
-                    }
+                val failure = sender.send(entry)
+                val updated = if (failure == null) {
+                    entry.copy(state = OutboxState.SENT, attempts = entry.attempts + 1, lastError = null)
+                } else OutboxPolicy.afterFailure(entry, failure)
+                if (outbox.completeIfPending(entry.id, updated.state, updated.attempts, updated.lastError) == 0) {
+                    // Held or taken back while it was inside the sender: the later word stands.
+                    if (outbox.byId(entry.id)?.state == OutboxState.HELD) caseId?.let { heldCases += it }
+                    continue
+                }
+                if (failure != null) {
+                    retry = retry || OutboxPolicy.shouldRetry(failure)
+                    if (!removal) caseId?.let { heldCases += it }
                 }
             }
         }

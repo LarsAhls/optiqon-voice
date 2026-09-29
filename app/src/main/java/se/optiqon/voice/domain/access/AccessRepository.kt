@@ -1,5 +1,6 @@
 package se.optiqon.voice.domain.access
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -60,7 +61,8 @@ class AccessRepository @Inject constructor(
     private val activeIdentity: ActiveIdentity,
     private val clock: Clock,
     private val config: AccessConfig,
-    scope: CoroutineScope
+    scope: CoroutineScope,
+    private val verdictListener: ServerVerdictListener = ServerVerdictListener.NONE
 ) {
     @OptIn(ExperimentalCoroutinesApi::class)
     private val snapshots: Flow<AccessSnapshot?> = authGateway.uidChanges()
@@ -144,6 +146,16 @@ class AccessRepository @Inject constructor(
         // store. It is *not* the check that matters: the identity can move again between here
         // and the commit, so the same question is asked once more inside the transaction.
         if (!activeIdentity.isCurrent(epoch)) return false
+
+        // Heard before the commit, so its effect is on disk before the verdict is. A listener
+        // that fails must not cost a revocation its place on disk, so its failure ends here.
+        try {
+            val previous = accessStateStore.snapshot(epoch.uid).first()?.status
+            verdictListener.beforeRecord(epoch.uid, previous, status)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+        }
 
         val stored = accessStateStore.recordIfAccepted(
             AccessSnapshot(

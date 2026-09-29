@@ -1,0 +1,20 @@
+package se.optiqon.voice.domain.access
+
+/**
+ * Told about a server verdict for [uid] just before [AccessRepository] stores it, with the
+ * verdict it is about to replace.
+ *
+ * Called *before* the commit on purpose. Whatever a listener does about a revocation is then
+ * done by the time the revocation is on disk, so a process that dies in between leaves nothing
+ * to make up later. The price is that an answer about to lose to a newer one is heard too; a
+ * listener must therefore only ever be conservative.
+ *
+ * It can never stop a verdict from being stored: [AccessRepository] swallows its failures.
+ */
+fun interface ServerVerdictListener {
+    suspend fun beforeRecord(uid: String, previous: AccountStatus?, status: AccountStatus)
+
+    companion object {
+        val NONE = ServerVerdictListener { _, _, _ -> }
+    }
+}

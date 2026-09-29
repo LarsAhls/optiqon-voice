@@ -2,17 +2,22 @@ package se.optiqon.voice.ui.settings
 
 import android.content.Context
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.test.assertCountEquals
-import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -97,6 +102,46 @@ class FeedbackScreenTest {
         composeRule.onNodeWithText(string(R.string.feedback_not_approved)).assertIsDisplayed()
         composeRule.onNodeWithText(string(R.string.feedback_new)).assertIsNotEnabled()
         composeRule.onNodeWithText(string(R.string.feedback_empty_title)).assertIsDisplayed()
+    }
+
+    @Test
+    fun `held reports ask their owner to choose, and sending waits for approval`() {
+        var sends = 0
+        var discards = 0
+        var approved by mutableStateOf(false)
+        composeRule.setContent {
+            OptiqonVoiceTheme {
+                FeedbackListContent(
+                    FeedbackUiState(
+                        remoteEnabled = true,
+                        approved = approved,
+                        held = 2,
+                        queued = listOf(
+                            QueuedCase("case-3", "Appen kraschar", emptyList(), blocked = false, createdAtMs = 0, held = true)
+                        )
+                    ),
+                    padding, onNew = {}, onOpen = {}, onSendLegacy = {}, onDeleteLegacy = {},
+                    onSendHeld = { sends++ }, onDiscardHeld = { discards++ }
+                )
+            }
+        }
+
+        composeRule.onNodeWithText(string(R.string.feedback_held_body)).assertIsDisplayed()
+        composeRule.onNodeWithText(string(R.string.feedback_pill_held)).assertIsDisplayed()
+        composeRule.onNodeWithText(string(R.string.feedback_pill_failed)).assertDoesNotExist()
+        composeRule.onNodeWithText(string(R.string.feedback_held_send)).assertIsNotEnabled()
+        composeRule.onNodeWithText(string(R.string.feedback_held_discard)).assertIsEnabled().performClick()
+        assertEquals(1, discards)
+
+        approved = true
+        composeRule.onNodeWithText(string(R.string.feedback_held_send)).assertIsEnabled().performClick()
+        assertEquals(1, sends)
+    }
+
+    @Test
+    fun `nothing held, no choice offered`() {
+        list(FeedbackUiState(remoteEnabled = true, approved = true))
+        composeRule.onNodeWithText(string(R.string.feedback_held_body)).assertDoesNotExist()
     }
 
     @Test

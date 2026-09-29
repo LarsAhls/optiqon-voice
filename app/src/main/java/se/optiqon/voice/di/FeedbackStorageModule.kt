@@ -19,12 +19,14 @@ import se.optiqon.voice.data.storage.UserScopedStorage
 import se.optiqon.voice.domain.access.AccessDecision
 import se.optiqon.voice.domain.access.AccessRepository
 import se.optiqon.voice.domain.access.AuthGateway
+import se.optiqon.voice.domain.access.ServerVerdictListener
 import se.optiqon.voice.domain.feedback.ApprovalCheck
 import se.optiqon.voice.domain.feedback.AttachmentStore
 import se.optiqon.voice.domain.feedback.CaseComposer
 import se.optiqon.voice.domain.feedback.CaseRemote
 import se.optiqon.voice.domain.feedback.FeedbackBuildInfo
 import se.optiqon.voice.domain.feedback.FeedbackConfig
+import se.optiqon.voice.domain.feedback.FeedbackHold
 import se.optiqon.voice.domain.feedback.OutboxScheduler
 import se.optiqon.voice.domain.sync.OutboxFlush
 import se.optiqon.voice.domain.sync.OutboxSender
@@ -70,6 +72,14 @@ object FeedbackStorageModule {
     @Singleton
     fun provideApprovalCheck(access: AccessRepository): ApprovalCheck =
         ApprovalCheck { access.currentDecision() is AccessDecision.Allowed }
+
+    /**
+     * What the access layer tells before it stores a verdict: queued reports of an account whose
+     * approval is withdrawn are held until their owner decides. See [FeedbackHold].
+     */
+    @Provides
+    @Singleton
+    fun provideServerVerdictListener(outbox: OutboxDao): ServerVerdictListener = FeedbackHold(outbox)
 
     @Provides
     @Singleton

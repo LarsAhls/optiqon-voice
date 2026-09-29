@@ -48,6 +48,7 @@ enum class FeedbackNotice(@StringRes val res: Int, val ok: Boolean = false) {
     SignedOut(R.string.feedback_signed_out),
     NotApproved(R.string.feedback_notice_not_approved),
     Removed(R.string.feedback_notice_removed, ok = true),
+    HeldReleased(R.string.feedback_notice_held_released, ok = true),
     ScreenshotRemoved(R.string.feedback_notice_screenshot_removed, ok = true)
 }
 
@@ -61,6 +62,8 @@ data class FeedbackUiState(
     val remoteError: Boolean = false,
     val queued: List<QueuedCase> = emptyList(),
     val legacy: List<LegacyNote> = emptyList(),
+    /** Rows held when approval was withdrawn; nothing sends them until the owner chooses. */
+    val held: Int = 0,
     val draft: List<DraftImage> = emptyList(),
     val detail: CaseDetail? = null,
     val busy: Boolean = false,
