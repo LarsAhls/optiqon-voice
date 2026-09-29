@@ -102,7 +102,8 @@ internal fun FeedbackScreen(
                 onSendLegacy = viewModel::sendLegacy,
                 onDeleteLegacy = viewModel::discardLegacy,
                 onSendHeld = viewModel::sendHeld,
-                onDiscardHeld = viewModel::discardHeld
+                onDiscardHeld = viewModel::discardHeld,
+                onAcknowledgeReceived = viewModel::acknowledgeAlreadyReceived
             )
             FeedbackPage.Compose -> FeedbackComposeContent(
                 state = state,
@@ -137,7 +138,8 @@ internal fun FeedbackListContent(
     onSendLegacy: (String) -> Unit,
     onDeleteLegacy: (String) -> Unit,
     onSendHeld: () -> Unit = {},
-    onDiscardHeld: () -> Unit = {}
+    onDiscardHeld: () -> Unit = {},
+    onAcknowledgeReceived: () -> Unit = {}
 ) {
     LazyColumn(contentPadding = padding, verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item("intro") { Intro(state) }
@@ -169,6 +171,21 @@ internal fun FeedbackListContent(
                         GhostButton(
                             text = stringResource(R.string.feedback_held_discard),
                             onClick = onDiscardHeld,
+                            modifier = Modifier.align(Alignment.CenterHorizontally)
+                        )
+                    }
+                }
+            }
+        }
+        if (state.alreadyReceived > 0) {
+            // A discard reached Optiqon after the report was accepted: it stays, and says so.
+            item("already_received") {
+                GroupCard {
+                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        BodyText(stringResource(R.string.feedback_already_received))
+                        GhostButton(
+                            text = stringResource(R.string.feedback_already_received_ok),
+                            onClick = onAcknowledgeReceived,
                             modifier = Modifier.align(Alignment.CenterHorizontally)
                         )
                     }

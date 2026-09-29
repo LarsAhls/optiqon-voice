@@ -56,6 +56,30 @@ sealed interface CasePayload {
     }
 
     data class Tombstone(override val caseId: String, val aid: String) : CasePayload
+
+    /**
+     * The owner's "take this back" for a case opening or a message that may have reached the
+     * server as `submitted`: an ID-only intent, never the content. [target] is `case` or
+     * `message`; for a case, [targetId] is [caseId]. Not stamped: withdrawing needs no current
+     * approval (M3=A), only the owner's verified account. [outcome] is the server's verdict once
+     * it has reconciled the intent -- see [WithdrawalOutcome].
+     */
+    data class Withdrawal(
+        override val caseId: String,
+        val targetId: String,
+        val target: String,
+        val outcome: String? = null
+    ) : CasePayload {
+        init {
+            require(target == TARGET_CASE || target == TARGET_MESSAGE)
+            require(target != TARGET_CASE || targetId == caseId)
+        }
+
+        companion object {
+            const val TARGET_CASE = "case"
+            const val TARGET_MESSAGE = "message"
+        }
+    }
 }
 
 object CaseOutboxPayloads {
@@ -63,14 +87,22 @@ object CaseOutboxPayloads {
     const val KIND_MESSAGE = "case_message"
     const val KIND_UPLOAD = "attachment_upload"
     const val KIND_DELETE = "attachment_delete"
+    const val KIND_WITHDRAW = "feedback_withdrawal"
 
-    val KINDS = setOf(KIND_CREATE, KIND_MESSAGE, KIND_UPLOAD, KIND_DELETE)
+    val KINDS = setOf(KIND_CREATE, KIND_MESSAGE, KIND_UPLOAD, KIND_DELETE, KIND_WITHDRAW)
+
+    /**
+     * Rows that only ever stop or take something down: they go first, are never held behind a
+     * stuck row of their case, and a failure of theirs holds nothing else back.
+     */
+    val REMOVALS = setOf(KIND_DELETE, KIND_WITHDRAW)
 
     fun kindOf(payload: CasePayload): String = when (payload) {
         is CasePayload.CreateCase -> KIND_CREATE
         is CasePayload.Message -> KIND_MESSAGE
         is CasePayload.Upload -> KIND_UPLOAD
         is CasePayload.Tombstone -> KIND_DELETE
+        is CasePayload.Withdrawal -> KIND_WITHDRAW
     }
 
     fun encode(payload: CasePayload): String = JsonObject().apply {
@@ -92,6 +124,11 @@ object CaseOutboxPayloads {
                 addProperty("bytes", payload.bytes)
             }
             is CasePayload.Tombstone -> addProperty("aid", payload.aid)
+            is CasePayload.Withdrawal -> {
+                addProperty("targetId", payload.targetId)
+                addProperty("target", payload.target)
+                payload.outcome?.let { addProperty("outcome", it) }
+            }
         }
         if (payload is CasePayload.Stamped) payload.generation?.let { addProperty("gen", it) }
     }.toString()
@@ -127,6 +164,9 @@ object CaseOutboxPayloads {
                 generation = gen
             )
             KIND_DELETE -> CasePayload.Tombstone(caseId, str("aid") ?: return null)
+            KIND_WITHDRAW -> runCatching {
+                CasePayload.Withdrawal(caseId, str("targetId") ?: return null, str("target") ?: return null, str("outcome"))
+            }.getOrNull()
             else -> null
         }
     }

@@ -147,14 +147,22 @@ class CaseComposer(
      *
      * No approval check: removing your own unsent words and pictures from your own phone is
      * always allowed, revoked or not.
+     *
+     * An opening that may already have reached the server as `submitted` ([mayHaveLeft]) is
+     * also withdrawn there: a withdrawal intent is queued under its id, which the server
+     * reconciles. A message of that case needs none -- nothing can hang off a case that was
+     * never accepted, and the messages of one caught accepted mid-send never went.
      */
     suspend fun discardQueuedCase(caseId: String): List<String>? {
         val uid = auth.currentUid ?: return null
         val rows = outbox.all().filter { it.ownerUid == uid && it.state != OutboxState.SENT }
+            .filter { it.kind != CaseOutboxPayloads.KIND_WITHDRAW }
             .map { it to CaseOutboxPayloads.decode(it.kind, it.payload) }
             .filter { (_, payload) -> payload?.caseId == caseId }
         if (rows.none { (_, payload) -> payload is CasePayload.CreateCase }) return null
         rows.forEach { (row, _) -> outbox.discard(row.id) }
+        val intents = rows.mapNotNull { (row, payload) -> payload?.let { withdrawalFor(row, it, openingsOnly = true) } }
+        if (intents.isNotEmpty()) enqueue(uid, intents)
         return rows.mapNotNull { (_, payload) -> (payload as? CasePayload.Upload)?.file }
     }
 
@@ -191,6 +199,11 @@ class CaseComposer(
      * gets a removal queued, as [deleteScreenshot] does for a case that has left the device —
      * its upload may have been under way when approval was withdrawn. Returns the local
      * screenshot copies nothing will send any more, for the caller to delete.
+     *
+     * A held opening or a held message may have reached the server as `submitted` -- it may
+     * have been inside the sender when the hold came -- so each is also withdrawn there by id
+     * ([CasePayload.Withdrawal]). An accepted one stays: the server answers "already received".
+     * Discarding never sends: nothing held goes out, now or after a later reapproval.
      */
     suspend fun discardHeld(): HeldOutcome {
         val uid = auth.currentUid ?: return HeldOutcome.SignedOut
@@ -200,6 +213,7 @@ class CaseComposer(
 
         val unsent = outbox.all()
             .filter { it.ownerUid == uid && it.state != OutboxState.SENT }
+            .filter { it.kind != CaseOutboxPayloads.KIND_WITHDRAW }
             .mapNotNull { row -> CaseOutboxPayloads.decode(row.kind, row.payload)?.let { row to it } }
         val onDevice = unsent.mapNotNull { (_, payload) -> (payload as? CasePayload.CreateCase)?.caseId }.toSet()
         val heldOpenings = held.mapNotNull { (_, payload) -> (payload as? CasePayload.CreateCase)?.caseId }.toSet()
@@ -211,12 +225,34 @@ class CaseComposer(
             outbox.discard(row.id)
             (payload as? CasePayload.Upload)?.let { files += it.file }
         }
+        val intents = wholeCases.mapNotNull { (row, payload) -> withdrawalFor(row, payload, openingsOnly = true) } +
+            alone.mapNotNull { (row, payload) -> withdrawalFor(row, payload, openingsOnly = false) }
         val removals = alone.mapNotNull { (_, payload) -> payload as? CasePayload.Upload }
             .filter { it.caseId !in onDevice }
             .map { CasePayload.Tombstone(it.caseId, it.aid) }
-        if (removals.isNotEmpty()) enqueue(uid, removals) else scheduler.schedule()
+        if (intents.isNotEmpty() || removals.isNotEmpty()) enqueue(uid, intents + removals) else scheduler.schedule()
         return HeldOutcome.Done(files)
     }
+
+    /**
+     * The withdrawal a discarded row needs, if any. Only a row that may have left the device
+     * gets one: held (it may have been inside the sender when the hold came), refused, or tried
+     * at least once. A row never tried cannot have written anything. A first send racing the
+     * discard is the one gap, and the server's 30-day sweep of `submitted` leftovers closes it.
+     */
+    private fun withdrawalFor(row: OutboxEntry, payload: CasePayload, openingsOnly: Boolean): CasePayload.Withdrawal? {
+        if (!mayHaveLeft(row)) return null
+        return when (payload) {
+            is CasePayload.CreateCase ->
+                CasePayload.Withdrawal(payload.caseId, payload.caseId, CasePayload.Withdrawal.TARGET_CASE)
+            is CasePayload.Message -> if (openingsOnly) null
+            else CasePayload.Withdrawal(payload.caseId, payload.messageId, CasePayload.Withdrawal.TARGET_MESSAGE)
+            else -> null
+        }
+    }
+
+    private fun mayHaveLeft(row: OutboxEntry): Boolean =
+        row.state == OutboxState.HELD || row.state == OutboxState.BLOCKED || row.attempts > 0
 
     private fun refusal(text: String, images: List<PreparedImage>): ComposeOutcome? = when {
         text.isEmpty() -> ComposeOutcome.Empty

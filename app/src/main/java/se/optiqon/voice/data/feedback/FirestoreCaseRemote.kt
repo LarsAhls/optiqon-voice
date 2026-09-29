@@ -18,6 +18,7 @@ import se.optiqon.voice.domain.feedback.FeedbackLimits
 import se.optiqon.voice.domain.feedback.RemoteResult
 import se.optiqon.voice.domain.feedback.RemoteState
 import se.optiqon.voice.domain.feedback.ServerApproval
+import se.optiqon.voice.domain.feedback.WithdrawalStatus
 import se.optiqon.voice.domain.sync.SendFailure
 import javax.inject.Provider
 
@@ -41,6 +42,10 @@ class FirestoreCaseRemote(
         firestore.collection("users").document(uid).collection("uploads").document(aid)
     private fun quota(uid: String) =
         firestore.collection("users").document(uid).collection("quota").document("attachments")
+    private fun withdrawal(uid: String, targetId: String) =
+        firestore.collection("users").document(uid).collection("withdrawals").document(targetId)
+    private fun withdrawalQuota(uid: String) =
+        firestore.collection("users").document(uid).collection("quota").document("withdrawals")
 
     override suspend fun createCase(uid: String, caseId: String, title: String, body: String, generation: Long) =
         write {
@@ -169,6 +174,50 @@ class FirestoreCaseRemote(
             tx.update(case(caseId), CaseDocuments.caseSlotReleased(aid, active))
             RemoteResult.Ok
         }.await()
+    }
+
+    override suspend fun requestWithdrawal(
+        uid: String,
+        target: String,
+        targetId: String,
+        caseId: String
+    ): RemoteResult = write {
+        firestore.runTransaction { tx ->
+            // Already written -- by an earlier attempt whose acknowledgement was lost, or by
+            // this one: success, and no second step of the window is spent on it.
+            if (tx.get(withdrawal(uid, targetId)).exists()) return@runTransaction RemoteResult.Ok
+            val q = tx.get(withdrawalQuota(uid))
+            val step = CaseDocuments.withdrawalWindowAfter(
+                existing = if (q.exists()) CaseDocuments.WithdrawalWindow(
+                    windowStartMs = q.getTimestamp("windowStart")?.toDate()?.time ?: 0L,
+                    windowCount = q.getLong("windowCount") ?: 0L
+                ) else null,
+                targetId = targetId,
+                nowMs = System.currentTimeMillis()
+            )
+            when (step) {
+                is CaseDocuments.QuotaWrite.Refused -> return@runTransaction step.result
+                is CaseDocuments.QuotaWrite.Create -> tx.set(withdrawalQuota(uid), step.fields)
+                is CaseDocuments.QuotaWrite.Update -> tx.update(withdrawalQuota(uid), step.fields)
+            }
+            tx.set(withdrawal(uid, targetId), CaseDocuments.withdrawal(target, caseId))
+            RemoteResult.Ok
+        }.await()
+    }
+
+    override suspend fun withdrawalStatus(uid: String, targetId: String): WithdrawalStatus? = try {
+        val d = withTimeout(TIMEOUT_MS) { withdrawal(uid, targetId).get(Source.SERVER).await() }
+        when {
+            d.metadata.isFromCache -> null
+            !d.exists() -> WithdrawalStatus.Missing
+            else -> d.getString("outcome")?.let { WithdrawalStatus.Reconciled(it) } ?: WithdrawalStatus.Pending
+        }
+    } catch (timeout: TimeoutCancellationException) {
+        null
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (_: Exception) {
+        null
     }
 
     override suspend fun listCases(uid: String): List<FeedbackCase> =
@@ -359,6 +408,35 @@ object CaseDocuments {
         "activeAttachmentCount" to active - 1,
         "attachmentFor" to aid
     )
+
+    /**
+     * A withdrawal intent: the id is the document's own, and nothing of the content travels.
+     * The server adds `outcome` and `reconciledAt` when it has dealt with it.
+     */
+    fun withdrawal(target: String, caseId: String): Map<String, Any?> = mapOf(
+        "kind" to target,
+        "caseId" to caseId,
+        "createdAt" to now
+    )
+
+    data class WithdrawalWindow(val windowStartMs: Long, val windowCount: Long)
+
+    /**
+     * The withdrawal window after one more intent, as the rules' `windowOk` allows it: 20 an
+     * hour, healing on its own, with no lifetime cap. A full window is a wait, never a refusal.
+     */
+    fun withdrawalWindowAfter(existing: WithdrawalWindow?, targetId: String, nowMs: Long): QuotaWrite = when {
+        existing == null -> QuotaWrite.Create(
+            mapOf("windowStart" to now, "windowCount" to 1L, "lastWithdrawalId" to targetId)
+        )
+        existing.windowCount < WINDOW_MAX ->
+            QuotaWrite.Update(mapOf("windowCount" to existing.windowCount + 1, "lastWithdrawalId" to targetId))
+        nowMs - existing.windowStartMs > WINDOW_MS ->
+            QuotaWrite.Update(mapOf("windowStart" to now, "windowCount" to 1L, "lastWithdrawalId" to targetId))
+        else -> QuotaWrite.Refused(
+            RemoteResult.Failed(SendFailure.Transient("Too many withdrawals this hour; trying again later."))
+        )
+    }
 
     data class Quota(val count: Long, val bytes: Long, val windowStartMs: Long, val windowCount: Long)
 

@@ -64,6 +64,8 @@ data class FeedbackUiState(
     val legacy: List<LegacyNote> = emptyList(),
     /** Rows held when approval was withdrawn; nothing sends them until the owner chooses. */
     val held: Int = 0,
+    /** Discards that arrived after the report was already received; see [LocalFeedback.alreadyReceived]. */
+    val alreadyReceived: Int = 0,
     val draft: List<DraftImage> = emptyList(),
     val detail: CaseDetail? = null,
     val busy: Boolean = false,

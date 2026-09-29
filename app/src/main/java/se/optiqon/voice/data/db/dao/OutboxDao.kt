@@ -72,6 +72,17 @@ interface OutboxDao {
     @Query("UPDATE outbox SET payload = :payload WHERE id = :id AND state = 'HELD'")
     suspend fun updateHeldPayload(id: String, payload: String): Int
 
+    /**
+     * Rewrites a waiting row's payload -- a withdrawal's reconciled outcome, recorded just
+     * before the row is marked sent. A row no longer waiting is left alone.
+     */
+    @Query("UPDATE outbox SET payload = :payload WHERE id = :id AND state = 'PENDING'")
+    suspend fun updatePendingPayload(id: String, payload: String): Int
+
+    /** Every row of one kind, sent ones included, for the few surfaces that show a sent row. */
+    @Query("SELECT * FROM outbox WHERE kind = :kind ORDER BY createdAtMs ASC")
+    fun observeKind(kind: String): Flow<List<OutboxEntry>>
+
     /** The owner chose to send what was held. Only ever called at their word. */
     @Query("UPDATE outbox SET state = 'PENDING' WHERE ownerUid = :ownerUid AND state = 'HELD'")
     suspend fun releaseHeldFor(ownerUid: String): Int

@@ -72,6 +72,19 @@ object LocalFeedback {
     fun heldCount(rows: List<OutboxEntry>, uid: String): Int =
         rows.count { it.ownerUid == uid && it.state == OutboxState.HELD }
 
+    /**
+     * The account's delivered withdrawals the server answered with "already received": the
+     * report had been accepted before the discard reached it, and stays with Optiqon. Their row
+     * ids, for the screen to say so once and then let go of.
+     */
+    fun alreadyReceived(rows: List<OutboxEntry>, uid: String): List<String> =
+        rows.filter { it.ownerUid == uid && it.state == OutboxState.SENT && it.kind == CaseOutboxPayloads.KIND_WITHDRAW }
+            .filter {
+                (CaseOutboxPayloads.decode(it.kind, it.payload) as? CasePayload.Withdrawal)?.outcome ==
+                    WithdrawalOutcome.IGNORED_ACCEPTED
+            }
+            .map { it.id }
+
     fun legacy(rows: List<OutboxEntry>, uid: String): List<LegacyNote> =
         rows.filter { it.ownerUid == uid && it.kind == FeedbackPayloads.KIND && it.state != OutboxState.SENT }
             .mapNotNull { row ->

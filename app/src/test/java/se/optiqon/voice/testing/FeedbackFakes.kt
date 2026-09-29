@@ -18,6 +18,8 @@ import se.optiqon.voice.domain.feedback.RemoteResult
 import se.optiqon.voice.domain.feedback.RemoteState
 import se.optiqon.voice.domain.feedback.ServerApproval
 import se.optiqon.voice.domain.feedback.StoreResult
+import se.optiqon.voice.domain.feedback.WithdrawalOutcome
+import se.optiqon.voice.domain.feedback.WithdrawalStatus
 import se.optiqon.voice.domain.sync.SendFailure
 
 /** The outbox table in a list, with Room's ordering and its ABORT-on-duplicate insert. */
@@ -94,6 +96,15 @@ class MemoryOutboxDao : OutboxDao {
 
     override suspend fun heldFor(ownerUid: String) =
         rows.filter { it.ownerUid == ownerUid && it.state == OutboxState.HELD }.sortedBy { it.createdAtMs }
+
+    override suspend fun updatePendingPayload(id: String, payload: String): Int {
+        val hit = rows.any { it.id == id && it.state == OutboxState.PENDING }
+        if (hit) table.value = rows.map { if (it.id == id) it.copy(payload = payload) else it }
+        return if (hit) 1 else 0
+    }
+
+    override fun observeKind(kind: String): Flow<List<OutboxEntry>> =
+        table.map { all -> all.filter { it.kind == kind }.sortedBy { it.createdAtMs } }
 }
 
 /** An account that can be switched under a running piece of code. */
@@ -101,7 +112,7 @@ class SwitchableAuth(override var currentUid: String?) : AuthGateway {
     override fun uidChanges(): Flow<String?> = MutableStateFlow(currentUid)
     override val currentEmail: String? = null
     override val currentDisplayName: String? = null
-    override val isEmailVerified: Boolean = true
+    override var isEmailVerified: Boolean = true
     override suspend fun reload() = Unit
     override suspend fun signOut() { currentUid = null }
 }
@@ -145,6 +156,18 @@ class FakeCaseRemote : CaseRemote {
     var stateUnknown = false
     var onCommit: () -> Unit = {}
 
+    /**
+     * Withdrawal intents as the rules keep them: create-only under `users/{uid}/withdrawals`,
+     * keyed "uid/targetId". [Intent.outcome] stays null until [reconcileWithdrawals] plays the
+     * server.
+     */
+    data class Intent(val target: String, val caseId: String, val outcome: String? = null)
+    val withdrawals = mutableMapOf<String, Intent>()
+    var withdrawalUnknown = false
+
+    /** True when [uid] has an intent for [targetId]: the rules then refuse create and finalize. */
+    private fun withdrawn(uid: String, targetId: String) = "$uid/$targetId" in withdrawals
+
     private fun scriptedFor(method: String): RemoteResult? = scripted[method]?.removeFirstOrNull()
     private fun genOf(uid: String) = generations[uid] ?: 0L
     private fun accepted(state: String?) = state == null || state == "accepted"
@@ -163,6 +186,7 @@ class FakeCaseRemote : CaseRemote {
         scriptedFor("createCase")?.let { return it }
         if (uid in unapproved) return RemoteResult.Denied("not approved")
         if (caseId in cases) return RemoteResult.Denied("exists")
+        if (withdrawn(uid, caseId)) return RemoteResult.Denied("withdrawn")
         if (generation != genOf(uid)) return RemoteResult.Denied("stale generation")
         cases[caseId] = uid
         caseStates[caseId] = "submitted"
@@ -176,6 +200,7 @@ class FakeCaseRemote : CaseRemote {
         scriptedFor("finalizeCase")?.let { return it }
         val owner = caseOwner(caseId) ?: return RemoteResult.Denied("absent")
         if (accepted(caseStates[caseId])) return RemoteResult.Ok
+        if (withdrawn(owner, caseId)) return RemoteResult.Denied("withdrawn")
         if (owner in unapproved || generation != genOf(owner)) return RemoteResult.Denied("stale generation")
         caseStates[caseId] = "accepted"
         stamps[caseId] = generation
@@ -197,6 +222,7 @@ class FakeCaseRemote : CaseRemote {
         if (uid in unapproved) return RemoteResult.Denied("not approved")
         if (caseOwner(caseId) != uid || !accepted(caseStates[caseId])) return RemoteResult.Denied("not your case")
         if ("$caseId/$messageId" in messages) return RemoteResult.Denied("exists")
+        if (withdrawn(uid, messageId)) return RemoteResult.Denied("withdrawn")
         if (generation != genOf(uid)) return RemoteResult.Denied("stale generation")
         messages["$caseId/$messageId"] = uid
         messageStates["$caseId/$messageId"] = "submitted"
@@ -210,6 +236,7 @@ class FakeCaseRemote : CaseRemote {
         val key = "$caseId/$messageId"
         val actor = messages[key] ?: return RemoteResult.Denied("absent")
         if (accepted(messageStates[key])) return RemoteResult.Ok
+        if (withdrawn(actor, messageId)) return RemoteResult.Denied("withdrawn")
         if (actor in unapproved || generation != genOf(actor)) return RemoteResult.Denied("stale generation")
         messageStates[key] = "accepted"
         stamps[key] = generation
@@ -252,6 +279,57 @@ class FakeCaseRemote : CaseRemote {
         // A tombstone is not activity: the revision stays where it is.
         tombstoned += "$caseId/$aid"
         return RemoteResult.Ok
+    }
+
+    /** Records nothing but the intent; approval is not asked (M3=A). Idempotent. */
+    override suspend fun requestWithdrawal(uid: String, target: String, targetId: String, caseId: String): RemoteResult {
+        calls += "withdraw:$targetId"
+        scriptedFor("withdraw")?.let { return it }
+        withdrawals.getOrPut("$uid/$targetId") { Intent(target, caseId) }
+        return RemoteResult.Ok
+    }
+
+    override suspend fun withdrawalStatus(uid: String, targetId: String): WithdrawalStatus? {
+        if (withdrawalUnknown) return null
+        val intent = withdrawals["$uid/$targetId"] ?: return WithdrawalStatus.Missing
+        return intent.outcome?.let { WithdrawalStatus.Reconciled(it) } ?: WithdrawalStatus.Pending
+    }
+
+    /**
+     * Plays S4 over every open intent, as `server/withdrawal.mjs` does: only a `submitted` case
+     * or a `submitted` message of the intent's own author is removed; accepted stays.
+     */
+    fun reconcileWithdrawals() {
+        withdrawals.entries.filter { it.value.outcome == null }.forEach { entry ->
+            val uid = entry.key.substringBefore("/")
+            val targetId = entry.key.substringAfter("/")
+            val intent = entry.value
+            val outcome = if (intent.target == "case") {
+                val owner = cases[targetId]
+                when {
+                    owner == null -> WithdrawalOutcome.ABSENT
+                    owner != uid -> WithdrawalOutcome.IGNORED_FOREIGN
+                    accepted(caseStates[targetId]) -> WithdrawalOutcome.IGNORED_ACCEPTED
+                    else -> {
+                        cases.remove(targetId); caseStates.remove(targetId); activityRev.remove(targetId)
+                        WithdrawalOutcome.WITHDRAWN
+                    }
+                }
+            } else {
+                val key = "${intent.caseId}/$targetId"
+                val actor = messages[key]
+                when {
+                    actor == null -> WithdrawalOutcome.ABSENT
+                    actor != uid -> WithdrawalOutcome.IGNORED_FOREIGN
+                    accepted(messageStates[key]) -> WithdrawalOutcome.IGNORED_ACCEPTED
+                    else -> {
+                        messages.remove(key); messageStates.remove(key)
+                        WithdrawalOutcome.WITHDRAWN
+                    }
+                }
+            }
+            entry.setValue(intent.copy(outcome = outcome))
+        }
     }
 
     override suspend fun listCases(uid: String): List<FeedbackCase> =

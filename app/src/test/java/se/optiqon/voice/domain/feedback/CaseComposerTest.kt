@@ -279,4 +279,28 @@ class CaseComposerTest {
         assertEquals(null, composer.discardQueuedCase(caseId))
         assertEquals(before, outbox.rows)
     }
+
+    @Test
+    fun `a queued case that may have reached the server is withdrawn there by id, its messages are not`() = runTest {
+        val caseId = (composer.createCase("hej", emptyList()) as ComposeOutcome.Queued).caseId
+        val create = outbox.rows.single()
+        composer.addMessage(caseId, "mer", emptyList())
+        // Tried once: the opening may sit on the server as submitted.
+        outbox.updateState(create.id, OutboxState.PENDING, 1, "offline")
+
+        assertEquals(emptyList<String>(), composer.discardQueuedCase(caseId))
+
+        val intent = decoded().single() as CasePayload.Withdrawal
+        assertEquals(CasePayload.Withdrawal(caseId, caseId, CasePayload.Withdrawal.TARGET_CASE), intent)
+        assertEquals(OutboxState.PENDING, outbox.rows.single().state)
+        assertEquals("a second discard finds no case and adds nothing", null, composer.discardQueuedCase(caseId))
+        assertEquals(1, outbox.rows.size)
+    }
+
+    @Test
+    fun `a queued case never tried leaves no withdrawal behind`() = runTest {
+        val caseId = (composer.createCase("hej", emptyList()) as ComposeOutcome.Queued).caseId
+        composer.discardQueuedCase(caseId)
+        assertTrue(outbox.rows.isEmpty())
+    }
 }

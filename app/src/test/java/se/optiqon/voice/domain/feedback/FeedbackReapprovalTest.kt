@@ -213,7 +213,7 @@ class FeedbackReapprovalTest {
         val real = se.optiqon.voice.data.feedback.CaseOutboxSender(
             remote, se.optiqon.voice.testing.FakeAttachmentStore(),
             se.optiqon.voice.data.storage.UserScopedStorage(context.cacheDir.resolve("reapproval")),
-            f.auth, FeedbackStorageModule.provideApprovalGeneration(f.repository)
+            f.auth, FeedbackStorageModule.provideApprovalGeneration(f.repository), outbox
         )
         fun realFlush() = FeedbackStorageModule.provideOutboxFlush(
             outbox, f.auth, FeedbackStorageModule.provideApprovalCheck(f.repository), real, FeedbackConfig("gs://b", remoteEnabled = true)
@@ -247,7 +247,7 @@ class FeedbackReapprovalTest {
         val storage = se.optiqon.voice.data.storage.UserScopedStorage(context.cacheDir.resolve("race"))
         val bucket = se.optiqon.voice.testing.FakeAttachmentStore()
         val real = se.optiqon.voice.data.feedback.CaseOutboxSender(
-            remote, bucket, storage, f.auth, FeedbackStorageModule.provideApprovalGeneration(f.repository)
+            remote, bucket, storage, f.auth, FeedbackStorageModule.provideApprovalGeneration(f.repository), outbox
         )
         fun realFlush() = FeedbackStorageModule.provideOutboxFlush(
             outbox, f.auth, FeedbackStorageModule.provideApprovalCheck(f.repository), real, FeedbackConfig("gs://b", remoteEnabled = true)
@@ -328,15 +328,21 @@ class FeedbackReapprovalTest {
         val outcome = c.discardHeld()
 
         assertEquals(setOf("server.png", "local.png"), (outcome as HeldOutcome.Done).files.toSet())
-        assertTrue(payloads().none { it.caseId == local })
+        assertTrue(payloads().none { it.caseId == local && it !is CasePayload.Withdrawal })
         assertTrue(outbox.rows.none { it.state == OutboxState.HELD })
-        // What is left unsent is exactly one removal for the screenshot of the case on the server.
+        // What is left unsent: one removal for the screenshot of the case on the server, and a
+        // withdrawal by id for each held row that may already sit on the server as submitted --
+        // the local opening and the message. No content travels with either.
         val left = payloads(OutboxState.PENDING)
-        assertEquals(1, outbox.rows.count { it.state != OutboxState.SENT })
-        assertTrue(left.single() is CasePayload.Tombstone && left.single().caseId == onServer)
+        assertEquals(3, outbox.rows.count { it.state != OutboxState.SENT })
+        assertEquals(onServer, left.filterIsInstance<CasePayload.Tombstone>().single().caseId)
+        assertEquals(
+            setOf(local to CasePayload.Withdrawal.TARGET_CASE, onServer to CasePayload.Withdrawal.TARGET_MESSAGE),
+            left.filterIsInstance<CasePayload.Withdrawal>().map { it.caseId to it.target }.toSet()
+        )
 
         flush(f).run()
-        assertEquals(1, sent.size)
+        assertEquals(3, sent.size)
     }
 
     // 9: idempotency.
@@ -358,9 +364,12 @@ class FeedbackReapprovalTest {
         f.recordServerVerdict(AccountStatus.REVOKED)
         f.recordServerVerdict(AccountStatus.APPROVED)
         assertTrue(c.discardHeld() is HeldOutcome.Done)
+        val intents = outbox.rows
         assertEquals(HeldOutcome.NothingHeld, c.discardHeld())
         assertEquals(HeldOutcome.NothingHeld, c.releaseHeld())
-        assertTrue(outbox.rows.isEmpty())
+        // Only the withdrawal intents are left, and a second discard added none.
+        assertTrue(intents.isNotEmpty() && intents.all { it.kind == CaseOutboxPayloads.KIND_WITHDRAW })
+        assertEquals(intents, outbox.rows)
     }
 
     // 6: account isolation.
@@ -551,5 +560,39 @@ class FeedbackReapprovalTest {
 
         assertEquals(OutboxFlush.Result.DONE, flush(f, remoteEnabled = false).run())
         assertTrue("sent=$sent", sent.isEmpty())
+    }
+
+    // S3: discarding what was held withdraws it by id, under M3=A.
+
+    @Test
+    fun `a revoked account's discard is delivered while revoked, and its content never goes`() = runTest {
+        val f = fixture(backgroundScope)
+        val caseId = approvedWithCase(f)
+        f.recordServerVerdict(AccountStatus.REVOKED)
+        assertTrue(composer(f).discardHeld() is HeldOutcome.Done)
+
+        val intents = outbox.rows.map { it.id }
+        assertEquals(
+            CasePayload.Withdrawal(caseId, caseId, CasePayload.Withdrawal.TARGET_CASE),
+            payloads().single()
+        )
+        flush(f).run()
+        assertEquals("only the withdrawal leaves, and no approval was needed", intents, sent)
+
+        f.recordServerVerdict(AccountStatus.APPROVED)
+        flush(f).run()
+        assertEquals("no auto-send after reapproval", intents, sent)
+    }
+
+    @Test
+    fun `send and discard exclude each other - what was sent is not withdrawn`() = runTest {
+        val f = fixture(backgroundScope)
+        approvedWithCase(f)
+        f.recordServerVerdict(AccountStatus.REVOKED)
+        f.recordServerVerdict(AccountStatus.APPROVED)
+
+        assertTrue(composer(f).releaseHeld() is HeldOutcome.Done)
+        assertEquals(HeldOutcome.NothingHeld, composer(f).discardHeld())
+        assertTrue(outbox.rows.none { it.kind == CaseOutboxPayloads.KIND_WITHDRAW })
     }
 }
