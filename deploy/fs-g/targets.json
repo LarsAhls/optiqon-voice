@@ -1,0 +1,88 @@
+{
+  "status": "NOT DEPLOYED. Intended FS-G definitions only; executing any of this needs the FS-G approval (docs/FS_G_RUNBOOK.md).",
+  "project": "optiqon-voice-47498",
+  "region": "europe-north2",
+  "firestoreDatabase": "(default)",
+  "bucket": "optiqon-voice-47498-eun2",
+  "service": {
+    "name": "voice-feedback-server",
+    "region": "europe-north2",
+    "build": "deploy/fs-g/Dockerfile, repository root as context",
+    "command": "node server/http.mjs",
+    "serviceAccount": "voice-feedback-server@optiqon-voice-47498.iam.gserviceaccount.com",
+    "allowUnauthenticated": false,
+    "ingress": "all",
+    "minInstances": 0,
+    "maxInstances": 2,
+    "concurrency": 10,
+    "cpu": "1",
+    "memory": "512Mi",
+    "timeoutSeconds": 540,
+    "env": {
+      "PROJECT_ID": "optiqon-voice-47498",
+      "BUCKET": "optiqon-voice-47498-eun2",
+      "SWEEP_TTL_DAYS": "30",
+      "APPLY": "false"
+    }
+  },
+  "triggers": [
+    {
+      "name": "voice-feedback-withdrawal",
+      "location": "europe-north2",
+      "eventType": "google.cloud.firestore.document.v1.created",
+      "database": "(default)",
+      "documentPattern": "users/{uid}/withdrawals/{targetId}",
+      "route": "/events/withdrawal",
+      "serviceAccount": "voice-feedback-trigger@optiqon-voice-47498.iam.gserviceaccount.com"
+    },
+    {
+      "name": "voice-feedback-attachment",
+      "location": "europe-north2",
+      "eventType": "google.cloud.firestore.document.v1.written",
+      "database": "(default)",
+      "documentPattern": "cases/{caseId}/attachments/{aid}",
+      "route": "/events/attachment",
+      "serviceAccount": "voice-feedback-trigger@optiqon-voice-47498.iam.gserviceaccount.com"
+    },
+    {
+      "name": "voice-feedback-case-event",
+      "location": "europe-north2",
+      "eventType": "google.cloud.firestore.document.v1.created",
+      "database": "(default)",
+      "documentPattern": "cases/{caseId}/events/{eventId}",
+      "route": "/events/case-event",
+      "serviceAccount": "voice-feedback-trigger@optiqon-voice-47498.iam.gserviceaccount.com"
+    }
+  ],
+  "scheduler": {
+    "name": "voice-feedback-backstop",
+    "location": "europe-north2",
+    "locationNote": "FS-G preflight must confirm Cloud Scheduler is offered in europe-north2. If it is not, europe-north1 is the documented candidate: the job then only holds its schedule and calls the europe-north2 service; no Feedback data is stored or processed there. Choosing it is an FS-G decision, not made here.",
+    "schedule": "0 */6 * * *",
+    "timeZone": "Europe/Stockholm",
+    "route": "/jobs/scheduled",
+    "httpMethod": "POST",
+    "oidcServiceAccount": "voice-feedback-scheduler@optiqon-voice-47498.iam.gserviceaccount.com",
+    "attemptDeadlineSeconds": 540,
+    "why": "M5 backstop: a tombstone whose event was lost is purged within 6 h of the next run, well inside the 24 h promise; also runs the withdrawal reconcile, the submitted sweep and retention."
+  },
+  "serviceAccounts": {
+    "voice-feedback-server": {
+      "purpose": "runtime identity of the Cloud Run service",
+      "projectRoles": ["roles/datastore.user", "roles/firebasecloudmessaging.admin", "roles/logging.logWriter"],
+      "bucketRoles": { "optiqon-voice-47498-eun2": ["roles/storage.objectAdmin"] },
+      "never": ["roles/firebaseauth.admin", "roles/owner", "roles/editor", "roles/storage.admin", "roles/iam.serviceAccountKeyAdmin"]
+    },
+    "voice-feedback-trigger": {
+      "purpose": "Eventarc trigger identity",
+      "projectRoles": ["roles/eventarc.eventReceiver"],
+      "serviceRoles": { "voice-feedback-server": ["roles/run.invoker"] }
+    },
+    "voice-feedback-scheduler": {
+      "purpose": "Cloud Scheduler OIDC identity",
+      "projectRoles": [],
+      "serviceRoles": { "voice-feedback-server": ["roles/run.invoker"] }
+    }
+  },
+  "keys": "none. No service-account key is created, downloaded or stored; the service uses its attached identity and administrators use their own ADC login."
+}
