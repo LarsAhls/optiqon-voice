@@ -89,8 +89,18 @@ fun interface ApprovalGeneration {
     suspend fun current(): Long?
 }
 
+/** The account's approval as the server holds it at the moment of asking. */
+data class ServerApproval(val approved: Boolean, val generation: Long)
+
 /** Firestore, as far as the feedback channel is concerned. */
 interface CaseRemote {
+
+    /**
+     * The account's approval read from the server itself, never from a cache. Null when the
+     * question could not be asked. Asked after a refusal only, to tell an approval that moved
+     * under a row from a refusal that has nothing to do with approval.
+     */
+    suspend fun approvalOf(uid: String): ServerApproval?
 
     /** Phase one: the case, `submitted`, stamped with [generation]. */
     suspend fun createCase(uid: String, caseId: String, title: String, body: String, generation: Long): RemoteResult

@@ -489,6 +489,11 @@ ruleset, so there are no case documents to backfill.
   `users/{uid}.approvalGeneration` (missing = 0). A writer approve from `pending | revoked |
   rejected` must bump it by exactly one; revoke and reject leave it. The client holds a row
   stamped with an older generation (HELD) and restamps it only on an explicit Send.
+- The device's generation can lag the server's. After any refusal of a case, message, finalize,
+  screenshot commit or screenshot put, the client reads `users/{uid}` from the server (never the
+  cache): not `approved`, or a generation other than the row's, holds the row; the same approval
+  leaves the refusal final (closed, foreign, full); an unanswered read retries. A row whose stale
+  stamp the device already knows is held without any remote call.
 - `activityRev` + `lastRelevantAt` move by exactly one, only with: owner-message finalize,
   screenshot commit, public writer reply, status change. Never with internal note, read, system,
   retention, close or tombstone.
@@ -509,6 +514,4 @@ ruleset, so there are no case documents to backfill.
 ### Still open for FS-G
 
 Rules deploy; `approvalGeneration` backfill on existing prod users; the S4 server (withdrawal
-handler, submitted sweep, retention R1–R6); live verification. A screenshot commit refused because
-the server moved the generation between the client's check and the write is still treated as
-final (Permanent) by the client — a narrow race, noted rather than handled.
+handler, submitted sweep, retention R1–R6); live verification.

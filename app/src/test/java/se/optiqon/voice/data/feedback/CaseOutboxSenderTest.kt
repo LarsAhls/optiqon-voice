@@ -63,9 +63,9 @@ class CaseOutboxSenderTest {
     }
 
     @Test
-    fun `a refusal is held for the owner when the case is not ours, and unknown when we cannot ask`() = runTest {
+    fun `a refusal is final when the case is not ours under an unchanged approval, and unknown when we cannot ask`() = runTest {
         remote.cases["c1"] = "uid-b"
-        assertTrue(sender.send(entry(create)) is SendFailure.Held)
+        assertTrue(sender.send(entry(create)) is SendFailure.Permanent)
 
         remote.stateUnknown = true
         remote.scripted["createCase"] = ArrayDeque(listOf(RemoteResult.Denied("no")))
@@ -100,9 +100,9 @@ class CaseOutboxSenderTest {
     }
 
     @Test
-    fun `a refused phase two with the submitted copy standing is held, not dropped`() = runTest {
+    fun `a refused phase two under an unchanged approval is final, and the submitted copy is left alone`() = runTest {
         remote.scripted["finalizeCase"] = ArrayDeque(listOf(RemoteResult.Denied("withdrawn")))
-        assertTrue(sender.send(entry(create)) is SendFailure.Held)
+        assertTrue(sender.send(entry(create)) is SendFailure.Permanent)
         assertEquals("submitted", remote.caseStates["c1"])
     }
 
@@ -127,6 +127,7 @@ class CaseOutboxSenderTest {
         assertTrue(sender.send(entry(CasePayload.Message("c1", "m1", "svar", 0L))) is SendFailure.Held)
         assertTrue(sender.send(entry(CasePayload.Upload("c1", null, "a1", "a1.png", "image/png", 16, 0L))) is SendFailure.Held)
         assertTrue(remote.calls.isEmpty())
+        assertEquals("a stale stamp known here is not even asked about", 0, remote.approvalReads)
     }
 
     @Test
@@ -156,6 +157,94 @@ class CaseOutboxSenderTest {
         val second = CasePayload.CreateCase("c2", "t", "b", 0L)
         assertTrue(sender.send(entry(second)) is SendFailure.Held)
         assertEquals("submitted", remote.caseStates["c2"])
+    }
+
+    // The server's approval moving between the local check and the write.
+
+    private fun uploadRow(): CasePayload.Upload {
+        screenshot()
+        return CasePayload.Upload("c1", null, "a1", "a1.png", "image/png", 16, 0L)
+    }
+
+    @Test
+    fun `a screenshot whose approval moves after the local check is held and its copy kept`() = runTest {
+        sender.send(entry(create))
+        val upload = uploadRow()
+        // Revoked and approved again on the server while the row was on its way.
+        remote.onCommit = { remote.generations["uid-a"] = 1L }
+
+        assertTrue(sender.send(entry(upload)) is SendFailure.Held)
+        assertTrue("never committed under the old stamp", "c1/a1" !in remote.attachments)
+        assertTrue(store.calls.isEmpty())
+        assertTrue("the local copy is kept for the owner", File(files.attachmentsDir("uid-a"), "a1.png").exists())
+    }
+
+    @Test
+    fun `a screenshot whose account is revoked after the local check is held`() = runTest {
+        sender.send(entry(create))
+        val upload = uploadRow()
+        remote.onCommit = { remote.unapproved += "uid-a" }
+
+        assertTrue(sender.send(entry(upload)) is SendFailure.Held)
+    }
+
+    @Test
+    fun `a screenshot refused for another reason under an unchanged approval stays final`() = runTest {
+        sender.send(entry(create))
+        val upload = uploadRow()
+        remote.scripted["commit"] = ArrayDeque(listOf(RemoteResult.Denied("The case is closed.")))
+
+        assertTrue(sender.send(entry(upload)) is SendFailure.Permanent)
+        assertEquals(1, remote.approvalReads)
+    }
+
+    @Test
+    fun `a refused screenshot is retried when the approval cannot be read`() = runTest {
+        sender.send(entry(create))
+        val upload = uploadRow()
+        remote.scripted["commit"] = ArrayDeque(listOf(RemoteResult.Denied("no")))
+        remote.approvalUnknown = true
+
+        assertTrue(sender.send(entry(upload)) is SendFailure.Transient)
+    }
+
+    @Test
+    fun `a put refused after the approval moved is held, not parked`() = runTest {
+        sender.send(entry(create))
+        val upload = uploadRow()
+        remote.onCommit = { remote.unapproved += "uid-a" }
+        remote.scripted["commit"] = ArrayDeque(listOf(RemoteResult.Ok))
+        store.scriptedPut += StoreResult.Denied
+
+        assertTrue(sender.send(entry(upload)) is SendFailure.Held)
+    }
+
+    @Test
+    fun `a case whose approval moves after the local check is held`() = runTest {
+        remote.scripted["createCase"] = ArrayDeque(listOf(RemoteResult.Denied("stale generation")))
+        remote.generations["uid-a"] = 1L
+        assertTrue(sender.send(entry(create)) is SendFailure.Held)
+
+        remote.generations["uid-a"] = 0L
+        sender.send(entry(create))
+        val msg = CasePayload.Message("c1", "m1", "svar", 0L)
+        remote.generations["uid-a"] = 1L
+        assertTrue(sender.send(entry(msg)) is SendFailure.Held)
+        assertTrue("m1 never came into being", "c1/m1" !in remote.messages)
+    }
+
+    @Test
+    fun `a message on a case that is not ours, or not there, fails for good under an unchanged approval`() = runTest {
+        remote.cases["c9"] = "uid-b"
+        assertTrue(sender.send(entry(CasePayload.Message("c9", "m1", "svar", 0L))) is SendFailure.Permanent)
+        assertTrue(sender.send(entry(CasePayload.Message("nowhere", "m2", "svar", 0L))) is SendFailure.Permanent)
+    }
+
+    @Test
+    fun `a refused create is retried when the approval cannot be read`() = runTest {
+        remote.cases["c1"] = "uid-b"
+        remote.approvalUnknown = true
+        assertTrue(sender.send(entry(create)) is SendFailure.Transient)
     }
 
     @Test

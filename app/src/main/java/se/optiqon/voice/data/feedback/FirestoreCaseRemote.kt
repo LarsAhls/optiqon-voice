@@ -5,6 +5,7 @@ import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.FirebaseFirestoreException.Code
+import com.google.firebase.firestore.Source
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.tasks.await
@@ -16,6 +17,7 @@ import se.optiqon.voice.domain.feedback.FeedbackCase
 import se.optiqon.voice.domain.feedback.FeedbackLimits
 import se.optiqon.voice.domain.feedback.RemoteResult
 import se.optiqon.voice.domain.feedback.RemoteState
+import se.optiqon.voice.domain.feedback.ServerApproval
 import se.optiqon.voice.domain.sync.SendFailure
 import javax.inject.Provider
 
@@ -53,6 +55,25 @@ class FirestoreCaseRemote(
             tx.update(case(caseId), CaseDocuments.finalize(generation))
             RemoteResult.Ok
         }.await()
+    }
+
+    override suspend fun approvalOf(uid: String): ServerApproval? = try {
+        val user = withTimeout(TIMEOUT_MS) { firestore.collection("users").document(uid).get(Source.SERVER).await() }
+        when {
+            // A cached answer is not the server's, as in RegistrationRepository.readFromServer.
+            user.metadata.isFromCache -> null
+            !user.exists() -> ServerApproval(approved = false, generation = 0L)
+            else -> ServerApproval(
+                approved = user.getString("status") == "approved",
+                generation = user.getLong("approvalGeneration") ?: 0L
+            )
+        }
+    } catch (timeout: TimeoutCancellationException) {
+        null
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (_: Exception) {
+        null
     }
 
     override suspend fun caseState(uid: String, caseId: String): RemoteState? =

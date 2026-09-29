@@ -240,6 +240,45 @@ class FeedbackReapprovalTest {
         assertTrue(outbox.rows.all { it.state == OutboxState.SENT })
     }
 
+    @Test
+    fun `a screenshot overtaken by a reapproval on its way is held, then sent once under the new generation`() = runTest {
+        val f = fixture(backgroundScope)
+        val remote = se.optiqon.voice.testing.FakeCaseRemote()
+        val storage = se.optiqon.voice.data.storage.UserScopedStorage(context.cacheDir.resolve("race"))
+        val bucket = se.optiqon.voice.testing.FakeAttachmentStore()
+        val real = se.optiqon.voice.data.feedback.CaseOutboxSender(
+            remote, bucket, storage, f.auth, FeedbackStorageModule.provideApprovalGeneration(f.repository)
+        )
+        fun realFlush() = FeedbackStorageModule.provideOutboxFlush(
+            outbox, f.auth, FeedbackStorageModule.provideApprovalCheck(f.repository), real, FeedbackConfig("gs://b", remoteEnabled = true)
+        )
+        f.signIn("uid-a")
+        f.recordServerVerdict(AccountStatus.APPROVED)
+        val shot = java.io.File(storage.attachmentsDir("uid-a"), "a.png").apply { writeBytes(ByteArray(100)) }
+        composer(f).createCase("hej", listOf(image("a.png")))
+
+        // The case goes through; the server moves on between the local check and the commit.
+        remote.onCommit = { remote.generations["uid-a"] = 1L }
+        realFlush().run()
+
+        val upload = outbox.rows.single { it.kind == CaseOutboxPayloads.KIND_UPLOAD }
+        assertEquals(OutboxState.HELD, upload.state)
+        assertEquals(0, upload.attempts)
+        assertTrue("the local copy waits for the owner", shot.exists())
+
+        // The device hears of the new approval, and the owner sends.
+        remote.onCommit = {}
+        f.recordServerVerdict(AccountStatus.APPROVED, generation = 1L)
+        composer(f).releaseHeld()
+        assertEquals(HeldOutcome.NothingHeld, composer(f).releaseHeld())
+        realFlush().run()
+
+        assertTrue(outbox.rows.all { it.state == OutboxState.SENT })
+        assertEquals(1L, remote.stamps.entries.single { it.key.startsWith("${remote.cases.keys.single()}/") }.value)
+        assertEquals("refused once, then committed once", 2, remote.calls.count { it.startsWith("commit") })
+        assertTrue("sent, so the copy is gone", !shot.exists())
+    }
+
     // 4: Send.
 
     @Test

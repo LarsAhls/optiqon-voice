@@ -30,6 +30,12 @@ import java.io.File
  * A row travels only under the approval generation it was queued in. One stamped with another,
  * or with none, is not tried at all: it is held for its owner, who may send it again under the
  * current approval ([se.optiqon.voice.domain.feedback.CaseComposer.releaseHeld]).
+ *
+ * The device's generation can be behind the server's: a revoke and a reapproval can both land
+ * between the local check and the write. So a refusal that would otherwise be final is first
+ * held up against the approval the server holds right now ([CaseRemote.approvalOf]). An
+ * approval that has moved holds the row; an unchanged one leaves the refusal as it was, so a
+ * closed, foreign or full case is not dressed up as a reapproval.
  */
 class CaseOutboxSender(
     private val remote: CaseRemote,
@@ -58,12 +64,14 @@ class CaseOutboxSender(
 
         return when (payload) {
             is CasePayload.CreateCase -> twoPhase(
+                uid, gen,
                 create = { remote.createCase(uid, payload.caseId, payload.title, payload.body, gen) },
                 state = { remote.caseState(uid, payload.caseId) },
                 finalize = { remote.finalizeCase(payload.caseId, gen) }
             )
 
             is CasePayload.Message -> twoPhase(
+                uid, gen,
                 create = { remote.addMessage(uid, payload.caseId, payload.messageId, payload.body, gen) },
                 state = { remote.messageState(uid, payload.caseId, payload.messageId) },
                 finalize = { remote.finalizeMessage(payload.caseId, payload.messageId, gen) }
@@ -79,7 +87,18 @@ class CaseOutboxSender(
         }
     }
 
+    /**
+     * After a refusal: how the row goes if the approval it was stamped under no longer stands on
+     * the server, or null when it still does and the refusal is about something else.
+     */
+    private suspend fun approvalMoved(uid: String, gen: Long, message: String): SendFailure? {
+        val now = remote.approvalOf(uid) ?: return SendFailure.Transient(message)
+        return if (!now.approved || now.generation != gen) SendFailure.Held(message) else null
+    }
+
     private suspend fun twoPhase(
+        uid: String,
+        gen: Long,
         create: suspend () -> RemoteResult,
         state: suspend () -> RemoteState?,
         finalize: suspend () -> RemoteResult
@@ -88,27 +107,25 @@ class CaseOutboxSender(
             RemoteResult.Ok -> Unit
             is RemoteResult.Failed -> return created.failure
             // Refused. Either an earlier attempt already wrote it -- a create over an existing
-            // document is an update, and the rules refuse that -- or it is truly refused. A
-            // refusal of something that is not there cannot be told apart from a stamp the
-            // server has moved past before this device heard, so it is never final on its own:
-            // the row waits for its owner rather than being lost.
+            // document is an update, and the rules refuse that -- or it is truly refused: by an
+            // approval that moved since the row was checked (held), or for good.
             is RemoteResult.Denied -> when (state()) {
                 RemoteState.ACCEPTED -> return null
                 RemoteState.SUBMITTED -> Unit
-                RemoteState.NOT_MINE -> return SendFailure.Held(created.message)
+                RemoteState.NOT_MINE ->
+                    return approvalMoved(uid, gen, created.message) ?: SendFailure.Permanent(created.message)
                 null -> return SendFailure.Transient(created.message)
             }
         }
         return when (val finalized = finalize()) {
             RemoteResult.Ok -> null
             is RemoteResult.Failed -> finalized.failure
-            // Accepting was refused while the submitted copy stands: the approval moved, or the
-            // owner withdrew it, since the row was checked. Never final on its own -- the owner
-            // decides, as for any row written under an approval that has since changed.
+            // Accepting was refused: the approval moved since the row was checked (held for the
+            // owner), or it was withdrawn, closed or never ours under an unchanged approval (final).
             is RemoteResult.Denied -> when (state()) {
                 RemoteState.ACCEPTED -> null
                 null -> SendFailure.Transient(finalized.message)
-                else -> SendFailure.Held(finalized.message)
+                else -> approvalMoved(uid, gen, finalized.message) ?: SendFailure.Permanent(finalized.message)
             }
         }
     }
@@ -134,7 +151,7 @@ class CaseOutboxSender(
 
         when (val r = remote.commitAttachment(uid, p.caseId, p.messageId, p.aid, p.bytes, gen)) {
             RemoteResult.Ok -> Unit
-            is RemoteResult.Denied -> return SendFailure.Permanent(r.message)
+            is RemoteResult.Denied -> return approvalMoved(uid, gen, r.message) ?: SendFailure.Permanent(r.message)
             is RemoteResult.Failed -> return r.failure
         }
         if (auth.currentUid != uid) return SendFailure.Transient("Another account is signed in.")
@@ -145,7 +162,8 @@ class CaseOutboxSender(
             // the screenshot was taken down before its bytes arrived. Only the first is success.
             StoreResult.Denied -> when (store.exists(path)) {
                 true -> null
-                false -> SendFailure.Permanent("The screenshot was refused.")
+                false -> approvalMoved(uid, gen, "The screenshot was refused.")
+                    ?: SendFailure.Permanent("The screenshot was refused.")
                 null -> SendFailure.Transient("Could not check the screenshot.")
             }
             is StoreResult.Failed -> put.failure

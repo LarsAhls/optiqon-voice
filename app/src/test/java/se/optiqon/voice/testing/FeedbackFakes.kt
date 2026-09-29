@@ -16,6 +16,7 @@ import se.optiqon.voice.domain.feedback.CaseRemote
 import se.optiqon.voice.domain.feedback.FeedbackCase
 import se.optiqon.voice.domain.feedback.RemoteResult
 import se.optiqon.voice.domain.feedback.RemoteState
+import se.optiqon.voice.domain.feedback.ServerApproval
 import se.optiqon.voice.domain.feedback.StoreResult
 import se.optiqon.voice.domain.sync.SendFailure
 
@@ -127,6 +128,13 @@ class FakeCaseRemote : CaseRemote {
 
     /** The server's approval generation per uid; the rules refuse any other stamp. */
     val generations = mutableMapOf<String, Long>()
+
+    /** Accounts the server no longer holds approved; every write of theirs is refused. */
+    val unapproved = mutableSetOf<String>()
+
+    /** How often the server's approval was asked for; [approvalUnknown] makes the asking fail. */
+    var approvalReads = 0
+    var approvalUnknown = false
     val stamps = mutableMapOf<String, Long>()           // caseId, caseId/messageId or caseId/aid -> stamp
 
     /** Answers to hand out before behaving normally, one per call, keyed by method. */
@@ -142,11 +150,18 @@ class FakeCaseRemote : CaseRemote {
     private fun accepted(state: String?) = state == null || state == "accepted"
     private fun caseOwner(caseId: String) = cases[caseId]
 
+    override suspend fun approvalOf(uid: String): ServerApproval? {
+        approvalReads++
+        if (approvalUnknown) return null
+        return ServerApproval(approved = uid !in unapproved, generation = genOf(uid))
+    }
+
     override suspend fun createCase(
         uid: String, caseId: String, title: String, body: String, generation: Long
     ): RemoteResult {
         calls += "createCase:$caseId"
         scriptedFor("createCase")?.let { return it }
+        if (uid in unapproved) return RemoteResult.Denied("not approved")
         if (caseId in cases) return RemoteResult.Denied("exists")
         if (generation != genOf(uid)) return RemoteResult.Denied("stale generation")
         cases[caseId] = uid
@@ -161,7 +176,7 @@ class FakeCaseRemote : CaseRemote {
         scriptedFor("finalizeCase")?.let { return it }
         val owner = caseOwner(caseId) ?: return RemoteResult.Denied("absent")
         if (accepted(caseStates[caseId])) return RemoteResult.Ok
-        if (generation != genOf(owner)) return RemoteResult.Denied("stale generation")
+        if (owner in unapproved || generation != genOf(owner)) return RemoteResult.Denied("stale generation")
         caseStates[caseId] = "accepted"
         stamps[caseId] = generation
         return RemoteResult.Ok
@@ -179,6 +194,7 @@ class FakeCaseRemote : CaseRemote {
     ): RemoteResult {
         calls += "addMessage:$messageId"
         scriptedFor("addMessage")?.let { return it }
+        if (uid in unapproved) return RemoteResult.Denied("not approved")
         if (caseOwner(caseId) != uid || !accepted(caseStates[caseId])) return RemoteResult.Denied("not your case")
         if ("$caseId/$messageId" in messages) return RemoteResult.Denied("exists")
         if (generation != genOf(uid)) return RemoteResult.Denied("stale generation")
@@ -194,7 +210,7 @@ class FakeCaseRemote : CaseRemote {
         val key = "$caseId/$messageId"
         val actor = messages[key] ?: return RemoteResult.Denied("absent")
         if (accepted(messageStates[key])) return RemoteResult.Ok
-        if (generation != genOf(actor)) return RemoteResult.Denied("stale generation")
+        if (actor in unapproved || generation != genOf(actor)) return RemoteResult.Denied("stale generation")
         messageStates[key] = "accepted"
         stamps[key] = generation
         activityRev[caseId] = (activityRev[caseId] ?: 0L) + 1
@@ -216,6 +232,7 @@ class FakeCaseRemote : CaseRemote {
         onCommit()
         scriptedFor("commit")?.let { return it }
         if ("$caseId/$aid" in attachments) return RemoteResult.Ok
+        if (uid in unapproved) return RemoteResult.Denied("not approved")
         if (caseOwner(caseId) != uid || !accepted(caseStates[caseId])) return RemoteResult.Denied("not your case")
         if (messageId != null && !accepted(messageStates["$caseId/$messageId"])) {
             return RemoteResult.Denied("message not accepted")
