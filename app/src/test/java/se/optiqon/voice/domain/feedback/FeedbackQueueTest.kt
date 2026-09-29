@@ -37,6 +37,7 @@ class FeedbackQueueTest {
         override suspend fun discard(id: String) { rows.removeAll { it.id == id } }
         override suspend fun holdPendingFor(ownerUid: String) = 0
         override suspend fun releaseHeldFor(ownerUid: String) = 0
+        override suspend fun updateHeldPayload(id: String, payload: String) = 0
         override suspend fun heldFor(ownerUid: String) = emptyList<OutboxEntry>()
     }
 

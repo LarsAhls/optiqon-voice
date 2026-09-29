@@ -44,12 +44,15 @@ sealed interface HeldOutcome {
  * sent: the case or message first, then each of its screenshots.
  *
  * Only an approved account may queue. A row written for a pending or revoked account would sit
- * on the device waiting to be sent under a verdict that has already said no.
+ * on the device waiting to be sent under a verdict that has already said no. Each case, message
+ * and screenshot row carries the approval generation it was written under, and is sent only
+ * under that one.
  */
 class CaseComposer(
     private val outbox: OutboxDao,
     private val auth: AuthGateway,
     private val approval: ApprovalCheck,
+    private val generation: ApprovalGeneration,
     private val scheduler: OutboxScheduler,
     private val build: FeedbackBuildInfo,
     private val now: () -> Long = { System.currentTimeMillis() },
@@ -62,9 +65,10 @@ class CaseComposer(
         val uid = auth.currentUid ?: return ComposeOutcome.SignedOut
         if (!approval.isApproved()) return ComposeOutcome.NotApproved
 
+        val gen = generation.current()
         val caseId = newId()
-        enqueue(uid, listOf(CasePayload.CreateCase(caseId, titleOf(clean), bodyOf(clean))) +
-            images.map { upload(caseId, null, it) })
+        enqueue(uid, listOf(CasePayload.CreateCase(caseId, titleOf(clean), bodyOf(clean), gen)) +
+            images.map { upload(caseId, null, it, gen) })
         return ComposeOutcome.Queued(caseId)
     }
 
@@ -74,9 +78,10 @@ class CaseComposer(
         val uid = auth.currentUid ?: return ComposeOutcome.SignedOut
         if (!approval.isApproved()) return ComposeOutcome.NotApproved
 
+        val gen = generation.current()
         val messageId = newId()
-        enqueue(uid, listOf(CasePayload.Message(caseId, messageId, clean)) +
-            images.map { upload(caseId, messageId, it) })
+        enqueue(uid, listOf(CasePayload.Message(caseId, messageId, clean, gen)) +
+            images.map { upload(caseId, messageId, it, gen) })
         return ComposeOutcome.Queued(caseId)
     }
 
@@ -121,7 +126,7 @@ class CaseComposer(
             legacy.contact?.let { append("\n\n").append(it) }
         }
         val caseId = newId()
-        enqueue(uid, listOf(CasePayload.CreateCase(caseId, titleOf(text), bodyOf(text))))
+        enqueue(uid, listOf(CasePayload.CreateCase(caseId, titleOf(text), bodyOf(text), generation.current())))
         outbox.discard(row.id)
         return ComposeOutcome.Queued(caseId)
     }
@@ -157,10 +162,21 @@ class CaseComposer(
      * The owner chose to send what was held when their approval was withdrawn. Every held row
      * of the signed-in account goes back on the queue in its original order, and nobody else's.
      * Needs approval now: sending is exactly what a revoked account may not do.
+     *
+     * This is the one place a row's approval generation is changed: the owner's word, given
+     * under the current approval, is what lets words written under an earlier one go out.
      */
     suspend fun releaseHeld(): HeldOutcome {
         val uid = auth.currentUid ?: return HeldOutcome.SignedOut
         if (!approval.isApproved()) return HeldOutcome.NotApproved
+        val gen = generation.current() ?: return HeldOutcome.NotApproved
+        outbox.heldFor(uid).forEach { row ->
+            val payload = CaseOutboxPayloads.decode(row.kind, row.payload) as? CasePayload.Stamped
+                ?: return@forEach
+            if (payload.generation != gen) {
+                outbox.updateHeldPayload(row.id, CaseOutboxPayloads.encode(payload.restamp(gen)))
+            }
+        }
         if (outbox.releaseHeldFor(uid) == 0) return HeldOutcome.NothingHeld
         scheduler.schedule()
         return HeldOutcome.Done(emptyList())
@@ -211,8 +227,8 @@ class CaseComposer(
         else -> null
     }
 
-    private fun upload(caseId: String, messageId: String?, image: PreparedImage) =
-        CasePayload.Upload(caseId, messageId, newId(), image.file, image.mime, image.bytes)
+    private fun upload(caseId: String, messageId: String?, image: PreparedImage, gen: Long?) =
+        CasePayload.Upload(caseId, messageId, newId(), image.file, image.mime, image.bytes, gen)
 
     /**
      * All rows of one action in one transaction: a process that dies half-way leaves none of

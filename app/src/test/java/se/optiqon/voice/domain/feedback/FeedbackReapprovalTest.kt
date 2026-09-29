@@ -47,11 +47,19 @@ class FeedbackReapprovalTest {
 
     private fun fixture(scope: CoroutineScope) = AccessFixture(
         context, scope,
-        verdictListener = { uid, previous, status -> listener.beforeRecord(uid, previous, status) }
+        verdictListener = object : ServerVerdictListener {
+            override suspend fun beforeRecord(uid: String, previous: AccountStatus?, status: AccountStatus) =
+                listener.beforeRecord(uid, previous, status)
+
+            override suspend fun beforeRecord(
+                uid: String, previous: AccountStatus?, status: AccountStatus, previousGeneration: Long?, generation: Long
+            ) = listener.beforeRecord(uid, previous, status, previousGeneration, generation)
+        }
     )
 
     private fun composer(f: AccessFixture) = CaseComposer(
         outbox, f.auth, FeedbackStorageModule.provideApprovalCheck(f.repository),
+        FeedbackStorageModule.provideApprovalGeneration(f.repository),
         { schedules++ }, FeedbackBuildInfo("1", 34, "x")
     )
 
@@ -154,6 +162,121 @@ class FeedbackReapprovalTest {
         flush(f).run()
 
         assertEquals(2, sent.size)
+    }
+
+    // 3b: a new approval generation the device only sees as approved -> approved.
+
+    @Test
+    fun `a reapproval seen only as a new generation holds just the same`() = runTest {
+        val f = fixture(backgroundScope)
+        approvedWithCase(f)
+        // The revocation came and went while this device was not looking.
+        f.recordServerVerdict(AccountStatus.APPROVED, generation = 1L)
+        flush(f).run()
+
+        assertTrue("sent=$sent", sent.isEmpty())
+        assertTrue(outbox.rows.all { it.state == OutboxState.HELD })
+    }
+
+    @Test
+    fun `the same generation again holds nothing`() = runTest {
+        val f = fixture(backgroundScope)
+        f.signIn("uid-a")
+        f.recordServerVerdict(AccountStatus.APPROVED, generation = 2L)
+        composer(f).createCase("hej", listOf(image("a.png")))
+        f.recordServerVerdict(AccountStatus.APPROVED, generation = 2L)
+        flush(f).run()
+
+        assertEquals(2, sent.size)
+    }
+
+    @Test
+    fun `send restamps held rows with the current generation, once, and only held ones`() = runTest {
+        val f = fixture(backgroundScope)
+        approvedWithCase(f)
+        f.recordServerVerdict(AccountStatus.REVOKED)
+        f.recordServerVerdict(AccountStatus.APPROVED, generation = 1L)
+        assertEquals(listOf(0L, 0L), payloads(OutboxState.HELD).map { (it as CasePayload.Stamped).generation })
+
+        composer(f).releaseHeld()
+        assertEquals(listOf(1L, 1L), payloads(OutboxState.PENDING).map { (it as CasePayload.Stamped).generation })
+
+        // A second Send finds nothing held and moves nothing a second time.
+        assertEquals(HeldOutcome.NothingHeld, composer(f).releaseHeld())
+        assertEquals(listOf(1L, 1L), payloads().map { (it as CasePayload.Stamped).generation })
+    }
+
+    @Test
+    fun `an old row reaches the server only after send, and then under the new generation`() = runTest {
+        val f = fixture(backgroundScope)
+        val remote = se.optiqon.voice.testing.FakeCaseRemote()
+        val real = se.optiqon.voice.data.feedback.CaseOutboxSender(
+            remote, se.optiqon.voice.testing.FakeAttachmentStore(),
+            se.optiqon.voice.data.storage.UserScopedStorage(context.cacheDir.resolve("reapproval")),
+            f.auth, FeedbackStorageModule.provideApprovalGeneration(f.repository)
+        )
+        fun realFlush() = FeedbackStorageModule.provideOutboxFlush(
+            outbox, f.auth, FeedbackStorageModule.provideApprovalCheck(f.repository), real, FeedbackConfig("gs://b", remoteEnabled = true)
+        )
+        f.signIn("uid-a")
+        f.recordServerVerdict(AccountStatus.APPROVED)
+        val caseId = (composer(f).createCase("hej", emptyList()) as ComposeOutcome.Queued).caseId
+
+        // Revoked and approved again: the server is at generation 1, the row still says 0.
+        remote.generations["uid-a"] = 1L
+        f.recordServerVerdict(AccountStatus.REVOKED)
+        f.recordServerVerdict(AccountStatus.APPROVED, generation = 1L)
+        // Even a row a missed hold left pending is never tried under its old stamp.
+        outbox.releaseHeldFor("uid-a")
+        realFlush().run()
+        assertTrue("an old stamp never reaches the server: ${remote.calls}", remote.calls.isEmpty())
+        assertTrue(outbox.rows.all { it.state == OutboxState.HELD })
+
+        composer(f).releaseHeld()
+        realFlush().run()
+
+        assertEquals("accepted", remote.caseStates[caseId])
+        assertEquals(1L, remote.stamps[caseId])
+        assertTrue(outbox.rows.all { it.state == OutboxState.SENT })
+    }
+
+    @Test
+    fun `a screenshot overtaken by a reapproval on its way is held, then sent once under the new generation`() = runTest {
+        val f = fixture(backgroundScope)
+        val remote = se.optiqon.voice.testing.FakeCaseRemote()
+        val storage = se.optiqon.voice.data.storage.UserScopedStorage(context.cacheDir.resolve("race"))
+        val bucket = se.optiqon.voice.testing.FakeAttachmentStore()
+        val real = se.optiqon.voice.data.feedback.CaseOutboxSender(
+            remote, bucket, storage, f.auth, FeedbackStorageModule.provideApprovalGeneration(f.repository)
+        )
+        fun realFlush() = FeedbackStorageModule.provideOutboxFlush(
+            outbox, f.auth, FeedbackStorageModule.provideApprovalCheck(f.repository), real, FeedbackConfig("gs://b", remoteEnabled = true)
+        )
+        f.signIn("uid-a")
+        f.recordServerVerdict(AccountStatus.APPROVED)
+        val shot = java.io.File(storage.attachmentsDir("uid-a"), "a.png").apply { writeBytes(ByteArray(100)) }
+        composer(f).createCase("hej", listOf(image("a.png")))
+
+        // The case goes through; the server moves on between the local check and the commit.
+        remote.onCommit = { remote.generations["uid-a"] = 1L }
+        realFlush().run()
+
+        val upload = outbox.rows.single { it.kind == CaseOutboxPayloads.KIND_UPLOAD }
+        assertEquals(OutboxState.HELD, upload.state)
+        assertEquals(0, upload.attempts)
+        assertTrue("the local copy waits for the owner", shot.exists())
+
+        // The device hears of the new approval, and the owner sends.
+        remote.onCommit = {}
+        f.recordServerVerdict(AccountStatus.APPROVED, generation = 1L)
+        composer(f).releaseHeld()
+        assertEquals(HeldOutcome.NothingHeld, composer(f).releaseHeld())
+        realFlush().run()
+
+        assertTrue(outbox.rows.all { it.state == OutboxState.SENT })
+        assertEquals(1L, remote.stamps.entries.single { it.key.startsWith("${remote.cases.keys.single()}/") }.value)
+        assertEquals("refused once, then committed once", 2, remote.calls.count { it.startsWith("commit") })
+        assertTrue("sent, so the copy is gone", !shot.exists())
     }
 
     // 4: Send.

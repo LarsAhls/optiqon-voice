@@ -14,7 +14,7 @@
 // everybody, and the test does not have to enumerate weaker callers to be convincing.
 import { after, before, beforeEach, describe, test } from 'node:test';
 import {
-  collection, doc, getDoc, getDocs, serverTimestamp, setDoc, updateDoc, writeBatch,
+  collection, doc, getDoc, getDocs, query, serverTimestamp, setDoc, updateDoc, where, writeBatch,
 } from 'firebase/firestore';
 import { as, assertFails, assertSucceeds, makeM1Env, seed } from './helpers.mjs';
 
@@ -61,11 +61,12 @@ describe('the Mission 1 chain works', () => {
     await assertFails(getDoc(doc(as(env, 'alice').firestore(), 'users/bob')));
   });
 
+  // Since FS-S12 an approval also starts the account's next approval generation.
   test('an admin approves a pending account and takes a seat in the same commit', async () => {
     const db = as(env, 'lars').firestore();
     const batch = writeBatch(db);
     batch.update(doc(db, 'users/pat'), {
-      status: 'approved', decidedBy: 'lars', decidedAt: serverTimestamp(),
+      status: 'approved', decidedBy: 'lars', decidedAt: serverTimestamp(), approvalGeneration: 1,
     });
     batch.update(doc(db, 'config/counters'), { approvedUsers: 5, seatFor: 'pat' });
     await assertSucceeds(batch.commit());
@@ -197,10 +198,13 @@ describe('the features Mission 1 does not ship are shut', () => {
     }
   });
 
-  // Cases are open since FS-1, but only as far as the caller's own: an admin lists them all,
-  // anyone else's unconstrained list is refused whole.
-  test('an unconstrained list of cases is refused to everyone but an admin', async () => {
-    await assertSucceeds(getDocs(collection(as(env, 'lars').firestore(), 'cases')));
+  // Cases are open since FS-1, but only as far as the caller's own: an admin lists the accepted
+  // ones (FS-S12 -- a submitted case is not the admin's to see yet), anyone else's unconstrained
+  // list is refused whole.
+  test('an unconstrained list of cases is refused to everyone, an admin lists accepted ones', async () => {
+    const lars = as(env, 'lars').firestore();
+    await assertSucceeds(getDocs(query(collection(lars, 'cases'), where('state', '==', 'accepted'))));
+    await assertFails(getDocs(collection(lars, 'cases')));
     for (const uid of ['alice', 'pat']) {
       await assertFails(getDocs(collection(as(env, uid).firestore(), 'cases')));
     }

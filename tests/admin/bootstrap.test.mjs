@@ -107,7 +107,8 @@ test('init seeds config, grants writer, approves the admin and takes exactly one
   assert.equal(me.status, 'approved');
   assert.equal(me.decidedBy, 'lars');
   assert.ok(me.decidedAt instanceof Timestamp);
-  assert.deepEqual(Object.keys(me).sort(), ['createdAt', 'decidedAt', 'decidedBy', 'displayName', 'email', 'status', 'uid']);
+  assert.deepEqual(Object.keys(me).sort(), ['approvalGeneration', 'createdAt', 'decidedAt', 'decidedBy', 'displayName', 'email', 'status', 'uid']);
+  assert.equal(me.approvalGeneration, 1);
   assert.equal(r.readback.counters.approvedUsers, 1);
 });
 
@@ -163,11 +164,45 @@ test('approving twice is a no-op and the counter stays put', async () => {
   assert.equal((await db.doc('config/counters').get()).get('approvedUsers'), 2);
 });
 
-test('approve refuses a tester whose status is not pending', async () => {
+test('approve refuses a tester whose status is not one it can approve from', async () => {
   await seedInitialised();
-  await db.doc('users/tester').update({ status: 'revoked' });
+  await db.doc('users/tester').update({ status: 'suspended' });
   await rejects(go({ command: 'approve', target: 'tester@example.com', apply: true }), 'STATUS_BLOCKED');
   assert.equal((await db.doc('config/counters').get()).get('approvedUsers'), 1);
+});
+
+// FS-S12: every transition into 'approved' starts a new approval generation, exactly once.
+// A client that queued work under generation N cannot finalise it under N+1.
+test('approve bumps approvalGeneration by one; revoke leaves it; reapprove bumps it again', async () => {
+  await seedInitialised();
+  const gen = async () => (await db.doc('users/tester').get()).get('approvalGeneration');
+  assert.equal(await gen(), undefined);
+  const r = await go({ command: 'approve', target: 'tester@example.com', apply: true });
+  assert.equal(await gen(), 1);
+  assert.equal(r.plan[0].data.approvalGeneration, 1);
+  await go({ command: 'revoke', target: 'tester@example.com', apply: true });
+  assert.equal(await gen(), 1);
+  const again = await go({ command: 'approve', target: 'tester@example.com', apply: true });
+  assert.equal(again.changed, true);
+  assert.equal(await gen(), 2);
+  assert.equal((await db.doc('users/tester').get()).get('status'), 'approved');
+  assert.deepEqual((await db.doc('config/counters').get()).data(), { approvedUsers: 2, seatFor: 'tester' });
+});
+
+test('a repeated approve never bumps the generation twice', async () => {
+  await seedInitialised();
+  await go({ command: 'approve', target: 'tester@example.com', apply: true });
+  await go({ command: 'approve', target: 'tester@example.com', apply: true });
+  assert.equal((await db.doc('users/tester').get()).get('approvalGeneration'), 1);
+});
+
+test('a rejected tester can be approved, from whatever generation it holds', async () => {
+  await seedInitialised();
+  await db.doc('users/tester').update({ status: 'rejected', approvalGeneration: 4 });
+  await go({ command: 'approve', target: 'tester@example.com', apply: true });
+  const u = (await db.doc('users/tester').get()).data();
+  assert.equal(u.status, 'approved');
+  assert.equal(u.approvalGeneration, 5);
 });
 
 test('approve refuses when the Auth uid does not match the users/ email (plus-alias trap)', async () => {

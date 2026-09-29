@@ -51,6 +51,7 @@ class FeedbackApprovalTest {
         val outbox = MemoryOutboxDao()
         val composer = CaseComposer(
             outbox, f.auth, FeedbackStorageModule.provideApprovalCheck(f.repository),
+            FeedbackStorageModule.provideApprovalGeneration(f.repository),
             {}, FeedbackBuildInfo("1", 34, "x")
         )
 

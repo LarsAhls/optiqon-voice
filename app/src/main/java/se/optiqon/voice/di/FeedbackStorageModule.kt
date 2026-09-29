@@ -21,6 +21,7 @@ import se.optiqon.voice.domain.access.AccessRepository
 import se.optiqon.voice.domain.access.AuthGateway
 import se.optiqon.voice.domain.access.ServerVerdictListener
 import se.optiqon.voice.domain.feedback.ApprovalCheck
+import se.optiqon.voice.domain.feedback.ApprovalGeneration
 import se.optiqon.voice.domain.feedback.AttachmentStore
 import se.optiqon.voice.domain.feedback.CaseComposer
 import se.optiqon.voice.domain.feedback.CaseRemote
@@ -73,6 +74,11 @@ object FeedbackStorageModule {
     fun provideApprovalCheck(access: AccessRepository): ApprovalCheck =
         ApprovalCheck { access.currentDecision() is AccessDecision.Allowed }
 
+    /** The approval generation of the signed-in account's stored verdict. */
+    @Provides
+    fun provideApprovalGeneration(access: AccessRepository): ApprovalGeneration =
+        ApprovalGeneration { access.currentSnapshot()?.approvalGeneration }
+
     /**
      * What the access layer tells before it stores a verdict: queued reports of an account whose
      * approval is withdrawn are held until their owner decides. See [FeedbackHold].
@@ -111,9 +117,10 @@ object FeedbackStorageModule {
         outbox: OutboxDao,
         auth: AuthGateway,
         approval: ApprovalCheck,
+        generation: ApprovalGeneration,
         scheduler: OutboxScheduler,
         build: FeedbackBuildInfo
-    ): CaseComposer = CaseComposer(outbox, auth, approval, scheduler, build)
+    ): CaseComposer = CaseComposer(outbox, auth, approval, generation, scheduler, build)
 
     @Provides
     @Singleton
@@ -121,8 +128,9 @@ object FeedbackStorageModule {
         remote: CaseRemote,
         store: AttachmentStore,
         files: UserScopedStorage,
-        auth: AuthGateway
-    ): OutboxSender = CaseOutboxSender(remote, store, files, auth)
+        auth: AuthGateway,
+        generation: ApprovalGeneration
+    ): OutboxSender = CaseOutboxSender(remote, store, files, auth, generation)
 
     @Provides
     fun provideOutboxFlush(

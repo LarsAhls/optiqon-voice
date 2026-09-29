@@ -5,6 +5,7 @@ import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.FirebaseFirestoreException.Code
+import com.google.firebase.firestore.Source
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.tasks.await
@@ -15,6 +16,8 @@ import se.optiqon.voice.domain.feedback.CaseRemote
 import se.optiqon.voice.domain.feedback.FeedbackCase
 import se.optiqon.voice.domain.feedback.FeedbackLimits
 import se.optiqon.voice.domain.feedback.RemoteResult
+import se.optiqon.voice.domain.feedback.RemoteState
+import se.optiqon.voice.domain.feedback.ServerApproval
 import se.optiqon.voice.domain.sync.SendFailure
 import javax.inject.Provider
 
@@ -39,32 +42,72 @@ class FirestoreCaseRemote(
     private fun quota(uid: String) =
         firestore.collection("users").document(uid).collection("quota").document("attachments")
 
-    override suspend fun createCase(uid: String, caseId: String, title: String, body: String) = write {
-        case(caseId).set(CaseDocuments.newCase(uid, title, body)).await()
-        RemoteResult.Ok
+    override suspend fun createCase(uid: String, caseId: String, title: String, body: String, generation: Long) =
+        write {
+            case(caseId).set(CaseDocuments.newCase(uid, title, body, generation)).await()
+            RemoteResult.Ok
+        }
+
+    override suspend fun finalizeCase(caseId: String, generation: Long): RemoteResult = write {
+        firestore.runTransaction { tx ->
+            val c = tx.get(case(caseId))
+            if (CaseDocuments.isAccepted(c.getString("state"))) return@runTransaction RemoteResult.Ok
+            tx.update(case(caseId), CaseDocuments.finalize(generation))
+            RemoteResult.Ok
+        }.await()
     }
 
-    override suspend fun caseIsMine(uid: String, caseId: String): Boolean? =
-        ownedBy(uid, "ownerUid") { case(caseId).get().await() }
-
-    override suspend fun addMessage(uid: String, caseId: String, messageId: String, body: String) = write {
-        firestore.batch()
-            .set(event(caseId, messageId), CaseDocuments.newMessage(uid, body))
-            .update(case(caseId), CaseDocuments.touch())
-            .commit()
-            .await()
-        RemoteResult.Ok
+    override suspend fun approvalOf(uid: String): ServerApproval? = try {
+        val user = withTimeout(TIMEOUT_MS) { firestore.collection("users").document(uid).get(Source.SERVER).await() }
+        when {
+            // A cached answer is not the server's, as in RegistrationRepository.readFromServer.
+            user.metadata.isFromCache -> null
+            !user.exists() -> ServerApproval(approved = false, generation = 0L)
+            else -> ServerApproval(
+                approved = user.getString("status") == "approved",
+                generation = user.getLong("approvalGeneration") ?: 0L
+            )
+        }
+    } catch (timeout: TimeoutCancellationException) {
+        null
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (_: Exception) {
+        null
     }
 
-    override suspend fun messageIsMine(uid: String, caseId: String, messageId: String): Boolean? =
-        ownedBy(uid, "actorUid") { event(caseId, messageId).get().await() }
+    override suspend fun caseState(uid: String, caseId: String): RemoteState? =
+        stateOf(uid, "ownerUid") { case(caseId).get().await() }
+
+    override suspend fun addMessage(uid: String, caseId: String, messageId: String, body: String, generation: Long) =
+        write {
+            event(caseId, messageId).set(CaseDocuments.newMessage(uid, body, generation)).await()
+            RemoteResult.Ok
+        }
+
+    override suspend fun finalizeMessage(caseId: String, messageId: String, generation: Long): RemoteResult = write {
+        firestore.runTransaction { tx ->
+            val e = tx.get(event(caseId, messageId))
+            if (CaseDocuments.isAccepted(e.getString("state"))) return@runTransaction RemoteResult.Ok
+            // The revision is read in the same transaction it is written in: a writer's reply
+            // landing in between makes this commit fail and retry, never overwrite it.
+            val rev = tx.get(case(caseId)).getLong("activityRev") ?: 0L
+            tx.update(event(caseId, messageId), CaseDocuments.finalize(generation))
+            tx.update(case(caseId), CaseDocuments.messageBump(rev, messageId))
+            RemoteResult.Ok
+        }.await()
+    }
+
+    override suspend fun messageState(uid: String, caseId: String, messageId: String): RemoteState? =
+        stateOf(uid, "actorUid") { event(caseId, messageId).get().await() }
 
     override suspend fun commitAttachment(
         uid: String,
         caseId: String,
         messageId: String?,
         aid: String,
-        maxBytes: Int
+        maxBytes: Int,
+        generation: Long
     ): RemoteResult = write {
         firestore.runTransaction { tx ->
             if (tx.get(attachment(caseId, aid)).exists()) return@runTransaction RemoteResult.Ok
@@ -73,6 +116,7 @@ class FirestoreCaseRemote(
             if (c.contains("closedAt")) return@runTransaction RemoteResult.Denied("The case is closed.")
             val active = c.getLong("activeAttachmentCount") ?: 0L
             val opening = c.getLong("attachmentCount") ?: 0L
+            val rev = c.getLong("activityRev") ?: 0L
             if (active >= FeedbackLimits.MAX_ACTIVE_PER_CASE) {
                 return@runTransaction RemoteResult.Denied("The case already has ten screenshots.")
             }
@@ -104,8 +148,8 @@ class FirestoreCaseRemote(
             }
 
             tx.set(reservation(uid, aid), CaseDocuments.reservation(caseId, maxBytes))
-            tx.set(attachment(caseId, aid), CaseDocuments.attachment(uid, caseId, messageId, maxBytes))
-            tx.update(case(caseId), CaseDocuments.caseSlotTaken(aid, active, opening, messageId == null))
+            tx.set(attachment(caseId, aid), CaseDocuments.attachment(uid, caseId, messageId, maxBytes, generation))
+            tx.update(case(caseId), CaseDocuments.caseSlotTaken(aid, active, opening, messageId == null, rev))
             if (messageId != null) {
                 tx.update(event(caseId, messageId), CaseDocuments.messageSlotTaken(aid, onMessage))
             }
@@ -173,16 +217,22 @@ class FirestoreCaseRemote(
 
     private fun DocumentSnapshot.ms(field: String): Long? = getTimestamp(field)?.toDate()?.time
 
-    private suspend fun ownedBy(uid: String, field: String, read: suspend () -> DocumentSnapshot): Boolean? =
+    private suspend fun stateOf(uid: String, field: String, read: suspend () -> DocumentSnapshot): RemoteState? =
         try {
-            withTimeout(TIMEOUT_MS) { read() }.let { it.exists() && it.getString(field) == uid }
+            withTimeout(TIMEOUT_MS) { read() }.let {
+                when {
+                    !it.exists() || it.getString(field) != uid -> RemoteState.NOT_MINE
+                    CaseDocuments.isAccepted(it.getString("state")) -> RemoteState.ACCEPTED
+                    else -> RemoteState.SUBMITTED
+                }
+            }
         } catch (cancellation: TimeoutCancellationException) {
             null
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: FirebaseFirestoreException) {
             // A get on a case or message that does not exist is refused, not answered empty.
-            if (failure.code == Code.PERMISSION_DENIED) false else null
+            if (failure.code == Code.PERMISSION_DENIED) RemoteState.NOT_MINE else null
         } catch (_: Exception) {
             null
         }
@@ -217,9 +267,18 @@ object CaseDocuments {
     /** A little over the rules' hour, so a slow device clock does not ask for a window early. */
     const val WINDOW_MS = 62L * 60L * 1000L
 
+    const val SUBMITTED = "submitted"
+    const val ACCEPTED = "accepted"
+
     private val now get() = FieldValue.serverTimestamp()
 
-    fun newCase(uid: String, title: String, body: String): Map<String, Any?> = mapOf(
+    /**
+     * A document with no state at all was written before the two phases existed, under rules
+     * that accepted it in one step; it is as final as an accepted one.
+     */
+    fun isAccepted(state: String?): Boolean = state == null || state == ACCEPTED
+
+    fun newCase(uid: String, title: String, body: String, generation: Long): Map<String, Any?> = mapOf(
         "ownerUid" to uid,
         "title" to title,
         "body" to body,
@@ -229,19 +288,37 @@ object CaseDocuments {
         "activeAttachmentCount" to 0L,
         "createdAt" to now,
         "updatedAt" to now,
-        "lastActivityAt" to now
+        "lastActivityAt" to now,
+        "state" to SUBMITTED,
+        "activityRev" to 0L,
+        "approvalGeneration" to generation
     )
 
-    fun newMessage(uid: String, body: String): Map<String, Any?> = mapOf(
+    fun newMessage(uid: String, body: String, generation: Long): Map<String, Any?> = mapOf(
         "type" to "message",
         "visibility" to "public",
         "actorUid" to uid,
         "body" to body,
         "attachmentCount" to 0L,
-        "createdAt" to now
+        "createdAt" to now,
+        "state" to SUBMITTED,
+        "approvalGeneration" to generation
     )
 
-    fun touch(): Map<String, Any?> = mapOf("lastActivityAt" to now)
+    /** Phase two, for a case and for a message alike. */
+    fun finalize(generation: Long): Map<String, Any?> = mapOf(
+        "state" to ACCEPTED,
+        "acceptedAt" to now,
+        "approvalGeneration" to generation
+    )
+
+    /** The case's side of a message's phase two: one step of activity, named after the message. */
+    fun messageBump(rev: Long, messageId: String): Map<String, Any?> = mapOf(
+        "activityRev" to rev + 1,
+        "lastRelevantAt" to now,
+        "lastActivityAt" to now,
+        "activityFor" to messageId
+    )
 
     fun reservation(caseId: String, maxBytes: Int): Map<String, Any?> = mapOf(
         "caseId" to caseId,
@@ -249,21 +326,26 @@ object CaseDocuments {
         "createdAt" to now
     )
 
-    fun attachment(uid: String, caseId: String, messageId: String?, maxBytes: Int): Map<String, Any?> = mapOf(
-        "ownerUid" to uid,
-        "caseId" to caseId,
-        // Present even when null: the rules require the key.
-        "messageId" to messageId,
-        "maxBytes" to maxBytes.toLong(),
-        "createdAt" to now
-    )
+    fun attachment(uid: String, caseId: String, messageId: String?, maxBytes: Int, generation: Long): Map<String, Any?> =
+        mapOf(
+            "ownerUid" to uid,
+            "caseId" to caseId,
+            // Present even when null: the rules require the key.
+            "messageId" to messageId,
+            "maxBytes" to maxBytes.toLong(),
+            "createdAt" to now,
+            "approvalGeneration" to generation
+        )
 
-    fun caseSlotTaken(aid: String, active: Long, opening: Long, onOpening: Boolean): Map<String, Any?> =
+    /** A screenshot is relevant activity: the slot and one step of the revision, together. */
+    fun caseSlotTaken(aid: String, active: Long, opening: Long, onOpening: Boolean, rev: Long): Map<String, Any?> =
         buildMap {
             put("activeAttachmentCount", active + 1)
             if (onOpening) put("attachmentCount", opening + 1)
             put("attachmentFor", aid)
             put("lastActivityAt", now)
+            put("activityRev", rev + 1)
+            put("lastRelevantAt", now)
         }
 
     fun messageSlotTaken(aid: String, onMessage: Long): Map<String, Any?> = mapOf(

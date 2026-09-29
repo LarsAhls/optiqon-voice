@@ -15,6 +15,8 @@ import se.optiqon.voice.domain.feedback.CaseOutboxPayloads
 import se.optiqon.voice.domain.feedback.CaseRemote
 import se.optiqon.voice.domain.feedback.FeedbackCase
 import se.optiqon.voice.domain.feedback.RemoteResult
+import se.optiqon.voice.domain.feedback.RemoteState
+import se.optiqon.voice.domain.feedback.ServerApproval
 import se.optiqon.voice.domain.feedback.StoreResult
 import se.optiqon.voice.domain.sync.SendFailure
 
@@ -84,6 +86,12 @@ class MemoryOutboxDao : OutboxDao {
         return ids.size
     }
 
+    override suspend fun updateHeldPayload(id: String, payload: String): Int {
+        val hit = rows.any { it.id == id && it.state == OutboxState.HELD }
+        if (hit) table.value = rows.map { if (it.id == id) it.copy(payload = payload) else it }
+        return if (hit) 1 else 0
+    }
+
     override suspend fun heldFor(ownerUid: String) =
         rows.filter { it.ownerUid == ownerUid && it.state == OutboxState.HELD }.sortedBy { it.createdAtMs }
 }
@@ -109,45 +117,130 @@ class FakeCaseRemote : CaseRemote {
     val tombstoned = mutableSetOf<String>()             // caseId/aid
     val calls = mutableListOf<String>()
 
+    /**
+     * The two phases, as the rules keep them. A case or message with no entry here was put in
+     * place by a test directly and counts as accepted, as a document with no state does in
+     * FirestoreCaseRemote.
+     */
+    val caseStates = mutableMapOf<String, String>()     // caseId -> submitted | accepted
+    val messageStates = mutableMapOf<String, String>()  // caseId/messageId -> submitted | accepted
+    val activityRev = mutableMapOf<String, Long>()      // caseId -> revision
+
+    /** The server's approval generation per uid; the rules refuse any other stamp. */
+    val generations = mutableMapOf<String, Long>()
+
+    /** Accounts the server no longer holds approved; every write of theirs is refused. */
+    val unapproved = mutableSetOf<String>()
+
+    /** How often the server's approval was asked for; [approvalUnknown] makes the asking fail. */
+    var approvalReads = 0
+    var approvalUnknown = false
+    val stamps = mutableMapOf<String, Long>()           // caseId, caseId/messageId or caseId/aid -> stamp
+
     /** Answers to hand out before behaving normally, one per call, keyed by method. */
     val scripted = mutableMapOf<String, ArrayDeque<RemoteResult>>()
-    var ownershipAnswer: Boolean? = null
+
+    /** Overrides what [caseState] and [messageState] answer; [stateUnknown] makes them fail. */
+    var stateAnswer: RemoteState? = null
+    var stateUnknown = false
     var onCommit: () -> Unit = {}
 
     private fun scriptedFor(method: String): RemoteResult? = scripted[method]?.removeFirstOrNull()
+    private fun genOf(uid: String) = generations[uid] ?: 0L
+    private fun accepted(state: String?) = state == null || state == "accepted"
+    private fun caseOwner(caseId: String) = cases[caseId]
 
-    override suspend fun createCase(uid: String, caseId: String, title: String, body: String): RemoteResult {
+    override suspend fun approvalOf(uid: String): ServerApproval? {
+        approvalReads++
+        if (approvalUnknown) return null
+        return ServerApproval(approved = uid !in unapproved, generation = genOf(uid))
+    }
+
+    override suspend fun createCase(
+        uid: String, caseId: String, title: String, body: String, generation: Long
+    ): RemoteResult {
         calls += "createCase:$caseId"
         scriptedFor("createCase")?.let { return it }
+        if (uid in unapproved) return RemoteResult.Denied("not approved")
         if (caseId in cases) return RemoteResult.Denied("exists")
+        if (generation != genOf(uid)) return RemoteResult.Denied("stale generation")
         cases[caseId] = uid
+        caseStates[caseId] = "submitted"
+        activityRev[caseId] = 0L
+        stamps[caseId] = generation
         return RemoteResult.Ok
     }
 
-    override suspend fun caseIsMine(uid: String, caseId: String): Boolean? =
-        ownershipAnswer ?: (cases[caseId] == uid)
+    override suspend fun finalizeCase(caseId: String, generation: Long): RemoteResult {
+        calls += "finalizeCase:$caseId"
+        scriptedFor("finalizeCase")?.let { return it }
+        val owner = caseOwner(caseId) ?: return RemoteResult.Denied("absent")
+        if (accepted(caseStates[caseId])) return RemoteResult.Ok
+        if (owner in unapproved || generation != genOf(owner)) return RemoteResult.Denied("stale generation")
+        caseStates[caseId] = "accepted"
+        stamps[caseId] = generation
+        return RemoteResult.Ok
+    }
 
-    override suspend fun addMessage(uid: String, caseId: String, messageId: String, body: String): RemoteResult {
+    override suspend fun caseState(uid: String, caseId: String): RemoteState? {
+        if (stateUnknown) return null
+        stateAnswer?.let { return it }
+        if (caseOwner(caseId) != uid) return RemoteState.NOT_MINE
+        return if (accepted(caseStates[caseId])) RemoteState.ACCEPTED else RemoteState.SUBMITTED
+    }
+
+    override suspend fun addMessage(
+        uid: String, caseId: String, messageId: String, body: String, generation: Long
+    ): RemoteResult {
         calls += "addMessage:$messageId"
         scriptedFor("addMessage")?.let { return it }
-        if (cases[caseId] != uid) return RemoteResult.Denied("not your case")
+        if (uid in unapproved) return RemoteResult.Denied("not approved")
+        if (caseOwner(caseId) != uid || !accepted(caseStates[caseId])) return RemoteResult.Denied("not your case")
         if ("$caseId/$messageId" in messages) return RemoteResult.Denied("exists")
+        if (generation != genOf(uid)) return RemoteResult.Denied("stale generation")
         messages["$caseId/$messageId"] = uid
+        messageStates["$caseId/$messageId"] = "submitted"
+        stamps["$caseId/$messageId"] = generation
         return RemoteResult.Ok
     }
 
-    override suspend fun messageIsMine(uid: String, caseId: String, messageId: String): Boolean? =
-        ownershipAnswer ?: (messages["$caseId/$messageId"] == uid)
+    override suspend fun finalizeMessage(caseId: String, messageId: String, generation: Long): RemoteResult {
+        calls += "finalizeMessage:$messageId"
+        scriptedFor("finalizeMessage")?.let { return it }
+        val key = "$caseId/$messageId"
+        val actor = messages[key] ?: return RemoteResult.Denied("absent")
+        if (accepted(messageStates[key])) return RemoteResult.Ok
+        if (actor in unapproved || generation != genOf(actor)) return RemoteResult.Denied("stale generation")
+        messageStates[key] = "accepted"
+        stamps[key] = generation
+        activityRev[caseId] = (activityRev[caseId] ?: 0L) + 1
+        return RemoteResult.Ok
+    }
+
+    override suspend fun messageState(uid: String, caseId: String, messageId: String): RemoteState? {
+        if (stateUnknown) return null
+        stateAnswer?.let { return it }
+        val key = "$caseId/$messageId"
+        if (messages[key] != uid) return RemoteState.NOT_MINE
+        return if (accepted(messageStates[key])) RemoteState.ACCEPTED else RemoteState.SUBMITTED
+    }
 
     override suspend fun commitAttachment(
-        uid: String, caseId: String, messageId: String?, aid: String, maxBytes: Int
+        uid: String, caseId: String, messageId: String?, aid: String, maxBytes: Int, generation: Long
     ): RemoteResult {
         calls += "commit:$aid"
         onCommit()
         scriptedFor("commit")?.let { return it }
         if ("$caseId/$aid" in attachments) return RemoteResult.Ok
-        if (cases[caseId] != uid) return RemoteResult.Denied("not your case")
+        if (uid in unapproved) return RemoteResult.Denied("not approved")
+        if (caseOwner(caseId) != uid || !accepted(caseStates[caseId])) return RemoteResult.Denied("not your case")
+        if (messageId != null && !accepted(messageStates["$caseId/$messageId"])) {
+            return RemoteResult.Denied("message not accepted")
+        }
+        if (generation != genOf(uid)) return RemoteResult.Denied("stale generation")
         attachments["$caseId/$aid"] = messageId
+        stamps["$caseId/$aid"] = generation
+        activityRev[caseId] = (activityRev[caseId] ?: 0L) + 1
         return RemoteResult.Ok
     }
 
@@ -156,6 +249,7 @@ class FakeCaseRemote : CaseRemote {
         scriptedFor("tombstone")?.let { return it }
         // Never committed: nothing to take down, as in FirestoreCaseRemote.
         if ("$caseId/$aid" !in attachments) return RemoteResult.Ok
+        // A tombstone is not activity: the revision stays where it is.
         tombstoned += "$caseId/$aid"
         return RemoteResult.Ok
     }

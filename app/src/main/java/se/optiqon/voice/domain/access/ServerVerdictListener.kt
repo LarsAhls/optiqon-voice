@@ -14,6 +14,19 @@ package se.optiqon.voice.domain.access
 fun interface ServerVerdictListener {
     suspend fun beforeRecord(uid: String, previous: AccountStatus?, status: AccountStatus)
 
+    /**
+     * As above, with the approval generations as well: [previousGeneration] is null when there
+     * was no stored verdict. The default ignores them, so a listener that has no use for them
+     * need not say so.
+     */
+    suspend fun beforeRecord(
+        uid: String,
+        previous: AccountStatus?,
+        status: AccountStatus,
+        previousGeneration: Long?,
+        generation: Long
+    ) = beforeRecord(uid, previous, status)
+
     companion object {
         val NONE = ServerVerdictListener { _, _, _ -> }
     }

@@ -45,6 +45,8 @@ object OutboxPolicy {
             attempts = entry.attempts + 1,
             lastError = failure.message
         )
+        // Not tried: it waits for its owner, exactly as a row held by a withdrawn approval.
+        is SendFailure.Held -> entry.copy(state = OutboxState.HELD, lastError = failure.message)
     }
 
     /** True when the worker should ask WorkManager to run it again. */
@@ -59,4 +61,10 @@ sealed interface SendFailure {
 
     /** A timeout, a 5xx or no network. Notably, these must not be reported as a refusal. */
     data class Transient(override val message: String) : SendFailure
+
+    /**
+     * Not sent, and not to be retried on its own: the row was written under an approval that is
+     * no longer the account's current one. It waits in [OutboxState.HELD] for its owner.
+     */
+    data class Held(override val message: String) : SendFailure
 }

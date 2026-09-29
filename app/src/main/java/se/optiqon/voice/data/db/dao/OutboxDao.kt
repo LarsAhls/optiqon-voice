@@ -65,6 +65,13 @@ interface OutboxDao {
     )
     suspend fun holdPendingFor(ownerUid: String): Int
 
+    /**
+     * Rewrites a held row's payload -- its approval generation, at its owner's word to send it
+     * again. A row that is no longer held is left alone.
+     */
+    @Query("UPDATE outbox SET payload = :payload WHERE id = :id AND state = 'HELD'")
+    suspend fun updateHeldPayload(id: String, payload: String): Int
+
     /** The owner chose to send what was held. Only ever called at their word. */
     @Query("UPDATE outbox SET state = 'PENDING' WHERE ownerUid = :ownerUid AND state = 'HELD'")
     suspend fun releaseHeldFor(ownerUid: String): Int

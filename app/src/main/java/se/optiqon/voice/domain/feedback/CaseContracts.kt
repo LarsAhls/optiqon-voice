@@ -65,22 +65,67 @@ sealed interface RemoteResult {
     data class Failed(val failure: SendFailure) : RemoteResult
 }
 
+/**
+ * Where one of the owner's own writes stands on the server.
+ *
+ * A case or message is written in two steps: `submitted`, then `accepted`. Only an accepted one
+ * exists as far as anyone else is concerned -- an admin cannot see it before, nothing can hang
+ * off it before, and the server's retention sweep may remove a submitted one that was withdrawn.
+ * Accepted is final: no rule lets it go back, and no withdrawal can remove it.
+ */
+enum class RemoteState {
+    /** Absent, or someone else's: the rules refuse a get on a document that does not exist. */
+    NOT_MINE,
+    SUBMITTED,
+    ACCEPTED
+}
+
+/**
+ * The account's approval generation as last verified by the server, or null when there is no
+ * verdict on this device. Stamped on every case, message and screenshot at the moment it is
+ * queued; the rules refuse a stamp that is not the account's current one.
+ */
+fun interface ApprovalGeneration {
+    suspend fun current(): Long?
+}
+
+/** The account's approval as the server holds it at the moment of asking. */
+data class ServerApproval(val approved: Boolean, val generation: Long)
+
 /** Firestore, as far as the feedback channel is concerned. */
 interface CaseRemote {
 
-    suspend fun createCase(uid: String, caseId: String, title: String, body: String): RemoteResult
+    /**
+     * The account's approval read from the server itself, never from a cache. Null when the
+     * question could not be asked. Asked after a refusal only, to tell an approval that moved
+     * under a row from a refusal that has nothing to do with approval.
+     */
+    suspend fun approvalOf(uid: String): ServerApproval?
+
+    /** Phase one: the case, `submitted`, stamped with [generation]. */
+    suspend fun createCase(uid: String, caseId: String, title: String, body: String, generation: Long): RemoteResult
 
     /**
-     * True when the case exists and is [uid]'s. False when it is absent: the rules refuse a
-     * get on a case that does not exist, so a refusal is read as "not there". Null when the
-     * question could not be asked.
+     * Phase two, idempotent: `submitted` becomes `accepted`, and an already accepted case is
+     * success. Read and write in one transaction, so a lost acknowledgement costs nothing.
      */
-    suspend fun caseIsMine(uid: String, caseId: String): Boolean?
+    suspend fun finalizeCase(caseId: String, generation: Long): RemoteResult
 
-    suspend fun addMessage(uid: String, caseId: String, messageId: String, body: String): RemoteResult
+    /** Where the case stands. Null when the question could not be asked. */
+    suspend fun caseState(uid: String, caseId: String): RemoteState?
 
-    /** As [caseIsMine], for one of the owner's own messages. */
-    suspend fun messageIsMine(uid: String, caseId: String, messageId: String): Boolean?
+    /** Phase one: the message alone, `submitted`. The case is not touched until phase two. */
+    suspend fun addMessage(uid: String, caseId: String, messageId: String, body: String, generation: Long): RemoteResult
+
+    /**
+     * Phase two, idempotent: the message becomes `accepted` and the case's activity revision
+     * moves on by one, in one transaction. An already accepted message is success and moves
+     * nothing, so a retry never counts the same message twice.
+     */
+    suspend fun finalizeMessage(caseId: String, messageId: String, generation: Long): RemoteResult
+
+    /** As [caseState], for one of the owner's own messages. */
+    suspend fun messageState(uid: String, caseId: String, messageId: String): RemoteState?
 
     /**
      * Reservation, quota, attachment document and the counters on case and message, in one
@@ -91,7 +136,8 @@ interface CaseRemote {
         caseId: String,
         messageId: String?,
         aid: String,
-        maxBytes: Int
+        maxBytes: Int,
+        generation: Long
     ): RemoteResult
 
     /**
