@@ -140,7 +140,8 @@ class AccessRepository @Inject constructor(
     internal suspend fun record(
         epoch: IdentityEpoch,
         seq: Long,
-        status: AccountStatus
+        status: AccountStatus,
+        approvalGeneration: Long = 0L
     ): Boolean {
         // A cheap early exit for an answer that is already obsolete before it reaches the
         // store. It is *not* the check that matters: the identity can move again between here
@@ -150,8 +151,10 @@ class AccessRepository @Inject constructor(
         // Heard before the commit, so its effect is on disk before the verdict is. A listener
         // that fails must not cost a revocation its place on disk, so its failure ends here.
         try {
-            val previous = accessStateStore.snapshot(epoch.uid).first()?.status
-            verdictListener.beforeRecord(epoch.uid, previous, status)
+            val previous = accessStateStore.snapshot(epoch.uid).first()
+            verdictListener.beforeRecord(
+                epoch.uid, previous?.status, status, previous?.approvalGeneration, approvalGeneration
+            )
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
@@ -164,7 +167,8 @@ class AccessRepository @Inject constructor(
                 verifiedAtWallMs = clock.wallMs(),
                 verifiedAtElapsedMs = clock.elapsedMs(),
                 epochToken = epoch.token,
-                seq = seq
+                seq = seq,
+                approvalGeneration = approvalGeneration
             )
         ) { current ->
             // Re-runnable by contract: this reads its argument and the live identity, nothing

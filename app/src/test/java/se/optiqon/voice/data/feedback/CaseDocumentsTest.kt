@@ -18,22 +18,53 @@ class CaseDocumentsTest {
 
     @Test
     fun `a new case carries exactly the keys the rules allow`() {
-        val doc = CaseDocuments.newCase("u", "t", "b")
+        val doc = CaseDocuments.newCase("u", "t", "b", 3)
         assertEquals(
             setOf(
                 "ownerUid", "title", "body", "statusCache", "lastStatusEventId",
-                "attachmentCount", "activeAttachmentCount", "createdAt", "updatedAt", "lastActivityAt"
+                "attachmentCount", "activeAttachmentCount", "createdAt", "updatedAt", "lastActivityAt",
+                "state", "activityRev", "approvalGeneration"
             ),
             doc.keys
         )
         assertEquals("Mottaget", doc["statusCache"])
         assertEquals(null, doc["lastStatusEventId"])
+        assertEquals("submitted", doc["state"])
+        assertEquals(0L, doc["activityRev"])
+        assertEquals(3L, doc["approvalGeneration"])
+    }
+
+    @Test
+    fun `phase two touches only what the rules let it, for a case and a message alike`() {
+        val doc = CaseDocuments.finalize(3)
+        assertEquals(setOf("state", "acceptedAt", "approvalGeneration"), doc.keys)
+        assertEquals("accepted", doc["state"])
+        assertEquals(3L, doc["approvalGeneration"])
+    }
+
+    @Test
+    fun `a message's phase two moves the case one step and names the message`() {
+        val doc = CaseDocuments.messageBump(4, "m1")
+        assertEquals(setOf("activityRev", "lastRelevantAt", "lastActivityAt", "activityFor"), doc.keys)
+        assertEquals(5L, doc["activityRev"])
+        assertEquals("m1", doc["activityFor"])
+    }
+
+    @Test
+    fun `a document with no state is as final as an accepted one`() {
+        assertTrue(CaseDocuments.isAccepted(null))
+        assertTrue(CaseDocuments.isAccepted("accepted"))
+        assertTrue(!CaseDocuments.isAccepted("submitted"))
     }
 
     @Test
     fun `a message is a public message by its author`() {
-        val doc = CaseDocuments.newMessage("u", "b")
-        assertEquals(setOf("type", "visibility", "actorUid", "body", "attachmentCount", "createdAt"), doc.keys)
+        val doc = CaseDocuments.newMessage("u", "b", 3)
+        assertEquals(
+            setOf("type", "visibility", "actorUid", "body", "attachmentCount", "createdAt", "state", "approvalGeneration"),
+            doc.keys
+        )
+        assertEquals("submitted", doc["state"])
         assertEquals("message", doc["type"])
         assertEquals("public", doc["visibility"])
         assertEquals("u", doc["actorUid"])
@@ -41,8 +72,8 @@ class CaseDocumentsTest {
 
     @Test
     fun `an attachment always names its message, even when there is none`() {
-        val doc = CaseDocuments.attachment("u", "c", null, 10)
-        assertEquals(setOf("ownerUid", "caseId", "messageId", "maxBytes", "createdAt"), doc.keys)
+        val doc = CaseDocuments.attachment("u", "c", null, 10, 3)
+        assertEquals(setOf("ownerUid", "caseId", "messageId", "maxBytes", "createdAt", "approvalGeneration"), doc.keys)
         assertTrue(doc.containsKey("messageId"))
         assertEquals(10L, doc["maxBytes"])
     }
@@ -51,18 +82,23 @@ class CaseDocumentsTest {
     fun `the reservation matches the attachment's ceiling`() {
         val doc = CaseDocuments.reservation("c", 10)
         assertEquals(setOf("caseId", "maxBytes", "createdAt"), doc.keys)
-        assertEquals(CaseDocuments.attachment("u", "c", null, 10)["maxBytes"], doc["maxBytes"])
+        assertEquals(CaseDocuments.attachment("u", "c", null, 10, 0)["maxBytes"], doc["maxBytes"])
     }
 
     @Test
     fun `case and message counters touch only what the rules let them`() {
-        val caseKeys = setOf("activeAttachmentCount", "attachmentCount", "attachmentFor", "lastActivityAt")
-        val onOpening = CaseDocuments.caseSlotTaken("a", active = 2, opening = 1, onOpening = true)
+        val caseKeys = setOf(
+            "activeAttachmentCount", "attachmentCount", "attachmentFor", "lastActivityAt",
+            "activityRev", "lastRelevantAt"
+        )
+        val onOpening = CaseDocuments.caseSlotTaken("a", active = 2, opening = 1, onOpening = true, rev = 7)
         assertTrue(caseKeys.containsAll(onOpening.keys))
         assertEquals(3L, onOpening["activeAttachmentCount"])
         assertEquals(2L, onOpening["attachmentCount"])
+        assertEquals("a screenshot is one step of activity", 8L, onOpening["activityRev"])
+        assertTrue("lastRelevantAt" in onOpening)
 
-        val onReply = CaseDocuments.caseSlotTaken("a", active = 2, opening = 1, onOpening = false)
+        val onReply = CaseDocuments.caseSlotTaken("a", active = 2, opening = 1, onOpening = false, rev = 7)
         assertTrue("a reply's screenshot leaves the opening count alone", "attachmentCount" !in onReply)
 
         assertEquals(
@@ -75,7 +111,10 @@ class CaseDocumentsTest {
         )
         assertEquals(2L, CaseDocuments.caseSlotReleased("a", 3)["activeAttachmentCount"])
         assertEquals(setOf("deleteRequestedAt"), CaseDocuments.tombstone().keys)
-        assertEquals(setOf("lastActivityAt"), CaseDocuments.touch().keys)
+        assertTrue(
+            "taking a screenshot down is not activity",
+            "activityRev" !in CaseDocuments.caseSlotReleased("a", 3)
+        )
     }
 
     @Test

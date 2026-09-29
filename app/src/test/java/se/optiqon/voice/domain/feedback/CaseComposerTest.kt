@@ -14,6 +14,7 @@ class CaseComposerTest {
     private val outbox = MemoryOutboxDao()
     private val auth = SwitchableAuth("uid-a")
     private var approved = true
+    private var gen: Long? = 4L
     private var scheduled = 0
     private var ids = 0
 
@@ -21,6 +22,7 @@ class CaseComposerTest {
         outbox = outbox,
         auth = auth,
         approval = { approved },
+        generation = { gen },
         scheduler = { scheduled++ },
         build = FeedbackBuildInfo("1.2.3", 34, "Pixel Test"),
         now = { 1_000L },
@@ -30,6 +32,24 @@ class CaseComposerTest {
     private fun image(name: String = "x.png", bytes: Int = 100) = PreparedImage(name, "image/png", bytes)
 
     private fun decoded() = outbox.rows.map { CaseOutboxPayloads.decode(it.kind, it.payload) }
+
+    @Test
+    fun `every case, message and screenshot row carries the generation it was written under`() = runTest {
+        val caseId = (composer.createCase("hej", listOf(image("a.png"))) as ComposeOutcome.Queued).caseId
+        composer.addMessage(caseId, "svar", listOf(image("b.png")))
+
+        val stamps = decoded().map { (it as CasePayload.Stamped).generation }
+        assertEquals(listOf(4L, 4L, 4L, 4L), stamps)
+    }
+
+    @Test
+    fun `a generation survives the trip through the queue, and a row without one reads back as none`() {
+        val msg = CasePayload.Message("c", "m", "b", 9L)
+        assertEquals(msg, CaseOutboxPayloads.decode(CaseOutboxPayloads.KIND_MESSAGE, CaseOutboxPayloads.encode(msg)))
+        val old = CasePayload.CreateCase("c", "t", "b")
+        val back = CaseOutboxPayloads.decode(CaseOutboxPayloads.KIND_CREATE, CaseOutboxPayloads.encode(old))
+        assertEquals(null, (back as CasePayload.Stamped).generation)
+    }
 
     @Test
     fun `a new case is queued before its screenshots, one millisecond apart`() = runTest {
@@ -168,7 +188,7 @@ class CaseComposerTest {
     @Test
     fun `an action that cannot be written whole leaves nothing behind`() = runTest {
         val clash = CaseComposer(
-            outbox = outbox, auth = auth, approval = { true }, scheduler = { scheduled++ },
+            outbox = outbox, auth = auth, approval = { true }, generation = { 4L }, scheduler = { scheduled++ },
             build = FeedbackBuildInfo("1.2.3", 34, "Pixel Test"), now = { 1_000L },
             newId = { "same" }
         )

@@ -117,7 +117,8 @@ class RegistrationRepository @Inject constructor(
 
         // A missing document is an answer: the server looked and there is no such user.
         val status = if (snapshot.exists()) parseStatus(snapshot.getString("status")) else AccountStatus.NEW
-        accessRepository.record(epoch, seq, status)
+        val generation = if (snapshot.exists()) snapshot.getLong("approvalGeneration") ?: 0L else 0L
+        accessRepository.record(epoch, seq, status, generation)
         return RefreshOutcome.Confirmed(status)
     }
 

@@ -13,9 +13,34 @@ import com.google.gson.JsonParser
 sealed interface CasePayload {
     val caseId: String
 
-    data class CreateCase(override val caseId: String, val title: String, val body: String) : CasePayload
+    /**
+     * The account's approval generation when this row was queued, or null for a row written
+     * before rows carried one. A row is only sent under the generation it was written in; one
+     * whose stamp is missing or stale waits for its owner to send it again. See
+     * [CaseComposer.releaseHeld].
+     */
+    sealed interface Stamped : CasePayload {
+        val generation: Long?
+        fun restamp(generation: Long): Stamped
+    }
 
-    data class Message(override val caseId: String, val messageId: String, val body: String) : CasePayload
+    data class CreateCase(
+        override val caseId: String,
+        val title: String,
+        val body: String,
+        override val generation: Long? = null
+    ) : Stamped {
+        override fun restamp(generation: Long) = copy(generation = generation)
+    }
+
+    data class Message(
+        override val caseId: String,
+        val messageId: String,
+        val body: String,
+        override val generation: Long? = null
+    ) : Stamped {
+        override fun restamp(generation: Long) = copy(generation = generation)
+    }
 
     /** [file] is a bare file name inside the owner's own attachments directory. */
     data class Upload(
@@ -24,8 +49,11 @@ sealed interface CasePayload {
         val aid: String,
         val file: String,
         val mime: String,
-        val bytes: Int
-    ) : CasePayload
+        val bytes: Int,
+        override val generation: Long? = null
+    ) : Stamped {
+        override fun restamp(generation: Long) = copy(generation = generation)
+    }
 
     data class Tombstone(override val caseId: String, val aid: String) : CasePayload
 }
@@ -65,6 +93,7 @@ object CaseOutboxPayloads {
             }
             is CasePayload.Tombstone -> addProperty("aid", payload.aid)
         }
+        if (payload is CasePayload.Stamped) payload.generation?.let { addProperty("gen", it) }
     }.toString()
 
     fun decode(kind: String, json: String): CasePayload? {
@@ -78,17 +107,24 @@ object CaseOutboxPayloads {
         fun int(name: String): Int? =
             o.get(name)?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }
                 ?.let { runCatching { it.asInt }.getOrNull() }
+        fun long(name: String): Long? =
+            o.get(name)?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }
+                ?.let { runCatching { it.asLong }.getOrNull() }
+        val gen = long("gen")
         val caseId = str("caseId") ?: return null
         return when (kind) {
-            KIND_CREATE -> CasePayload.CreateCase(caseId, str("title") ?: return null, str("body") ?: return null)
-            KIND_MESSAGE -> CasePayload.Message(caseId, str("messageId") ?: return null, str("body") ?: return null)
+            KIND_CREATE -> CasePayload.CreateCase(caseId, str("title") ?: return null, str("body") ?: return null, gen)
+            KIND_MESSAGE -> CasePayload.Message(
+                caseId, str("messageId") ?: return null, str("body") ?: return null, gen
+            )
             KIND_UPLOAD -> CasePayload.Upload(
                 caseId = caseId,
                 messageId = str("messageId"),
                 aid = str("aid") ?: return null,
                 file = str("file") ?: return null,
                 mime = str("mime") ?: return null,
-                bytes = int("bytes") ?: return null
+                bytes = int("bytes") ?: return null,
+                generation = gen
             )
             KIND_DELETE -> CasePayload.Tombstone(caseId, str("aid") ?: return null)
             else -> null

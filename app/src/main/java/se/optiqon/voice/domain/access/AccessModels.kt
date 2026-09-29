@@ -46,7 +46,14 @@ data class AccessSnapshot(
     val verifiedAtWallMs: Long,
     val verifiedAtElapsedMs: Long,
     val epochToken: Long = 0L,
-    val seq: Long = 0L
+    val seq: Long = 0L,
+    /**
+     * `users/{uid}.approvalGeneration` as the server last reported it: raised by one on every
+     * approval, left alone by a revocation. Feedback stamps it on what it queues, and the rules
+     * refuse a write whose stamp is not the current one -- so a report written before a
+     * revocation cannot ride a later reapproval out.
+     */
+    val approvalGeneration: Long = 0L
 )
 
 enum class BlockReason {

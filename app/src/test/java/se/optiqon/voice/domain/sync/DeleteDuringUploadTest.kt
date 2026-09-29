@@ -54,6 +54,7 @@ class DeleteDuringUploadTest {
         outbox = outbox,
         auth = auth,
         approval = { true },
+        generation = { 0L },
         scheduler = { scheduled++ },
         build = FeedbackBuildInfo("1", 34, "t"),
         now = { 10_000L },
@@ -77,10 +78,10 @@ class DeleteDuringUploadTest {
 
     private val gatedRemote = object : CaseRemote by remote {
         override suspend fun commitAttachment(
-            uid: String, caseId: String, messageId: String?, aid: String, maxBytes: Int
+            uid: String, caseId: String, messageId: String?, aid: String, maxBytes: Int, generation: Long
         ): RemoteResult {
             hold(GatePoint.COMMIT)
-            return remote.commitAttachment(uid, caseId, messageId, aid, maxBytes)
+            return remote.commitAttachment(uid, caseId, messageId, aid, maxBytes, generation)
         }
     }
 
@@ -98,7 +99,7 @@ class DeleteDuringUploadTest {
 
     private fun tombstonedAt(path: String) = path.split("/").takeLast(2).joinToString("/") in remote.tombstoned
 
-    private val sender by lazy { CaseOutboxSender(gatedRemote, gatedBucket, files, auth) }
+    private val sender by lazy { CaseOutboxSender(gatedRemote, gatedBucket, files, auth, { 0L }) }
     private fun flush() = OutboxFlush(outbox, auth, { true }, sender, remoteEnabled = true)
 
     private val path = AttachmentStore.path("uid-a", "c1", "a1")
@@ -109,7 +110,7 @@ class DeleteDuringUploadTest {
     private suspend fun queuedUpload() {
         remote.cases["c1"] = "uid-a" // the case itself has already left the device
         File(files.attachmentsDir("uid-a"), "a1.png").writeBytes(ByteArray(16) { it.toByte() })
-        val upload = CasePayload.Upload("c1", null, "a1", "a1.png", "image/png", 16)
+        val upload = CasePayload.Upload("c1", null, "a1", "a1.png", "image/png", 16, generation = 0L)
         outbox.insert(
             OutboxEntry(
                 id = "up",

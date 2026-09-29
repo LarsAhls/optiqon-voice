@@ -474,3 +474,41 @@ The emulator mints no token on a plain upload. Neither fact says anything about 
   - **P6**: does a token URL fail after tombstone and strip?
   - **P7**: server-actor latency against the candidate SLA;
   - **P8**: revocation is refused by the cloud (the open item in the section above).
+
+## FS-S12 — Feedback lifecycle (two-phase, approvalGeneration, withdrawal intents)
+
+Written in `firestore.rules` and the client; **not deployed**. Prod still runs the Mission 1
+ruleset, so there are no case documents to backfill.
+
+### The model
+
+- A case or owner message is created `state: 'submitted'` and becomes `accepted` by a separate
+  finalize write. `accepted` is one-way; no branch writes `state` or `acceptedAt` afterwards.
+  Readers see only `accepted`; the owner reads back its own `submitted` to resume a lost ACK.
+- Every create and finalize carries `approvalGeneration`, which must equal
+  `users/{uid}.approvalGeneration` (missing = 0). A writer approve from `pending | revoked |
+  rejected` must bump it by exactly one; revoke and reject leave it. The client holds a row
+  stamped with an older generation (HELD) and restamps it only on an explicit Send.
+- `activityRev` + `lastRelevantAt` move by exactly one, only with: owner-message finalize,
+  screenshot commit, public writer reply, status change. Never with internal note, read, system,
+  retention, close or tombstone.
+- `retentionState == 'purging'` and `withdrawnAt` refuse every relevant write.
+- `users/{uid}/withdrawals/{targetId}`: ID-only, create-only intent, open to a verified account in
+  any status (M3=A), self-healing window of 20/h. It blocks later create/finalize/attach of that
+  id. It **deletes nothing** and cannot change anything `accepted`.
+
+### What the server (S4) must hold, because the Admin SDK bypasses these rules
+
+- Act on a withdrawal only for a target the intent's uid owns, and only while it is `submitted`.
+  An `accepted` case, message or attachment is never deleted by a withdrawal.
+- Any server approve writes `approvalGeneration = old + 1` in the same transaction as the status
+  (`scripts/admin/m1-bootstrap.mjs` does); a repeated approve is a no-op.
+- Any server write that counts as activity bumps `activityRev` by one and sets
+  `lastRelevantAt`; none of the non-bumping kinds above may.
+
+### Still open for FS-G
+
+Rules deploy; `approvalGeneration` backfill on existing prod users; the S4 server (withdrawal
+handler, submitted sweep, retention R1–R6); live verification. A screenshot commit refused because
+the server moved the generation between the client's check and the write is still treated as
+final (Permanent) by the client — a narrow race, noted rather than handled.

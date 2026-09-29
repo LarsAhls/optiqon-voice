@@ -84,9 +84,9 @@ class AccessFixture(
     }
 
     /** Stores a server verdict as of now, the only way a snapshot is ever legitimately made. */
-    suspend fun recordServerVerdict(status: AccountStatus): Boolean {
+    suspend fun recordServerVerdict(status: AccountStatus, generation: Long = 0L): Boolean {
         val epoch = activeIdentity.current.value ?: return false
-        return repository.record(epoch, activeIdentity.nextSeq(), status)
+        return repository.record(epoch, activeIdentity.nextSeq(), status, generation)
     }
 }
 
