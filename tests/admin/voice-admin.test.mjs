@@ -32,6 +32,12 @@ const AUTH = { [ADMIN_EMAIL]: 'lars', 'tester@example.com': 'tester', 'other@exa
 let claimStore;
 let auth;
 let storage;
+let storageOpens;
+/** delete-account's on-demand Storage: counts how often a command asked for it. */
+const openStorage = async () => {
+  storageOpens += 1;
+  return storage;
+};
 const claims = {
   async get(uid) {
     return claimStore.get(uid) ?? {};
@@ -42,7 +48,7 @@ const claims = {
 };
 const deps = (over = {}) => ({
   db, FieldValue, identity: { email: ADMIN_EMAIL }, lookupUid: async (e) => AUTH[e] ?? null,
-  claims, auth, storage, log: () => {}, ...over,
+  claims, auth, openStorage, log: () => {}, ...over,
 });
 const go = (args, over) => run({ projectId: TARGET_PROJECT, ...args, deps: deps(over) });
 const peek = async (path) => {
@@ -59,6 +65,7 @@ beforeEach(async () => {
   await clear();
   claimStore = new Map();
   storage = memoryStorage();
+  storageOpens = 0;
   auth = memoryAuth({ tester: { email: 'tester@example.com' } });
   const t = Timestamp.now();
   await db.doc('config/counters').set({ approvedUsers: 2, seatFor: 'tester' });
@@ -231,6 +238,44 @@ test('delete-account: dry run by default; apply by email deletes; self and misma
   assert.equal(auth.store.has('tester'), false);
   assert.deepEqual(await peek('config/counters'), { approvedUsers: 1, seatFor: 'tester' });
   assert.ok(await peek('users/lars'));
+});
+
+test('delete-account works through the Storage adapter it opens for itself, once per run', async () => {
+  storage.put('case-attachments/tester/c9/a1');
+  const dry = await go({ command: 'delete-account', target: 'tester@example.com' });
+  assert.equal(dry.applied, false);
+  assert.equal(storageOpens, 1);
+  assert.ok(storage.objects.has('case-attachments/tester/c9/a1'), 'a dry run deletes nothing');
+
+  const r = await go({ command: 'delete-account', target: 'tester@example.com', apply: true });
+  assert.equal(r.applied, true);
+  assert.equal(storageOpens, 2);
+  assert.ok(storage.calls.some(([op, p]) => op === 'list' && p === 'case-attachments/tester/'), 'the opened adapter was used');
+  assert.equal(storage.objects.has('case-attachments/tester/c9/a1'), false);
+  // Byte reads are impossible by construction: the adapter has no such operation.
+  assert.ok(storage.calls.every(([op]) => ['list', 'exists', 'remove'].includes(op)));
+});
+
+// FS-G C.4 regression: the backfill was stopped because the CLI wiring built a Cloud Storage
+// client for every command, and that client refused the `firebase login` credential. Only
+// delete-account may open Storage; every other command must run with it unreachable.
+test('no command but delete-account opens Storage', async () => {
+  const unreachable = async () => {
+    throw new Error('Storage must not be opened by this command');
+  };
+  await seedCase();
+  const runs = [
+    { command: 'backfill-generation' },
+    { command: 'backfill-generation', apply: true },
+    { command: 'grant-admin', target: 'tester@example.com', role: 'reader' },
+    { command: 'revoke-admin', target: 'tester@example.com' },
+    { command: 'reply', target: 'c1', eventId: 'r-1', body: 'hej' },
+    { command: 'set-status', target: 'c1', eventId: 's-1', toStatus: 'Planerat' },
+    { command: 'note', target: 'c1', eventId: 'n-1', body: 'intern' },
+    { command: 'close', target: 'c1' },
+  ];
+  for (const args of runs) await go(args, { openStorage: unreachable });
+  assert.equal((await peek('users/tester')).approvalGeneration, 0, 'the backfill still did its work');
 });
 
 test('delete-account: a uid target reaches leftovers whose Auth account is already gone', async () => {
