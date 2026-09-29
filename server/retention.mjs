@@ -107,9 +107,11 @@ export async function deleteAll(db, query) {
  * one order that is safe to interrupt: screenshots first (tombstone → Storage delete), then
  * every child document, the owner's read marker, withdrawal intents and notification send
  * markers for the case, and the case document last — so an interrupted run is found again.
- * Shared by retention and account deletion (M4).
+ * Shared by retention and account deletion (M4). Account deletion passes `tolerateInconsistent`:
+ * it has already emptied the owner's whole Storage prefix, so an attachment document that does
+ * not name its own case or owner is removed with the rest instead of blocking the deletion.
  */
-export async function eraseCase(deps, caseId, ownerUid) {
+export async function eraseCase(deps, caseId, ownerUid, { tolerateInconsistent = false } = {}) {
   const { db, FieldValue } = deps;
   const caseRef = db.doc(`cases/${caseId}`);
   const atts = await caseRef.collection('attachments').get();
@@ -122,7 +124,9 @@ export async function eraseCase(deps, caseId, ownerUid) {
   }
   for (const d of atts.docs) {
     const { outcome } = await purgeAttachment(deps, caseId, d.id);
-    if (![PURGE.PURGED, PURGE.ALREADY, PURGE.ABSENT].includes(outcome)) {
+    const done = [PURGE.PURGED, PURGE.ALREADY, PURGE.ABSENT];
+    if (tolerateInconsistent) done.push(PURGE.INCONSISTENT);
+    if (!done.includes(outcome)) {
       throw new Error(`screenshot ${d.id} of ${caseId} not purged: ${outcome}`);
     }
   }
