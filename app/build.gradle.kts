@@ -82,6 +82,19 @@ android {
         // the sign-in client reports as "email link unavailable" rather than sending a link
         // that continues to nowhere.
         buildConfigField("String", "FIREBASE_PROJECT_ID", "\"${firebaseProjectId ?: ""}\"")
+
+        // Feedback screenshots live in one named bucket in europe-north2. google-services.json
+        // names a default bucket that does not exist, so the SDK is never asked for its default
+        // instance -- FeedbackStorageContractTest holds that line.
+        buildConfigField("String", "FEEDBACK_BUCKET_URL", "\"gs://optiqon-voice-47498-eun2\"")
+        // Off until the feedback rules are published and probed (FS-G). While off, a case is
+        // queued on the device and nothing is sent; -Pfeedback.remote=true turns sending on
+        // for a build that is pointed at rules that accept it.
+        buildConfigField(
+            "boolean",
+            "FEEDBACK_REMOTE_ENABLED",
+            (findProperty("feedback.remote")?.toString() == "true").toString()
+        )
     }
 
     signingConfigs {
@@ -436,6 +449,7 @@ dependencies {
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.auth)
     implementation(libs.firebase.firestore)
+    implementation(libs.firebase.storage)
 
     // Sign-in and the outbox worker
     implementation(libs.androidx.credentials)

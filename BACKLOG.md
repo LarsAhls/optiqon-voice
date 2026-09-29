@@ -101,3 +101,21 @@ Deferred. Not started, and not to be started without an explicit decision.
 
 If OPTIQON Voice is moved into a new `LarsAhls/optiqon-voice` repository instead of renaming
 this repository, migrate this backlog file with it.
+
+## Feedback screenshots — orphaned local copies are only swept from the Feedback screen
+
+**Status:** Open, residual risk accepted in FS-1 PR-B (2026-09-28). Not a leak.
+
+A screenshot copy prepared for a draft whose process died before the draft was queued is
+referenced by no outbox row. `FeedbackViewModel.sweepOrphans` removes such copies, but only when
+the same account next opens *Report a problem*, and only copies written before that visit began
+(the guard that keeps a draft being put together right now out of reach). Until then the copy
+stays in that account's own app-private attachments directory: it is never sent (nothing
+references it), never visible to another account (per-account storage root), and gone with the
+app's data. If the owner never reopens the screen, it stays indefinitely.
+
+Not moved to a safer lifecycle point in PR-B because no such point has a draft-safe guard for
+free: a sweep in `OutboxWorker` or at app start runs while a draft may be open, so it needs an
+age threshold of its own (and a decision on its length). Candidate for the next Feedback
+Mission: sweep per signed-in account at app start or at the end of an outbox run, restricted to
+copies older than a fixed age, with a test that a copy of an open draft survives it.

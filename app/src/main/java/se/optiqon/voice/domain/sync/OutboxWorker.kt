@@ -12,16 +12,14 @@ import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
-import se.optiqon.voice.data.db.dao.OutboxDao
-import se.optiqon.voice.data.db.entity.OutboxState
-import se.optiqon.voice.domain.access.AuthGateway
 
 /**
  * Sends whatever the signed-in account has queued, and leaves everything else alone.
  *
  * A run that finds no eligible rows is a success, not a failure: rows belonging to a
  * signed-out account are dormant, and dormant is the correct resting state. The worker never
- * deletes a row and never touches the file or draft a row refers to.
+ * deletes a row. The one file it removes is a screenshot copy the app itself prepared, and only
+ * once the bucket is confirmed to hold it. The rules of a pass live in [OutboxFlush].
  */
 class OutboxWorker(
     context: Context,
@@ -31,38 +29,29 @@ class OutboxWorker(
     @EntryPoint
     @InstallIn(SingletonComponent::class)
     interface Dependencies {
-        fun outboxDao(): OutboxDao
-        fun authGateway(): AuthGateway
-        fun sender(): OutboxSender
+        fun flush(): OutboxFlush
     }
 
     override suspend fun doWork(): Result {
         val deps = EntryPointAccessors.fromApplication(applicationContext, Dependencies::class.java)
-        val uid = deps.authGateway().currentUid ?: return Result.success()
-
-        var retry = false
-        for (entry in OutboxPolicy.flushable(deps.outboxDao().pendingFor(uid), uid)) {
-            // The uid can change mid-run if the user signs out while we work; stop rather than
-            // send the rest of the queue under whoever is signed in now.
-            if (deps.authGateway().currentUid != uid) return Result.success()
-
-            when (val failure = deps.sender().send(entry)) {
-                null -> deps.outboxDao()
-                    .updateState(entry.id, OutboxState.SENT, entry.attempts + 1, null)
-                else -> {
-                    val updated = OutboxPolicy.afterFailure(entry, failure)
-                    deps.outboxDao()
-                        .updateState(entry.id, updated.state, updated.attempts, updated.lastError)
-                    retry = retry || OutboxPolicy.shouldRetry(failure)
-                }
-            }
+        return when (deps.flush().run()) {
+            OutboxFlush.Result.RETRY -> Result.retry()
+            OutboxFlush.Result.DONE -> Result.success()
         }
-        return if (retry) Result.retry() else Result.success()
     }
 
     companion object {
         private const val WORK_NAME = "outbox"
 
+        /**
+         * Asks for a run after anything already queued or running, never instead of it.
+         *
+         * A run in flight may already have taken its last look at the queue when a row lands —
+         * a screenshot removed while its upload was inside the sender. Keeping only the existing
+         * run would leave that tombstone waiting for some unrelated later schedule, so each
+         * request is chained behind the current one. A failed or cancelled chain is replaced.
+         * The cost is an extra, cheap pass that finds nothing to send.
+         */
         fun enqueue(context: Context) {
             val request = OneTimeWorkRequestBuilder<OutboxWorker>()
                 .setConstraints(
@@ -70,7 +59,7 @@ class OutboxWorker(
                 )
                 .build()
             WorkManager.getInstance(context)
-                .enqueueUniqueWork(WORK_NAME, ExistingWorkPolicy.KEEP, request)
+                .enqueueUniqueWork(WORK_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request)
         }
     }
 }

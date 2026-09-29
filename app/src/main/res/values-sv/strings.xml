@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Swedish for the account and session screens only, per rev. 11.
+    Swedish for the account and session screens, per rev. 11, and for Report a problem (FS-1):
+    that screen says what is sent, what stays on the device and what a deleted screenshot means.
 
     English stays the default in values/, so on a Swedish device the app is mixed-language: the
     screens below are Swedish, the rest is not. That is a deliberate, accepted state for this
@@ -75,4 +76,57 @@
     <string name="account_status_rejected">Kontot fick inte åtkomst.</string>
     <string name="account_status_revoked">Åtkomsten har återkallats för det här kontot.</string>
     <string name="account_status_grace_expired">Servern har varit onåbar så länge att diktering är pausad.</string>
+
+    <string name="feedback_title">Rapportera ett problem</string>
+    <string name="feedback_body">Bara det du skriver och de skärmbilder du väljer skickas, tillsammans med appversion och telefonmodell. Inget du har dikterat och inget ljud följer med.</string>
+    <string name="feedback_local_only">Att skicka till Optiqon är inte påslaget i den här versionen. Det du skriver sparas på enheten tills det är det.</string>
+    <string name="feedback_new">Ny rapport</string>
+    <string name="feedback_cases_eyebrow">Dina rapporter</string>
+    <string name="feedback_empty_title">Inga rapporter än</string>
+    <string name="feedback_empty_body">När något inte fungerar, beskriv det här och lägg till en skärmbild om det hjälper.</string>
+    <string name="feedback_remote_error">Kunde inte hämta dina rapporter från Optiqon. Visar det som finns på enheten.</string>
+    <string name="feedback_not_approved">Ditt konto är inte godkänt, så ingen ny rapport kan köas.</string>
+    <string name="feedback_pill_open">Öppen</string>
+    <string name="feedback_pill_closed">Stängd</string>
+    <string name="feedback_pill_waiting">Väntar på att skickas</string>
+    <string name="feedback_pill_on_device">På enheten</string>
+    <string name="feedback_pill_failed">Inte skickad</string>
+    <string name="feedback_legacy_eyebrow">Sparat tidigare – inte skickat</string>
+    <string name="feedback_legacy_body">Skrivet innan rapporter kunde skickas. Inget här skickas om du inte själv väljer det.</string>
+    <string name="feedback_legacy_send">Skicka</string>
+    <string name="feedback_legacy_delete">Ta bort</string>
+    <string name="feedback_message_label">Vad hände</string>
+    <string name="feedback_message_hint">Vad du gjorde, vad du väntade dig och vad som hände i stället.</string>
+    <string name="feedback_reply_label">Svara</string>
+    <string name="feedback_screenshots">Skärmbilder %1$d/%2$d</string>
+    <string name="feedback_screenshots_hint">PNG, JPEG eller WebP. Plats- och kamerauppgifter tas bort innan något sparas.</string>
+    <string name="feedback_add_screenshot">Lägg till skärmbild</string>
+    <string name="feedback_remove_screenshot">Ta bort skärmbild</string>
+    <string name="feedback_send">Skicka</string>
+    <string name="feedback_save_local">Spara på enheten</string>
+    <string name="feedback_timeline_eyebrow">Händelser</string>
+    <string name="feedback_from_you">Du</string>
+    <string name="feedback_from_optiqon">Optiqon</string>
+    <string name="feedback_status_changed">Status ändrad till %1$s</string>
+    <string name="feedback_detail_on_device">Rapporten har inte nått Optiqon än.</string>
+    <string name="feedback_detail_error">Delar av rapporten kunde inte hämtas.</string>
+    <string name="feedback_detail_closed">Rapporten är stängd. Skriv en ny om problemet kommer tillbaka.</string>
+    <string name="feedback_loading">Hämtar…</string>
+    <string name="feedback_shot_pending">Väntar på uppladdning</string>
+    <string name="feedback_shot_upload_failed">Kunde inte laddas upp och försöks inte igen. Tryck för att ta bort den.</string>
+    <string name="feedback_shot_removing">Borttagning väntar – inte bekräftad än</string>
+    <string name="feedback_shot_remove_failed">Kunde inte tas bort. Tryck för att försöka igen.</string>
+    <string name="feedback_delete_screenshot">Ta bort skärmbild</string>
+    <string name="feedback_discard_queued">Ta bort innan den skickas</string>
+    <string name="feedback_empty">Skriv något först.</string>
+    <string name="feedback_too_long">Texten är längre än rutan tillåter. Korta den hellre än att låta den klippas.</string>
+    <string name="feedback_signed_out">Logga in först, så att rapporten sparas under ditt eget konto.</string>
+    <string name="feedback_notice_queued">Köad. Den skickas när telefonen är uppkopplad.</string>
+    <string name="feedback_notice_saved_locally">Sparad på enheten. Inget har laddats upp.</string>
+    <string name="feedback_notice_too_many_images">Högst 3 skärmbilder per meddelande.</string>
+    <string name="feedback_notice_image_unsupported">Bara PNG-, JPEG- och WebP-bilder kan läggas till.</string>
+    <string name="feedback_notice_image_unreadable">Bilden kunde inte läsas.</string>
+    <string name="feedback_notice_not_approved">Ditt konto är inte godkänt, så inget köades.</string>
+    <string name="feedback_notice_removed">Borttagen från enheten.</string>
+    <string name="feedback_notice_screenshot_removed">Skärmbilden är borttagen.</string>
 </resources>

@@ -13,11 +13,10 @@ import se.optiqon.voice.domain.feedback.FeedbackQueue
 import javax.inject.Singleton
 
 /**
- * The feedback channel's wiring — the queue only.
+ * The build details every report carries, and the earlier text-only queue.
  *
- * There is deliberately no `OutboxSender` binding here: `SyncModule` still provides the
- * placeholder, so a queued feedback row has nothing that could send it. See
- * `FirestoreFeedbackSender` for the two steps that switch the channel on, in order.
+ * [FeedbackQueue] is kept so that rows it saved can still be read and offered back to their
+ * owner. The case channel that actually sends lives in [FeedbackStorageModule].
  */
 @Module
 @InstallIn(SingletonComponent::class)
