@@ -5,6 +5,9 @@
 /** The one project this server may act on. Kept equal to the M1 bootstrap's lock by a test. */
 export const TARGET_PROJECT = 'optiqon-voice-47498';
 
+/** The one bucket screenshots live in (FS-S34 production gate, europe-north2). */
+export const TARGET_BUCKET = `${TARGET_PROJECT}-eun2`;
+
 /** The shortest a `submitted` leftover may live before the sweep removes it. */
 export const MIN_TTL_DAYS = 30;
 
@@ -16,10 +19,11 @@ export class ConfigError extends Error {
 }
 
 /**
- * Reads `PROJECT_ID` (or `GOOGLE_CLOUD_PROJECT`), `SWEEP_TTL_DAYS` and `APPLY`.
+ * Reads `PROJECT_ID` (or `GOOGLE_CLOUD_PROJECT`), `BUCKET`, `SWEEP_TTL_DAYS` and `APPLY`.
  *
  * Refuses any project but [TARGET_PROJECT], unless `FIRESTORE_EMULATOR_HOST` is set -- then the
  * run cannot reach a real database and any project id is accepted, which is what the tests use.
+ * `BUCKET` defaults to [TARGET_BUCKET] and, outside the emulator, may not be anything else.
  * Writes happen only when `APPLY` is exactly `true`; anything else is a dry run.
  */
 export function loadConfig(env = process.env) {
@@ -36,5 +40,10 @@ export function loadConfig(env = process.env) {
     throw new ConfigError(`SWEEP_TTL_DAYS must be a whole number >= ${MIN_TTL_DAYS}, got '${rawTtl}'`);
   }
 
-  return Object.freeze({ projectId, emulator, ttlDays, apply: env.APPLY === 'true' });
+  const bucket = env.BUCKET || TARGET_BUCKET;
+  if (!emulator && bucket !== TARGET_BUCKET) {
+    throw new ConfigError(`refusing bucket '${bucket}'; this server only knows '${TARGET_BUCKET}'`);
+  }
+
+  return Object.freeze({ projectId, emulator, bucket, ttlDays, apply: env.APPLY === 'true' });
 }
