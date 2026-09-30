@@ -162,18 +162,47 @@ class FirestoreCaseRemote(
         }.await()
     }
 
+    /**
+     * Written straight away, with nothing read first (M3): a revoked or pending owner may take
+     * its own screenshot down but may not read the case or the attachment, so the ids it knows
+     * locally are all it has. Both halves go in one batch, the slot back as a decrement the
+     * server applies; the rules hold it to exactly one less, on an open case only.
+     *
+     * A refusal is then looked into, as far as this account may still read: already taken down,
+     * or never committed, is success; a closed case is said to be one. An account that may not
+     * read keeps the refusal -- which a retry of a removal that did land also meets, so such an
+     * account can see REMOVE_FAILED for a screenshot that is in fact gone, never the reverse.
+     */
     override suspend fun tombstoneAttachment(caseId: String, aid: String): RemoteResult = write {
-        firestore.runTransaction { tx ->
-            val a = tx.get(attachment(caseId, aid))
+        try {
+            firestore.batch()
+                .update(attachment(caseId, aid), CaseDocuments.tombstone())
+                .update(case(caseId), CaseDocuments.caseSlotReleased(aid))
+                .commit().await()
+            RemoteResult.Ok
+        } catch (refused: FirebaseFirestoreException) {
+            if (refused.code != Code.PERMISSION_DENIED && refused.code != Code.NOT_FOUND) throw refused
+            afterRefusedTombstone(caseId, aid) ?: throw refused
+        }
+    }
+
+    /** Why a removal was refused, when this account may read enough to say; null otherwise. */
+    private suspend fun afterRefusedTombstone(caseId: String, aid: String): RemoteResult? = try {
+        val a = attachment(caseId, aid).get(Source.SERVER).await()
+        when {
             // Never committed: its upload was dropped before it left, and with the local copy
             // gone nothing can commit it later. There is nothing to take down.
-            if (!a.exists()) return@runTransaction RemoteResult.Ok
-            if (a.contains("deleteRequestedAt")) return@runTransaction RemoteResult.Ok
-            val active = tx.get(case(caseId)).getLong("activeAttachmentCount") ?: 0L
-            tx.update(attachment(caseId, aid), CaseDocuments.tombstone())
-            tx.update(case(caseId), CaseDocuments.caseSlotReleased(aid, active))
-            RemoteResult.Ok
-        }.await()
+            !a.exists() -> RemoteResult.Ok
+            // Taken down already, by an earlier attempt whose acknowledgement was lost.
+            a.contains("deleteRequestedAt") -> RemoteResult.Ok
+            case(caseId).get(Source.SERVER).await().contains("closedAt") ->
+                RemoteResult.Denied("The case is closed.")
+            else -> null
+        }
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (_: Exception) {
+        null
     }
 
     override suspend fun requestWithdrawal(
@@ -259,7 +288,9 @@ class FirestoreCaseRemote(
                 CaseAttachment(
                     id = d.id,
                     messageId = d.getString("messageId"),
-                    deleted = d.contains("deleteRequestedAt"),
+                    // A removal the SDK still holds locally is not one the server confirmed:
+                    // the batch applies at once to what this device reads back.
+                    deleted = d.contains("deleteRequestedAt") && !d.metadata.hasPendingWrites(),
                     createdAtMs = d.ms("createdAt")
                 )
             }
@@ -405,8 +436,9 @@ object CaseDocuments {
 
     fun tombstone(): Map<String, Any?> = mapOf("deleteRequestedAt" to now)
 
-    fun caseSlotReleased(aid: String, active: Long): Map<String, Any?> = mapOf(
-        "activeAttachmentCount" to active - 1,
+    /** One slot back, applied by the server: nothing is read first (M3). */
+    fun caseSlotReleased(aid: String): Map<String, Any?> = mapOf(
+        "activeAttachmentCount" to FieldValue.increment(-1L),
         "attachmentFor" to aid
     )
 

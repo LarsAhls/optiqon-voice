@@ -123,6 +123,8 @@
     <string name="feedback_shot_removing">Removal pending – not confirmed yet</string>
     <string name="feedback_shot_remove_failed">Could not be removed. Tap to try again.</string>
     <string name="feedback_delete_screenshot">Delete screenshot</string>
+    <string name="feedback_screenshot">Screenshot</string>
+    <string name="feedback_shot_closed_kept">The case is closed. The screenshot stays until it is cleared automatically.</string>
     <string name="feedback_discard_queued">Delete before it is sent</string>
     <string name="feedback_empty">Write something first.</string>
     <string name="feedback_too_long">That is longer than the box allows. Shorten it rather than let it be cut.</string>

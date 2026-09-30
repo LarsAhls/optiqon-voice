@@ -12,8 +12,8 @@
 // test wants a hostile client it says so and builds the batch by hand.
 import { after, before, beforeEach, describe, test } from 'node:test';
 import {
-  collection, deleteDoc, doc, getDoc, getDocs, query, serverTimestamp, setDoc, Timestamp,
-  updateDoc, where, writeBatch,
+  collection, deleteDoc, doc, getDoc, getDocs, increment, query, serverTimestamp, setDoc,
+  Timestamp, updateDoc, where, writeBatch,
 } from 'firebase/firestore';
 import { as, assertFails, assertSucceeds, makeM1Env, seed } from './helpers.mjs';
 
@@ -143,6 +143,19 @@ async function tombstoneBatch(uid, caseId, aid, { omit = [], extra = {} } = {}) 
       activeAttachmentCount: c.activeAttachmentCount - 1, attachmentFor: aid, ...extra.case,
     });
   }
+  return b;
+}
+
+/**
+ * The commit the app makes to take a screenshot down, with nothing read first: a revoked or
+ * pending owner cannot read the case, so the slot goes back as a decrement the server applies.
+ * The rules see its result and still insist on exactly one less, never below zero.
+ */
+function blindTombstoneBatch(uid, caseId, aid, { claims = {}, step = -1 } = {}) {
+  const db = as(env, uid, claims).firestore();
+  const b = writeBatch(db);
+  b.update(doc(db, `cases/${caseId}/attachments/${aid}`), { deleteRequestedAt: serverTimestamp() });
+  b.update(doc(db, `cases/${caseId}`), { activeAttachmentCount: increment(step), attachmentFor: aid });
   return b;
 }
 
@@ -481,9 +494,91 @@ describe('tombstones', () => {
     await assertFails(b.commit());
   });
 
-  test('the owner can still take a screenshot down after the case is closed', async () => {
+  // Replaces "the owner can still take a screenshot down after the case is closed", which
+  // expected ALLOW. STYRDOKUMENT: an owner takes a screenshot down while the case is open; a
+  // closed case is read-only and is not reopened. What is left on it is retention's to remove.
+  test('nobody takes a screenshot down by hand once the case is closed', async () => {
     await poke('cases/case-alice', { closedAt: Timestamp.now() });
-    await assertSucceeds((await tombstoneBatch('alice', 'case-alice', 'a1')).commit());
+    await assertFails((await tombstoneBatch('alice', 'case-alice', 'a1')).commit());
+    await assertFails(blindTombstoneBatch('alice', 'case-alice', 'a1').commit());
+    await assertFails((await tombstoneBatch('lars', 'case-alice', 'a1')).commit());
+    await assertFails(blindTombstoneBatch('lars', 'case-alice', 'a1').commit());
+    await revoke('alice');
+    await assertFails(blindTombstoneBatch('alice', 'case-alice', 'a1').commit());
+    const c = await peek('cases/case-alice');
+    const a = await peek('cases/case-alice/attachments/a1');
+    assert(c.activeAttachmentCount === 1 && !('deleteRequestedAt' in a));
+  });
+
+  test('on an open case the owner and the writer still can', async () => {
+    await assertSucceeds(blindTombstoneBatch('alice', 'case-alice', 'a1').commit());
+    await assertSucceeds((await attachBatch('alice', 'case-alice', 'a2')).commit());
+    await assertSucceeds(blindTombstoneBatch('lars', 'case-alice', 'a2').commit());
+    assert((await peek('cases/case-alice')).activeAttachmentCount === 0);
+  });
+
+  // M3 without a read: the app knows ownerUid, caseId and aid locally and writes straight
+  // away. Normal access stays shut to a revoked or pending owner the whole time.
+  for (const status of ['revoked', 'pending']) {
+    test(`a verified ${status} owner takes its own known screenshot down without reading anything`, async () => {
+      await poke('users/alice', { status });
+      const db = as(env, 'alice').firestore();
+      await assertFails(getDoc(doc(db, 'cases/case-alice')));
+      await assertFails(getDocs(query(collection(db, 'cases'), where('ownerUid', '==', 'alice'))));
+      await assertFails(getDoc(doc(db, 'cases/case-alice/attachments/a1')));
+      const before = await peek('cases/case-alice');
+      await assertSucceeds(blindTombstoneBatch('alice', 'case-alice', 'a1').commit());
+      const c = await peek('cases/case-alice');
+      assert(c.activeAttachmentCount === before.activeAttachmentCount - 1);
+      assert(c.activityRev === before.activityRev && c.attachmentFor === 'a1');
+      assert((await peek('cases/case-alice/attachments/a1')).deleteRequestedAt instanceof Timestamp);
+      // Still no way in: no read, and no positive write rides on the removal.
+      await assertFails(getDoc(doc(db, 'cases/case-alice')));
+      await assertFails(getDoc(doc(db, 'cases/case-alice/attachments/a1')));
+      await assertFails((await messageBatch('alice', 'case-alice', 'm1')).commit());
+      await assertFails((await attachBatch('alice', 'case-alice', 'a2')).commit());
+    });
+  }
+
+  test('the removal-only path takes back exactly one slot and nothing else', async () => {
+    await revoke('alice');
+    await assertFails(blindTombstoneBatch('alice', 'case-alice', 'a1', { step: -2 }).commit());
+    await assertFails(blindTombstoneBatch('alice', 'case-alice', 'a1', { step: 1 }).commit());
+    const db = as(env, 'alice').firestore();
+    const b = writeBatch(db);
+    b.update(doc(db, 'cases/case-alice/attachments/a1'), { deleteRequestedAt: serverTimestamp() });
+    b.update(doc(db, 'cases/case-alice'), {
+      activeAttachmentCount: increment(-1), attachmentFor: 'a1', activityRev: increment(1),
+    });
+    await assertFails(b.commit());
+    await poke('cases/case-alice', { activeAttachmentCount: 0 });
+    await assertFails(blindTombstoneBatch('alice', 'case-alice', 'a1').commit());
+    assert((await peek('cases/case-alice')).activeAttachmentCount === 0);
+    assert(!('deleteRequestedAt' in (await peek('cases/case-alice/attachments/a1'))));
+  });
+
+  test('no other account, and no unverified one, can use the removal-only path', async () => {
+    await assertFails(blindTombstoneBatch('bob', 'case-alice', 'a1').commit());
+    await assertFails(blindTombstoneBatch('pat', 'case-alice', 'a1').commit());
+    await revoke('bob');
+    await assertFails(blindTombstoneBatch('bob', 'case-alice', 'a1').commit());
+    await assertFails(blindTombstoneBatch('alice', 'case-alice', 'a1', { claims: { email_verified: false } }).commit());
+    await revoke('alice');
+    await assertFails(blindTombstoneBatch('alice', 'case-alice', 'a1', { claims: { email_verified: false } }).commit());
+    assert((await peek('cases/case-alice')).activeAttachmentCount === 1);
+  });
+
+  test('the removal-only path happens once and cannot bring the screenshot back', async () => {
+    await revoke('alice');
+    await assertSucceeds(blindTombstoneBatch('alice', 'case-alice', 'a1').commit());
+    const first = (await peek('cases/case-alice/attachments/a1')).deleteRequestedAt;
+    await assertFails(blindTombstoneBatch('alice', 'case-alice', 'a1').commit());
+    const db = as(env, 'alice').firestore();
+    await assertFails(updateDoc(doc(db, 'cases/case-alice/attachments/a1'), { deleteRequestedAt: null }));
+    await assertFails(deleteDoc(doc(db, 'cases/case-alice/attachments/a1')));
+    const c = await peek('cases/case-alice');
+    const a = await peek('cases/case-alice/attachments/a1');
+    assert(c.activeAttachmentCount === 0 && a.deleteRequestedAt.isEqual(first));
   });
 
   test('attachment metadata is read by its case owner and an admin only', async () => {

@@ -1,5 +1,6 @@
 package se.optiqon.voice.data.feedback
 
+import com.google.firebase.firestore.FieldValue
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -107,13 +108,19 @@ class CaseDocumentsTest {
         )
         assertEquals(
             setOf("activeAttachmentCount", "attachmentFor"),
-            CaseDocuments.caseSlotReleased("a", 3).keys
+            CaseDocuments.caseSlotReleased("a").keys
         )
-        assertEquals(2L, CaseDocuments.caseSlotReleased("a", 3)["activeAttachmentCount"])
+        // A decrement the server applies: a revoked or pending owner cannot read the count
+        // first (M3), and the rules check the result is exactly one less and never below zero.
+        // FieldValue has no equals: the same kind of sentinel, carrying -1.
+        val released = CaseDocuments.caseSlotReleased("a")["activeAttachmentCount"]!!
+        assertEquals(FieldValue.increment(-1L).javaClass, released.javaClass)
+        assertEquals(-1L, released.javaClass.getDeclaredField("operand").apply { isAccessible = true }.get(released))
+        assertEquals("a", CaseDocuments.caseSlotReleased("a")["attachmentFor"])
         assertEquals(setOf("deleteRequestedAt"), CaseDocuments.tombstone().keys)
         assertTrue(
             "taking a screenshot down is not activity",
-            "activityRev" !in CaseDocuments.caseSlotReleased("a", 3)
+            "activityRev" !in CaseDocuments.caseSlotReleased("a")
         )
     }
 
