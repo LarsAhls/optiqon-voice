@@ -232,6 +232,30 @@ class FeedbackScreenTest {
     }
 
     @Test
+    fun `a closed case is read-only, its screenshots included`() {
+        val detail = CaseDetail(
+            caseId = "case-1",
+            case = remoteCase.copy(closed = true),
+            queued = null,
+            shots = listOf(Shot("aid-1", messageId = null, state = ShotState.AVAILABLE, thumbnail = null))
+        )
+        var asked = 0
+        composeRule.setContent {
+            OptiqonVoiceTheme {
+                FeedbackDetailContent(
+                    state = FeedbackUiState(page = FeedbackPage.Detail("case-1"), remoteEnabled = true, approved = true, detail = detail),
+                    padding = padding,
+                    reply = "",
+                    onReply = {}, onPick = {}, onRemoveImage = {}, onSubmit = {}, onDeleteShot = { asked++ }, onDiscardQueued = {}
+                )
+            }
+        }
+        composeRule.onNodeWithText(string(R.string.feedback_delete_screenshot)).assertDoesNotExist()
+        composeRule.onNodeWithText(string(R.string.feedback_screenshot)).assertIsDisplayed().performClick()
+        assertEquals(0, asked)
+    }
+
+    @Test
     fun `a case still on the device can be taken back and says it has not reached Optiqon`() {
         val queued = QueuedCase("case-9", "Appen kraschar vid start", emptyList(), blocked = false, createdAtMs = 0)
         composeRule.setContent {

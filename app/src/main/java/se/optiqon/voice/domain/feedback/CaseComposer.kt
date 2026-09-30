@@ -117,6 +117,23 @@ class CaseComposer(
     }
 
     /**
+     * Drops a screenshot's upload that never reached the server, and nothing else: no tombstone
+     * is queued. For a closed case, where nothing may be taken down on the server but a parked
+     * upload and its local copy must still be clearable. False when there was no such upload.
+     */
+    suspend fun discardUnsentUpload(caseId: String, aid: String): Boolean {
+        val uid = auth.currentUid ?: return false
+        val rows = outbox.all()
+            .filter { it.ownerUid == uid && it.state != OutboxState.SENT && it.kind == CaseOutboxPayloads.KIND_UPLOAD }
+            .filter { row ->
+                (CaseOutboxPayloads.decode(row.kind, row.payload) as? CasePayload.Upload)
+                    ?.let { it.caseId == caseId && it.aid == aid } == true
+            }
+        rows.forEach { outbox.discard(it.id) }
+        return rows.isNotEmpty()
+    }
+
+    /**
      * Sends a message saved by the earlier, text-only feedback screen as a case of its own. The
      * old row is removed only once the new one is on the queue, and only at the user's word.
      */

@@ -405,6 +405,24 @@ class CaseOutboxSenderTest {
     }
 
     @Test
+    fun `a closed case refuses a removal, and the refusal is final`() = runTest {
+        remote.cases["c1"] = "uid-a"
+        remote.attachments["c1/a1"] = null
+        remote.closed += "c1"
+        assertTrue(sender.send(entry(CasePayload.Tombstone("c1", "a1"))) is SendFailure.Permanent)
+        assertFalse("c1/a1" in remote.tombstoned)
+    }
+
+    @Test
+    fun `a removal that landed before the case closed is still a success on retry`() = runTest {
+        remote.cases["c1"] = "uid-a"
+        remote.attachments["c1/a1"] = null
+        remote.tombstoned += "c1/a1"
+        remote.closed += "c1"
+        assertEquals(null, sender.send(entry(CasePayload.Tombstone("c1", "a1"))))
+    }
+
+    @Test
     fun `a tombstone is idempotent and a refused one is final`() = runTest {
         remote.attachments["c1/a1"] = null
         val tomb = CasePayload.Tombstone("c1", "a1")

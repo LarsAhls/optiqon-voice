@@ -488,8 +488,10 @@ service cloud.firestore {
         && caseSlotTaken(caseId, request.resource.data.attachmentFor);
 
       // Taking a screenshot down gives its slot back. M3=A: a revoked or pending owner may
-      // still do this -- it only ever removes -- and it is not activity.
+      // still do this -- it only ever removes -- and it is not activity. Only while the case is
+      // open: a closed case is read-only, and what is left on it is retention's to remove.
       allow update: if isVerifiedSelf(resource.data.ownerUid)
+        && !('closedAt' in resource.data)
         && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['activeAttachmentCount', 'attachmentFor'])
         && request.resource.data.attachmentFor is string
@@ -520,8 +522,10 @@ service cloud.firestore {
         && request.resource.data.activityFor is string
         && replyWritten(caseId, request.resource.data.activityFor);
 
-      // A writer may take a screenshot down too, and the count follows it the same way.
+      // A writer may take a screenshot down too, and the count follows it the same way -- on
+      // an open case only, as for the owner.
       allow update: if isWriter()
+        && !('closedAt' in resource.data)
         && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['activeAttachmentCount', 'attachmentFor'])
         && request.resource.data.attachmentFor is string
@@ -685,12 +689,14 @@ service cloud.firestore {
       // slot back in the same commit. Recording that the bytes are gone is the server's
       // business, not a client's.
       // M3=A: the owner may do this whatever its status, as long as it is signed in verified.
+      // Never on a closed case (the case half refuses it too; this says so where it is read).
       allow update: if (resource.data.ownerUid == uid()
                           ? isVerifiedSelf(resource.data.ownerUid)
                           : isWriter())
         && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['deleteRequestedAt'])
         && !('deleteRequestedAt' in resource.data)
+        && !('closedAt' in get(caseDoc(caseId)).data)
         && request.resource.data.deleteRequestedAt == request.time
         && getAfter(caseDoc(caseId)).data.attachmentFor == aid
         && getAfter(caseDoc(caseId)).data.activeAttachmentCount

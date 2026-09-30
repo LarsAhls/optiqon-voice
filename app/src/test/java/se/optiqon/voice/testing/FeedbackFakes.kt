@@ -144,6 +144,7 @@ class FakeCaseRemote : CaseRemote {
     val messages = mutableMapOf<String, String>()       // caseId/messageId -> actorUid
     val attachments = mutableMapOf<String, String?>()   // caseId/aid -> messageId
     val tombstoned = mutableSetOf<String>()             // caseId/aid
+    val closed = mutableSetOf<String>()                 // caseId: read-only, as `closedAt` makes it
     val calls = mutableListOf<String>()
 
     /**
@@ -293,8 +294,11 @@ class FakeCaseRemote : CaseRemote {
     override suspend fun tombstoneAttachment(caseId: String, aid: String): RemoteResult {
         calls += "tombstone:$aid"
         scriptedFor("tombstone")?.let { return it }
-        // Never committed: nothing to take down, as in FirestoreCaseRemote.
+        // In the order FirestoreCaseRemote reads a refusal: never committed, or already taken
+        // down, is success; only then does a closed case refuse, for owner and writer alike.
         if ("$caseId/$aid" !in attachments) return RemoteResult.Ok
+        if ("$caseId/$aid" in tombstoned) return RemoteResult.Ok
+        if (caseId in closed) return RemoteResult.Denied("The case is closed.")
         // A tombstone is not activity: the revision stays where it is.
         tombstoned += "$caseId/$aid"
         return RemoteResult.Ok
@@ -353,7 +357,7 @@ class FakeCaseRemote : CaseRemote {
 
     override suspend fun listCases(uid: String): List<FeedbackCase> =
         cases.filterValues { it == uid }.keys.map {
-            FeedbackCase(it, "t", "b", "Mottaget", null, null, 0, false, publicRev[it] ?: 0L)
+            FeedbackCase(it, "t", "b", "Mottaget", null, null, 0, it in closed, publicRev[it] ?: 0L)
         }
 
     override suspend fun events(caseId: String): List<CaseEvent> = emptyList()

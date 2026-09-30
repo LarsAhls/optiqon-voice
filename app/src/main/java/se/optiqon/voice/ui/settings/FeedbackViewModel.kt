@@ -230,7 +230,16 @@ class FeedbackViewModel @Inject constructor(
      */
     fun deleteShot(aid: String) {
         val uid = auth.currentUid ?: return
-        val caseId = _state.value.detail?.caseId ?: return
+        val detail = _state.value.detail ?: return
+        val caseId = detail.caseId
+        // A closed case is read-only and is not reopened; what is left on it is retention's.
+        // The rules refuse a removal whatever is sent. Only an upload that never reached the
+        // server may still be dropped, with its local copy, and no tombstone goes out.
+        if (detail.closed) {
+            if (shotSource?.takeIf { it.first == caseId }?.second?.any { it.id == aid } != false) return
+            viewModelScope.launch { dropUnsentUpload(uid, caseId, aid) }
+            return
+        }
         viewModelScope.launch {
             val localCopy = withContext(Dispatchers.IO) {
                 LocalFeedback.pendingUploads(outbox.all(), uid, caseId).firstOrNull { it.aid == aid }?.file
@@ -248,6 +257,16 @@ class FeedbackViewModel @Inject constructor(
                 _state.update { it.copy(notice = noticeFor(outcome)) }
             }
         }
+    }
+
+    private suspend fun dropUnsentUpload(uid: String, caseId: String, aid: String) {
+        val localCopy = withContext(Dispatchers.IO) {
+            LocalFeedback.pendingUploads(outbox.all(), uid, caseId).firstOrNull { it.aid == aid }?.file
+        }
+        if (!composer.discardUnsentUpload(caseId, aid)) return
+        localCopy?.let { withContext(Dispatchers.IO) { preprocessor.discard(uid, it) } }
+        thumbnails -= aid
+        restate()
     }
 
     /** Recomputes the open case's screenshots from the whole queue, sent rows included. */

@@ -335,7 +335,14 @@ internal fun FeedbackDetailContent(
                     detail.shots.forEachIndexed { i, shot ->
                         if (i > 0) HairlineDivider()
                         val failed = shot.state == ShotState.UPLOAD_FAILED || shot.state == ShotState.REMOVE_FAILED
-                        ListRow(
+                        // A closed case is read-only: its screenshots are shown, not taken down.
+                        // Only an upload that never got through can still be dropped from here.
+                        if (detail.closed && shot.state != ShotState.UPLOAD_FAILED) ListRow(
+                            title = stringResource(R.string.feedback_screenshot),
+                            subtitle = closedShotStatus(shot.state)?.let { stringResource(it) },
+                            subtitleColor = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                            leading = { Thumbnail(shot.thumbnail?.takeIf { shot.state.showsContent }) }
+                        ) else ListRow(
                             title = stringResource(R.string.feedback_delete_screenshot),
                             subtitle = shotStatus(shot.state)?.let { stringResource(it) },
                             subtitleColor = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -397,6 +404,12 @@ private fun shotStatus(state: ShotState): Int? = when (state) {
     ShotState.UPLOAD_FAILED -> R.string.feedback_shot_upload_failed
     ShotState.REMOVING -> R.string.feedback_shot_removing
     ShotState.REMOVE_FAILED -> R.string.feedback_shot_remove_failed
+}
+
+/** On a closed case nothing is retried or taken down by hand, and the words say so. */
+private fun closedShotStatus(state: ShotState): Int? = when (state) {
+    ShotState.REMOVE_FAILED -> R.string.feedback_shot_closed_kept
+    else -> shotStatus(state)
 }
 
 /** A confirmation gets the tick; a refusal is said as a problem. */

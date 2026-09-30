@@ -646,10 +646,34 @@ procedure is in [FS_G_RUNBOOK.md](FS_G_RUNBOOK.md). Neither document authorises 
 - **M3 — narrow withdrawal for revoked or pending owners.** A verified owner may:
   - write a withdrawal intent (`users/{uid}/withdrawals/{targetId}`) even while revoked or
     pending, and
-  - set `deleteRequestedAt` on their own attachment.
+  - set `deleteRequestedAt` on their own attachment, on an **open** case.
 
   Nothing else is allowed in that state: no create, no upload, no read of cases. Accepted history
   stays protected, as FS-S34 decided.
+
+  The removal needs no read (deletion-contract repair, 2026-09-30). The app writes one batch from
+  the ids it already holds (`ownerUid`, `caseId`, `aid`): `deleteRequestedAt` as a server
+  timestamp on the attachment, and `activeAttachmentCount` as `increment(-1)` plus
+  `attachmentFor` on the case. The rules see the result and still require exactly one less and
+  never below zero. Earlier, the app ran this as a transaction that read both documents first;
+  the rules rightly refuse those reads to a revoked or pending owner, so M3 did not work from the
+  app although the rules allowed the write.
+
+  After a refusal the app reads what it still may: an approved owner learns "already taken down"
+  or "never committed" (success) or "case closed" (final). A revoked or pending owner cannot read,
+  so a refusal stays final for them. A retry of a removal that did land, after a lost
+  acknowledgement, therefore shows REMOVE_FAILED to such an owner although the screenshot is
+  gone. The error is only ever in that direction: nothing is called removed without the server's
+  word. A tombstone still waiting in the SDK's local queue is not read back as removed
+  (`hasPendingWrites`).
+- **Closed case — no manual screenshot removal.** A closed case is read-only and is not
+  reopened. From `closedAt` on, neither the owner (any status) nor a writer can tombstone a
+  screenshot or release its slot: both case slot-release branches and the attachment update
+  require `!('closedAt' in case)`. The app shows a closed case's screenshots without a remove
+  action, and `FeedbackViewModel.deleteShot` refuses on a closed case -- except for an upload that
+  never reached the server, which is dropped with its local copy and sends no tombstone. What is left on a closed
+  case is removed by retention (`closedAt` + 30 days) and by account deletion (M4); both run
+  under the Admin SDK and are not bound by the rules.
 - **M4 — account deletion is an admin operation.** It runs as `voice-admin delete-account`,
   executing `server/account-deletion.mjs` under the administrator's own credential.
   - It is **not** app self-service.
@@ -848,7 +872,8 @@ those cases, not the deleted user's data.
 ### Rules changes in FS-S468
 
 - `firestore.rules`: `publicBumped`, `caseReads` and `notificationTokens` as described above.
-  The M3 tombstone path is allowed for `isVerifiedSelf(owner)` or a writer.
+  The M3 tombstone path is allowed for `isVerifiedSelf(owner)` or a writer, on an open case only
+  (deletion-contract repair, 2026-09-30; no new document read: the case is already read there).
 - `storage.rules`: **unchanged.** There is still no third Firestore read.
 
 ### What the repository proves
