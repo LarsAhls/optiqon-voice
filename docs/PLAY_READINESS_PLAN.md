@@ -9,6 +9,12 @@ This is the single active consensus plan (Claude ↔ ChatGPT, decided by Lars). 
 place when a planning block is locked; there is no v2/v3. It contains the consensus only, not the
 discussion history.
 
+**Maintenance rule (Lars, permanent):** DRAFT / PROPOSED / REVISE planning rounds are not
+persisted as new canonical versions. When Claude + ChatGPT reach AGREED / LOCKED for a planning
+block, this canonical file is updated and merged to Git before the next planning block is opened.
+An open branch/PR is durable evidence but not canonical; the plan counts as saved only once it is
+merged to `main`.
+
 Related evidence (these documents decide nothing on their own):
 - [BETA_SIGNING_AND_DISTRIBUTION.md](BETA_SIGNING_AND_DISTRIBUTION.md): signing/distribution evidence (D2/D8).
 - [DECISION_SHEET_2026-09-10.md](DECISION_SHEET_2026-09-10.md): dated decision log.
@@ -221,9 +227,12 @@ After implementation-go:
   - `AsrConfigSoleWriterTest`.
   - `restoreVerifiedEndpoint` requires the flag.
   - **I2 preflight:** see §5.
-- **M3.3a — a11y disclosure and consent** (including the bypass card). The UI shows "Tillgänglighet
-  är aktiverad – granska hur OPTIQON använder den", never "saknas". Consent is shown as given only
-  after a successful write on the current, unsealed root.
+- **M3.3a — a11y disclosure and consent.** There is **no bypass card**: no UI path allows an
+  Accessibility-dependent capability without current consent, and every such capability fails
+  closed until consent is current. If Accessibility is already enabled in system settings, a
+  review/recovery card shows "Tillgänglighet är aktiverad – granska hur OPTIQON använder den"
+  (never "saknas") and routes into the same disclosure → consent flow; it grants nothing by itself.
+  Consent is shown as given only after a successful write on the current, unsealed root.
 - **M3.3b — ENABLE VOICE surface, and autostart once.**
   - A HomeViewModel latch plus a Mutex. `consumed` is written only after an accepted
     `startForegroundService`.
@@ -283,7 +292,8 @@ After implementation-go:
 - **M4-C (GATE):**
   - **C1:** read the signer and lineage on `c1f9837c`.
   - **C2:** create the Play developer account (irreversible).
-  - **C3:** key ceremony for K_beta, a new K_U and lineage. It is reversible until C7.
+  - **C3:** key ceremony per the P-D2b / P-D2c decisions (recommended: K_beta, a new K_U and
+    lineage). It is reversible until C7.
   - **C4:** M4.3 with the real keys, on an emulator.
   - **C5:** Firebase SHA and hosting deploy.
   - **C6:** declaration videos.
@@ -291,10 +301,11 @@ After implementation-go:
   - **C8(b):** first AAB → Internal, tested on a disposable device.
   - **C9:** rotate `c1f9837c` in place (sideload, irreversible).
   - **C10:** Lars updates `c1f9837c` from Internal (irreversible).
-- **Chosen path B:**
+- **Recommended path B, pending the P-D2b Lars decision** (not decided; blocks C3). The rest of
+  the M4 DoR is designed for path B as the recommended default:
   - sideload rotation debug → K_beta, with lineage and `--rotation-min-sdk-version 28` (floor API 28);
   - K_beta is the Play app-signing key via PEPK;
-  - a separate new upload key K_U.
+  - a separate new upload key K_U. This is also only recommended, pending the P-D2c Lars decision.
 - **Five separate roles:**
   - installed signer;
   - beta signer (K_beta);
@@ -325,10 +336,13 @@ After implementation-go:
   - M4-D2 = a: data probe via fixed markers plus `firstInstallTime` plus signer readback. CLOSED as HOW.
   - M4-D3 = no. K_U is upload-only and not a Firebase identity. CLOSED as HOW.
 - **Findings behind M4:**
-  - K0: the `RELEASE_*` secrets exist (SHA `e6baa523…`), custody is undocumented, and there is no
-    proven offline backup.
+  - K0: the K0 certificate SHA-256 is `e6baa523…`. Five `RELEASE_*` secrets exist, but their exact
+    values are not readable or read back and must not be inferred from the certificate
+    fingerprint. Custody, separately: "K0 has been used by signing CI in a public repository, has
+    weak/unverified custody, and has no proven offline backup."
   - The debug keystore is public.
-  - `c1f9837c` currently has the debug signer.
+  - The last documented signer on `c1f9837c` is the debug signer (2026-09-09). The current signer,
+    versionCode and debuggable status are Not proven until the C1 readback.
 - **Requirement placement:** every M4 requirement is classified as before Internal, before Closed,
   before Production, or non-blocking.
 
@@ -562,7 +576,11 @@ Detailed M7 / M8 DoR is **not yet planned** in Fas 2.
 - What BankID actually detects. That is not assumed, only observed.
 - Whether the reviewer Google account avoids 2SV / new-device challenges for reviewers in other
   countries (R1).
-- Whether Play requires videos for Accessibility / FGS `specialUse` in this case.
+- How Google review will judge our specific Accessibility and FGS declarations and videos, whether
+  it will ask for more material, and the exact review outcome. The requirement itself is not in
+  doubt: current Play policy requires an Accessibility declaration plus a demo video for this
+  non-accessibility-tool use, and an FGS declaration plus a video for the relevant FGS types when
+  targeting Android 14+.
 - Whether Play's AI policy applies to BYOK LLM cleanup.
 - Whether a report without content satisfies Play's AI-reporting expectation.
 - Transitive SDK inventory (M6-A2 step 1).
