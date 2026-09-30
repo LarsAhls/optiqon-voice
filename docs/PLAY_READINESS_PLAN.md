@@ -1,7 +1,7 @@
 # OPTIQON Voice — Play Readiness Plan
 
-**Status:** Fas 1 AGREED · Fas 2 M1, M2, M3 + M3-LP, M4, M5, M6 = **AGREED / LOCKED** (2026-09-30).
-M7 and M8 are **baseline only**, not yet planned in Fas 2.
+**Status:** Fas 1 AGREED · Fas 2 M1, M2, M3 + M3-LP, M4, M5, M6, M7 = **AGREED / LOCKED** (2026-09-30).
+M8 is **baseline only**, not yet planned in Fas 2.
 **Implementation: NOT APPROVED.** Nothing in this document authorises code, Console, Firebase,
 provider, signing, deploy or device work. Each step still needs its own go.
 
@@ -119,7 +119,7 @@ private → Play Internal (in parallel) → technical + BankID proof → Closed 
 | M4 | Play / signing gate | M4-A AUTONOM · M4-B LARS-BESLUT · M4-C GATE | §4 M4 |
 | M5 | Play Internal + BankID discriminator | M5-A AUTONOM · M5-B GATE + ENHET | §4 M5 |
 | M6 | Compliance / Closed readiness | local AUTONOM · live GATE | exit criteria 1–12 |
-| M7 | Closed testing | GATE | baseline only (§8) |
+| M7 | Closed testing | M7-A AUTONOM (read-only / drafts) · M7-B GATE | §4 M7 |
 | M8 | Production | GATE | baseline only (§8) |
 
 ---
@@ -461,6 +461,141 @@ After implementation-go:
 - **R2 (reviewer credential):** a dedicated, limited key, entered only in the Console App access
   field. It is never put in the repo or in chat.
 
+### M7 — Closed testing (LOCKED)
+
+**External policy facts** [V-EXT, Google Play Help, verified 2026-09-30]. The Console readback in
+M7-A0 takes precedence for what the account actually created shows.
+- The 12 × 14 requirement is the current rule for new personal developer accounts.
+- The qualifying condition is continuous opt-in: at least 12 testers opted in continuously for the
+  preceding 14 days. An opt-out followed by a re-join does not make the period continuous.
+- An organization account requires a D-U-N-S number.
+
+**Closed prerequisites:**
+1. M6 exit 1–12 are green.
+2. Signing follows the Lars decision actually taken for P-D2b / P-D2c and the verified C7
+   SHA_MATRIX.
+3. C7 / C8 proof is green.
+4. The live in-app AI report works E2E.
+5. **Retention:** "The live retention/purge path required to enforce every retention promise
+   applicable to AI reports is deployed, enabled and E2E-proven before Closed."
+   - This is not automatically all of FS-G G/H. FCM is not included just because it sits in the
+     same runbook section.
+   - Weakening a retention promise instead is a separate privacy / material decision, never a HOW
+     shortcut.
+6. Debug-SHA removal has run as its own Gate and followed DSR-1.
+
+**Testers:** these two definitions must not be mixed.
+- **Qualifying tester:** formal Console status, i.e. continuous opt-in to the Closed test.
+- **Meaningful tester:** real product use and evidence (install, use, feedback).
+- The Closed plan aims for real use regardless. There is no "daily activity resets the clock" rule.
+
+**Account type:**
+- P-D3 is decided from the actual publisher, before C2.
+- The account type is never chosen to optimise testing requirements.
+
+**Personal-account conditional path.** This applies only if the current account / Console rule
+requires 12 × 14:
+- **P-M7-S1 (seat capacity):** after the A0 readback. The new cap is
+  `required qualifying tester seats + required operational accounts + explicit headroom`.
+  It is not hardcoded in advance. The admin write is a Gate and a Lars decision.
+- **P-M7-S2 (provider credential strategy):** a separate BYOK / cost decision.
+  - a. testers use their own BYOK keys: 7/10.
+  - b. OPTIQON-funded, limited test keys: 5/10.
+
+**Debug identity:**
+- **DSR-1 (invariant):** "Debug-SHA removal may not run while any approved FS-G probe or other live
+  acceptance step still depends on a debug-signed build against prod. Either those steps are
+  complete, or they are explicitly re-planned onto a K_beta/Play-signed build before the removal
+  Gate."
+- Before the removal Gate, M7-A0 must read the current signer of any build used in live acceptance
+  and the remaining live dependencies on a debug-signed build.
+- **Preconditions before removal:**
+  1. The C7 / Play signing readback is done.
+  2. All real Play / K_beta certificates that are needed are in SHA_MATRIX.
+  3. The relevant release certificates are in the Firebase configuration.
+  4. `assetlinks.json` contains the signer identities the Closed version actually needs.
+  5. A K_beta / Play-signed Internal build has already proven auth and App Links.
+- **Gate:**
+  - snapshot the current Firebase SHA set;
+  - snapshot the current live `assetlinks.json`;
+  - remove the debug certificate from the prod Firebase configuration where it is actually used;
+  - remove the debug certificate from `assetlinks.json`;
+  - deploy and read back.
+- **Postflight**, on exactly the relevant K_beta / Play-signed Closed candidate, not on a re-signed
+  variant:
+  - Google sign-in works;
+  - email-link routing / App Links work;
+  - account access works;
+  - signer / readback match.
+- **Failure:** restore the previous config and STOP.
+- **Intended consequence:** local debug builds are no longer expected to use the prod identity,
+  auth or App Links. This is a security property, not a Closed regression. Development uses a
+  separate non-prod path or an explicitly signed test build; the public debug certificate is never
+  re-added to prod.
+
+**M7-A (AUTONOM: read-only or drafts, after implementation-go):**
+- **A0, state readback:**
+  - the actual account type and C2 state;
+  - if personal: the creation date and the testing requirement Console shows;
+  - live `maxApprovedUsers` and the approved seat count;
+  - test / disposable accounts that can be removed;
+  - whether the reviewer account (P-M6-R1) must be active at the same time;
+  - what Console requires for Closed;
+  - the signer of builds used in live acceptance, and remaining debug-signed dependencies (DSR-1).
+- **A1, AI-report retention dependency:** classify each part as REQUIRED for live AI-report
+  transport, REQUIRED for the retention promise, OPTIONAL or unrelated. The goal is the minimal
+  verified dependency set.
+- **A2, tester plan:** keeps qualifying opt-in continuity and meaningful product usage separate.
+  It covers:
+  - recruitment;
+  - opt-in instructions;
+  - onboarding;
+  - account approval;
+  - provider credential per P-M7-S2;
+  - first dictation;
+  - feedback;
+  - dropout / opt-out;
+  - test evidence.
+- **A3, Closed release checklist:**
+  - "signer / Play signing configuration matches the selected P-D2b/P-D2c decision and verified C7
+    SHA_MATRIX." If Lars selects recommended path B: Play classical signer = intended K_beta
+    continuity identity and upload key = new K_U.
+  - C7 / C8 proof is green.
+  - The debug-SHA removal Gate is done, including DSR-1.
+  - M6 exit 1–12 are green.
+  - The AI report is live.
+  - The retention path is live per prerequisite 5.
+  - Release notes and version are ready.
+  - The relevant tester and Console requirements are met.
+- **A4, Closed regression:**
+  - account / onboarding;
+  - dictation;
+  - Gboard, bubble and A11y;
+  - AI cleanup;
+  - AI report;
+  - deletion;
+  - BankID where practical;
+  - App Links / auth;
+  - update continuity.
+
+**M7-B (GATE: each step needs its own Lars go):**
+- The Closed track, releases and tester changes. Each is a separate external Gate.
+- The seat-cap admin write, only if P-M7-S1 is actually needed.
+- Test provider credentials, only if P-M7-S2 = b.
+- Tester account approvals.
+- A build with `FEEDBACK_REMOTE_ENABLED=true`.
+- The retention path live per prerequisite 5, including `APPLY=true`.
+- Debug-SHA removal: its own Gate, with DSR-1, preconditions 1–5, snapshot, readback, postflight,
+  and restore + STOP.
+- A 14-day window, only if the current account / Console rule requires it.
+- The exit readback.
+
+**Exit:**
+- Closed works technically.
+- Relevant real use is done.
+- There are no blocking policy or regression findings.
+- 12 × 14 applies only if the current account / Console rule makes it apply.
+
 ---
 
 ## 5. Verified invariants (must hold in implementation)
@@ -495,6 +630,9 @@ After implementation-go:
 - **BankID:** the NOT REACHED invariant (M5).
 - **Deletion:** the deletion invariant and D4-I1 / D4-I2 (M6).
 - **Q-A:** the Q-A copy invariant (M6).
+- **DSR-1:** debug-SHA removal never breaks an approved live acceptance path (M7).
+- **Retention:** every published retention promise that applies to AI reports is enforced live
+  before Closed (M7).
 
 ---
 
@@ -512,10 +650,12 @@ After implementation-go:
     architecture decision.
   - B0 ≠ OK → no conclusion.
 - No key gets a Play role before custody is proven (M4.0).
+- M7 debug-SHA removal: any postflight failure → restore the previous config and STOP.
 - Irreversible steps: C2, C7, C9 and C10. C3 is reversible until C7.
 - **Rollback:**
   - Local and AUTONOM work: branch revert.
   - Firebase SHA / hosting (C5): restore the previous SHA set or hosting release.
+  - M7 debug-SHA removal: restore the snapshotted Firebase SHA set and `assetlinks.json`.
   - Device D: uninstall is allowed.
   - `c1f9837c`: never uninstalled.
   - Play-side steps after C7 have no rollback. This is why the readback and C8(b) come first.
@@ -531,12 +671,14 @@ After implementation-go:
 | P-D2a | Package identity: keep `se.optiqon.voice` | 8/10 | C7 |
 | P-D2b | App-signing: path B (K_beta via PEPK) | 9/10 | C3 |
 | P-D2c | Upload key: new K_U (not K0) | 9/10 | C3 |
-| P-D3-DEV-ACCOUNT | Publisher: organisation (D-U-N-S) or personal | factual question | C2 |
+| P-D3-DEV-ACCOUNT | Publisher: organisation (D-U-N-S) or personal, decided from the actual publisher, never to optimise testing requirements | factual question | C2 |
 | L1 / L2 | Secondary BankID device; earlier WARN / BLOCK history | — | M5-B |
 | P-D4-DELETION-CARRIER | D4-a in-app request + admin delete | 9/10 | M6 deletion build |
 | P-M6-AI | AI-b+ in-app AI reporting | 9/10 | M6 exit 7 |
 | P-M6-R1 | Reviewer account R1-a (fallback R1-b) | — | M6 exit 8 |
 | P-M6-R2 | Dedicated limited reviewer key | 9/10 | M6 exit 9 |
+| P-M7-S1 | Seat capacity (`maxApprovedUsers`), only on the personal-account path, after M7-A0 | computed in A0 | Closed tester approvals |
+| P-M7-S2 | Provider credentials for testers: a. own BYOK / b. OPTIQON-funded limited keys, only on the personal-account path | a 7/10 · b 5/10 | Closed tester onboarding |
 
 **Decided:**
 - M3-D1-ASR-MIGRATION = a: an existing config counts as unverified, and re-verification is manual
@@ -549,17 +691,11 @@ hook is CLOSED as implementation HOW / AUTONOM.
 
 ---
 
-## 8. M7 / M8 — baseline only
+## 8. M8 — baseline only
 
-- **M7 Closed testing (GATE):**
-  - Closed works technically.
-  - Relevant real use is done.
-  - There are no blocking policy or regression findings.
-  - 12 testers × 14 days applies only if the personal-account rule applies (P-D3).
-  - The debug SHA is removed before Closed.
 - **M8 Production (GATE):** needs explicit Lars approval.
 
-Detailed M7 / M8 DoR is **not yet planned** in Fas 2.
+Detailed M8 DoR is **not yet planned** in Fas 2. M7 is locked in §4.
 
 ---
 
@@ -584,5 +720,8 @@ Detailed M7 / M8 DoR is **not yet planned** in Fas 2.
 - Whether Play's AI policy applies to BYOK LLM cleanup.
 - Whether a report without content satisfies Play's AI-reporting expectation.
 - Transitive SDK inventory (M6-A2 step 1).
-- The live value of `config/limits.maxApprovedUsers` and the seats taken (relevant to M7).
-- Whether 12×14 applies to the chosen account type.
+- The live value of `config/limits.maxApprovedUsers` and the seats taken (M7-A0).
+- What Console actually requires for the account that is created (M7-A0).
+- The signer of builds used in live FS-G acceptance, and whether any is debug-signed (M7-A0, DSR-1).
+- The minimal dependency set for AI-report retention (M7-A1).
+- Google's decision on the production-access application.
